@@ -1,0 +1,400 @@
+import { create } from 'zustand';
+import { karenLoadingApi } from '../api/karen-loading-api';
+import type {
+  RawLoadingData,
+  RawLoadingEntryResponse,
+  RawLoadingResponse,
+} from '../api/karen-loading-api';
+import { mapAxiosError } from '@/src/core/api/client';
+
+// ---------------------------------------------------------------------
+// Normalised view models (mirror of the Flutter KaitetLoadingData model)
+// ---------------------------------------------------------------------
+export type LoadingOrder = {
+  salesOrder: string;
+  orderName: string;
+  truckDetails: string;
+  consignee: string;
+  shippingAgent: string;
+  totalQty: number;
+  boxesAllocated: number;
+  boxesPacked: number;
+  boxesStaged: number;
+  boxesLoaded: number;
+};
+
+export type LoadingPlanItem = {
+  loadingPosition: number;
+  customer: string;
+  deliveryPoint: string;
+  boxType: string;
+  numberOfBoxes: number;
+  orders: LoadingOrder[];
+  boxesAllocated: number;
+  boxesPacked: number;
+  boxesStaged: number;
+  boxesLoaded: number;
+};
+
+export type AvailablePlan = { name: string; vehicle: string };
+export type VehicleInfo = { name: string; licensePlate: string };
+
+export type LoadingTotals = {
+  totalBoxesAllocated: number;
+  totalBoxesPacked: number;
+  totalBoxesStaged: number;
+  totalBoxesLoaded: number;
+  totalStops: number;
+};
+
+export type LoadingData = {
+  deliveryDate: string;
+  selectedVehicle: string;
+  hasLoadingPlan: boolean;
+  loadingPlanName: string | null;
+  availablePlans: AvailablePlan[];
+  planItems: LoadingPlanItem[];
+  vehicles: VehicleInfo[];
+  totals: LoadingTotals;
+};
+
+export type DeliveryPointSummary = {
+  deliveryPoint: string;
+  customerCount: number;
+  totalBoxes: number;
+  totalLoaded: number;
+  totalAllocated: number;
+  isFullyLoaded: boolean;
+};
+
+export type LoadOutcome =
+  | { kind: 'success'; message?: string }
+  | { kind: 'error'; message: string }
+  | { kind: 'warning'; message: string };
+
+// ---------------------------------------------------------------------
+// Grouping helpers — delivery point -> customer -> box type
+// ---------------------------------------------------------------------
+/** Unique delivery points in loading-position (plan) order. */
+export function deliveryPoints(data: LoadingData): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of data.planItems) {
+    if (!seen.has(item.deliveryPoint)) {
+      seen.add(item.deliveryPoint);
+      result.push(item.deliveryPoint);
+    }
+  }
+  return result;
+}
+
+/** Unique customers at a delivery point, in plan order. */
+export function customersAtDeliveryPoint(data: LoadingData, deliveryPoint: string): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of data.planItems) {
+    if (item.deliveryPoint === deliveryPoint && !seen.has(item.customer)) {
+      seen.add(item.customer);
+      result.push(item.customer);
+    }
+  }
+  return result;
+}
+
+/** Plan items (one per box type) for a customer at a delivery point. */
+export function itemsForCustomerAtDeliveryPoint(
+  data: LoadingData,
+  customer: string,
+  deliveryPoint: string,
+): LoadingPlanItem[] {
+  return data.planItems.filter(
+    (e) => e.customer === customer && e.deliveryPoint === deliveryPoint,
+  );
+}
+
+/** Aggregated stats for a delivery point. */
+export function summaryForDeliveryPoint(
+  data: LoadingData,
+  deliveryPoint: string,
+): DeliveryPointSummary {
+  const items = data.planItems.filter((e) => e.deliveryPoint === deliveryPoint);
+  let totalBoxes = 0;
+  let totalLoaded = 0;
+  let totalAllocated = 0;
+  const customers = new Set<string>();
+  for (const item of items) {
+    totalBoxes += item.numberOfBoxes;
+    totalLoaded += item.boxesLoaded;
+    totalAllocated += item.boxesAllocated;
+    customers.add(item.customer);
+  }
+  return {
+    deliveryPoint,
+    customerCount: customers.size,
+    totalBoxes,
+    totalLoaded,
+    totalAllocated,
+    isFullyLoaded: totalAllocated > 0 && totalLoaded >= totalAllocated,
+  };
+}
+
+export function isItemFullyLoaded(item: LoadingPlanItem): boolean {
+  return item.boxesAllocated > 0 && item.boxesLoaded >= item.boxesAllocated;
+}
+
+/** Set of vehicle names that have an available plan. */
+export function vehiclesWithPlans(data: LoadingData): Set<string> {
+  return new Set(data.availablePlans.map((p) => p.vehicle));
+}
+
+// ---------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------
+function toNum(v: unknown, fallback = 0): number {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : fallback;
+  if (typeof v === 'string') {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  return fallback;
+}
+
+function unwrap(
+  raw: RawLoadingResponse | RawLoadingEntryResponse,
+): { status?: string; message?: string; data?: RawLoadingData } | undefined {
+  const m = (raw as RawLoadingResponse)?.message;
+  if (m && typeof m === 'object') return m;
+  if (typeof m === 'string') {
+    try {
+      return JSON.parse(m);
+    } catch {
+      return { status: 'success', message: m };
+    }
+  }
+  return undefined;
+}
+
+function normalise(d: RawLoadingData): LoadingData {
+  const totals = d.totals ?? {};
+  return {
+    deliveryDate: (d.delivery_date ?? '').toString(),
+    selectedVehicle: (d.selected_vehicle ?? '').toString(),
+    hasLoadingPlan: d.has_loading_plan === true,
+    loadingPlanName: d.loading_plan_name ?? null,
+    availablePlans: (d.available_plans ?? []).map((p) => ({
+      name: (p.name ?? '').toString(),
+      vehicle: (p.vehicle ?? '').toString(),
+    })),
+    vehicles: (d.vehicles ?? []).map((v) => ({
+      name: (v.name ?? '').toString(),
+      licensePlate: (v.license_plate ?? '').toString(),
+    })),
+    planItems: (d.plan_items ?? []).map((i) => ({
+      loadingPosition: toNum(i.loading_position),
+      customer: (i.customer ?? '').toString(),
+      deliveryPoint: (i.delivery_point ?? '').toString(),
+      boxType: (i.box_type ?? '').toString(),
+      numberOfBoxes: toNum(i.number_of_boxes),
+      orders: (i.orders ?? []).map((o) => ({
+        salesOrder: (o.sales_order ?? '').toString(),
+        orderName: (o.order_name ?? '').toString(),
+        truckDetails: (o.truck_details ?? '').toString(),
+        consignee: (o.consignee ?? '').toString(),
+        shippingAgent: (o.shipping_agent ?? '').toString(),
+        totalQty: toNum(o.total_qty),
+        boxesAllocated: toNum(o.boxes_allocated),
+        boxesPacked: toNum(o.boxes_packed),
+        boxesStaged: toNum(o.boxes_staged),
+        boxesLoaded: toNum(o.boxes_loaded),
+      })),
+      boxesAllocated: toNum(i.boxes_allocated),
+      boxesPacked: toNum(i.boxes_packed),
+      boxesStaged: toNum(i.boxes_staged),
+      boxesLoaded: toNum(i.boxes_loaded),
+    })),
+    totals: {
+      totalBoxesAllocated: toNum(totals.total_boxes_allocated),
+      totalBoxesPacked: toNum(totals.total_boxes_packed),
+      totalBoxesStaged: toNum(totals.total_boxes_staged),
+      totalBoxesLoaded: toNum(totals.total_boxes_loaded),
+      totalStops: toNum(totals.total_stops),
+    },
+  };
+}
+
+/** Pull the box label from a scan: `{box_label:"…"}` or a bare string. */
+function extractBoxLabel(raw: string): string {
+  const text = raw.replace(/[\r\n]+/g, '').trim();
+  if (!text) return '';
+  if (!text.startsWith('{')) return text;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const label = parsed.box_label;
+    return typeof label === 'string' ? label.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+// ---------------------------------------------------------------------
+// Store
+// ---------------------------------------------------------------------
+type State = {
+  /** Initial / full-screen fetch (vehicle list + available plans). */
+  loading: boolean;
+  /** Fetching the plan for a just-selected vehicle (inline spinner). */
+  vehicleLoading: boolean;
+  loaded: boolean;
+  data: LoadingData | null;
+
+  /** License plate of the chosen truck, or null before one is picked. */
+  selectedVehicle: string | null;
+  expandedDeliveryPoint: string | null;
+
+  submitting: boolean;
+  lastOutcome: LoadOutcome | null;
+
+  /** Initial load: vehicle list + available plans (no vehicle scope). */
+  loadInitial: (farm: string) => Promise<void>;
+  /** Pick a truck and fetch its plan. */
+  selectVehicle: (farm: string, licensePlate: string) => Promise<void>;
+  /** Re-fetch the current view (vehicle plan if one is selected, else list). */
+  reload: (farm: string) => Promise<void>;
+  toggleDeliveryPoint: (deliveryPoint: string) => void;
+  submitScan: (farm: string, raw: string, temperature: number) => Promise<LoadOutcome>;
+  reset: () => void;
+};
+
+/** Shared fetch.
+ *  - 'full'    → first/whole-screen load (vehicle list + plans)
+ *  - 'vehicle' → fetching a just-picked truck's plan (inline spinner)
+ *  - 'silent'  → background refresh after a scan: updates counts in place
+ *                WITHOUT a loader, so the plan stays visible and the scanner
+ *                keeps focus. */
+async function fetchData(
+  farm: string,
+  vehicle: string,
+  mode: 'full' | 'vehicle' | 'silent',
+  set: (partial: Partial<State> | ((s: State) => Partial<State>)) => void,
+): Promise<void> {
+  if (mode === 'full') set({ loading: true });
+  else if (mode === 'vehicle') set({ vehicleLoading: true });
+  try {
+    const raw = await karenLoadingApi.fetchLoadingData(farm, vehicle);
+    const result = unwrap(raw);
+    if (!result || result.status !== 'success') {
+      // A failed silent refresh leaves the existing plan untouched.
+      if (mode === 'silent') return;
+      set({
+        loading: false,
+        vehicleLoading: false,
+        loaded: true,
+        lastOutcome: { kind: 'error', message: result?.message ?? 'Failed to load loading data.' },
+      });
+      return;
+    }
+    const data = normalise(result.data ?? {});
+    // Auto-expand the first drop-off so the operator sees the sequence.
+    const dps = deliveryPoints(data);
+    set((s) => ({
+      loading: false,
+      vehicleLoading: false,
+      loaded: true,
+      data,
+      expandedDeliveryPoint:
+        s.expandedDeliveryPoint ?? (dps.length > 0 ? dps[0] : null),
+    }));
+  } catch (err) {
+    if (mode === 'silent') return;
+    set({
+      loading: false,
+      vehicleLoading: false,
+      loaded: true,
+      lastOutcome: { kind: 'error', message: mapAxiosError(err).message || 'Failed to load loading data.' },
+    });
+  }
+}
+
+export const useKarenLoadingStore = create<State>((set, get) => ({
+  loading: false,
+  vehicleLoading: false,
+  loaded: false,
+  data: null,
+  selectedVehicle: null,
+  expandedDeliveryPoint: null,
+  submitting: false,
+  lastOutcome: null,
+
+  loadInitial: async (farm) => {
+    await fetchData(farm, '', 'full', set);
+  },
+
+  selectVehicle: async (farm, licensePlate) => {
+    set({ selectedVehicle: licensePlate, expandedDeliveryPoint: null });
+    await fetchData(farm, licensePlate, 'vehicle', set);
+  },
+
+  reload: async (farm) => {
+    const { selectedVehicle } = get();
+    if (selectedVehicle) await fetchData(farm, selectedVehicle, 'vehicle', set);
+    else await fetchData(farm, '', 'full', set);
+  },
+
+  toggleDeliveryPoint: (deliveryPoint) => {
+    set((s) => ({
+      expandedDeliveryPoint: s.expandedDeliveryPoint === deliveryPoint ? null : deliveryPoint,
+    }));
+  },
+
+  submitScan: async (farm, raw, temperature) => {
+    const state = get();
+    const fail = (kind: 'error' | 'warning', message: string): LoadOutcome => {
+      const out: LoadOutcome = { kind, message };
+      set({ lastOutcome: out });
+      return out;
+    };
+
+    if (!state.selectedVehicle) return fail('warning', 'Please select a Vehicle first.');
+
+    const boxLabel = extractBoxLabel(raw);
+    if (!boxLabel) return fail('warning', 'Please scan a valid box QR code.');
+
+    set({ submitting: true });
+    let result: { status?: string; message?: string } | undefined;
+    try {
+      const res = await karenLoadingApi.createLoadingEntry({
+        box_label_name: boxLabel,
+        vehicle: state.selectedVehicle,
+        temperature: Number.isFinite(temperature) ? temperature : 0,
+        delivery_date: state.data?.deliveryDate ?? '',
+      });
+      result = unwrap(res as RawLoadingEntryResponse);
+    } catch (err) {
+      set({ submitting: false });
+      return fail('error', mapAxiosError(err).message || 'Failed to record loading.');
+    }
+
+    set({ submitting: false });
+    if (!result || result.status !== 'success') {
+      return fail('error', result?.message ?? 'Failed to record loading.');
+    }
+
+    set({ lastOutcome: { kind: 'success', message: result.message } });
+    // Silent refresh: update loaded counts in place without hiding the plan
+    // or stealing focus from the scanner, so the operator keeps scanning.
+    await fetchData(farm, state.selectedVehicle, 'silent', set);
+    return { kind: 'success', message: result.message };
+  },
+
+  reset: () =>
+    set({
+      loading: false,
+      vehicleLoading: false,
+      loaded: false,
+      data: null,
+      selectedVehicle: null,
+      expandedDeliveryPoint: null,
+      submitting: false,
+      lastOutcome: null,
+    }),
+}));

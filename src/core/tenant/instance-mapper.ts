@@ -1,0 +1,24 @@
+export type Tenant = 'Karen' | 'Kikwetu' | 'Xflora' | 'Mona' | 'Tambuzi' | 'Demo';
+
+const URL_TO_TENANT: Record<string, Tenant> = {
+  'https://kikwetu.upande.com': 'Kikwetu',
+  'https://kikwetu-production.jh.frappe.cloud': 'Kikwetu',
+  'https://kaitet-group.upande.com': 'Karen',
+  'https://kaitet-group.c.frappe.cloud': 'Karen',
+  'http://10.49.59.154:8001': 'Karen',
+  'https://upande-kaitet-group-staging.frappe.cloud': 'Karen',
+  'https://upande-kaitet2.c.frappe.cloud': 'Karen',
+  'https://kaitet-group-staging.upande.com': 'Karen',
+  'https://upande-insights.frappe.cloud': 'Demo',
+  'http://81.17.101.149:8082': 'Karen',
+  'http://10.42.177.154:8001': 'Karen',
+  'http://192.168.43.97:8001': 'Karen',
+  'https://mona-flowers-staging.upande.com': 'Mona',
+  'https://mona-flowers.upande.com': 'Mona',
+  'https://xflora.fsn.frappe.cloud': 'Xflora',
+};
+
+export function getTenantByUrl(url: string | null | undefined): Tenant | null {
+  if (!url) return null;
+  return URL_TO_TENANT[url] ?? null;
+}
