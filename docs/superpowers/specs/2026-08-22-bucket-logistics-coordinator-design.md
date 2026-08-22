@@ -82,6 +82,26 @@ you, Aug 2026: `transfer-control` desktop page, `getTransferScheduleData`, `save
 - No new backend tests written by this repo (Server Scripts aren't under this repo's test
   harness) — verify manually against kaitet-group after the two scripts are created.
 
+## Revision (2026-08-22, post-implementation)
+
+The v1 build above missed something the coordinator actually needs first thing every
+morning: visibility into **today's routes** (what the sales team already planned per truck),
+and a clear **sequence** across trips ("which one goes out first"). Both were already in
+`getTransferScheduleData`'s response (`routes`) or trivially derivable from data already in
+scope (`orders[].schedule`) — this was a scoping miss in the design above, not a missing
+backend capability. Corrected in the same implementation pass:
+
+- Screen split into two tabs: **Today's Routes** (default — one card per truck's planned
+  route, from `Bucket Logistics Route` via `getTransferScheduleData.routes`, flagging
+  vehicles with a trip but no route instead of hiding them) and **Trips**.
+- Trips are numbered **Trip 1, Trip 2, ...** globally, ascending by the lowest
+  `packhouse-schedule` sequence number among each trip's cargo — independent of status.
+- `dispatched_at`/`received_at` added to `Bucket Request Trip` via two `Custom Field`
+  records (not a direct DocType field edit — safer, fully additive, no risk to the
+  existing field table). `getTransferScheduleData` updated to select both.
+- Receive action relabeled **"End Trip"**; once a trip is Received its card shows
+  **turnaround time** (`dispatched_at` → `received_at`) instead of an action button.
+
 ## Out of scope (v2 / deferred)
 - **Per-stop bottleneck detection** ("which farm on this route is holding things up") —
   `getFarmPlannedTrips` already computes this but is farm-scoped; a fleet-wide version needs
