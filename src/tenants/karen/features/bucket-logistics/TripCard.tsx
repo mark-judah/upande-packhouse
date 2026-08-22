@@ -2,13 +2,20 @@ import { StyleSheet, Text, View } from 'react-native';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { Button } from '@/src/core/ui/Button';
 import { StatusPills } from './StatusPills';
-import type { Trip } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
+import type { Trip, TripStatus } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
 
 function fillColor(pct: number): string {
   if (pct >= 100) return COLORS.success;
   if (pct > 0) return '#D97706';
   return COLORS.border;
 }
+
+const STATUS_BADGE: Record<TripStatus, { label: string; bg: string; fg: string }> = {
+  Draft: { label: 'Planned', bg: '#F5F5F5', fg: '#525252' },
+  Scheduled: { label: 'Planned', bg: '#F5F5F5', fg: '#525252' },
+  Dispatched: { label: 'On the road', bg: '#EFF6FF', fg: '#2563EB' },
+  Received: { label: 'Completed', bg: '#F0FDF4', fg: '#166534' },
+};
 
 export function TripCard({
   trip,
@@ -21,9 +28,18 @@ export function TripCard({
   onDispatch: (name: string) => void;
   onReceive: (name: string) => void;
 }) {
+  const badge = STATUS_BADGE[trip.status];
+
   return (
     <View style={s.card}>
       <View style={s.hd}>
+        <Text style={s.tripNo}>TRIP {trip.sequence}</Text>
+        <View style={[s.badge, { backgroundColor: badge.bg }]}>
+          <Text style={[s.badgeTxt, { color: badge.fg }]}>{badge.label}</Text>
+        </View>
+      </View>
+
+      <View style={s.vehicleRow}>
         <Text style={s.vehicle} numberOfLines={1}>{trip.vehicle}</Text>
         <Text style={s.count}>
           {trip.totalBuckets}{trip.capacityBuckets ? ` / ${trip.capacityBuckets}` : ''} bkt
@@ -60,7 +76,12 @@ export function TripCard({
       {trip.status === 'Draft' || trip.status === 'Scheduled' ? (
         <Button label="Dispatch" onPress={() => onDispatch(trip.name)} loading={actioning} style={s.action} />
       ) : trip.status === 'Dispatched' ? (
-        <Button label="Receive" onPress={() => onReceive(trip.name)} loading={actioning} variant="outline" style={s.action} />
+        <Button label="End Trip" onPress={() => onReceive(trip.name)} loading={actioning} variant="outline" style={s.action} />
+      ) : trip.turnaround ? (
+        <View style={s.turnaround}>
+          <Text style={s.turnaroundLbl}>Turnaround</Text>
+          <Text style={s.turnaroundVal}>{trip.turnaround}</Text>
+        </View>
       ) : null}
     </View>
   );
@@ -72,6 +93,13 @@ const s = StyleSheet.create({
     borderRadius: borderRadius.md, padding: spacing.md, marginBottom: spacing.sm,
   },
   hd: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  tripNo: {
+    fontFamily: fontFamily.bold, fontSize: fontSize.xs, color: COLORS.textMuted,
+    textTransform: 'uppercase', letterSpacing: 0.6,
+  },
+  badge: { borderRadius: borderRadius.full, paddingHorizontal: 10, paddingVertical: 3 },
+  badgeTxt: { fontFamily: fontFamily.semiBold, fontSize: 11 },
+  vehicleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
   vehicle: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: COLORS.text, flexShrink: 1 },
   count: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: COLORS.textSecondary },
   schedule: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 2 },
@@ -90,4 +118,10 @@ const s = StyleSheet.create({
   orderName: { flex: 1, fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary },
   orderBkt: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted },
   action: { marginTop: spacing.md },
+  turnaround: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: spacing.md, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.border,
+  },
+  turnaroundLbl: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 },
+  turnaroundVal: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: COLORS.success },
 });

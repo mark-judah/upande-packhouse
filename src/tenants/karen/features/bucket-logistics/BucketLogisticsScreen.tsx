@@ -1,21 +1,30 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Screen } from '@/src/core/ui/Screen';
+import { Segmented } from '@/src/core/ui/Segmented';
 import { useToast } from '@/src/core/ui/Toast';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { useKarenBucketLogisticsStore } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
 import type { Trip, TripGroup } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
+import { RouteCard } from './RouteCard';
 import { TripCard } from './TripCard';
 
+const TABS = [
+  { value: 'routes', label: "Today's Routes" },
+  { value: 'trips', label: 'Trips' },
+] as const;
+type Tab = (typeof TABS)[number]['value'];
+
 const SECTIONS: { key: TripGroup; label: string; empty: string }[] = [
-  { key: 'planned', label: 'Planned', empty: 'No trips planned yet — build them in Transfer Scheduling.' },
+  { key: 'planned', label: 'Planned', empty: 'No trips planned yet — built on the desktop Transfer Scheduling page.' },
   { key: 'on_the_road', label: 'On the road', empty: 'No trucks out right now.' },
-  { key: 'back', label: 'Back', empty: 'No trucks received yet today.' },
+  { key: 'back', label: 'Completed', empty: 'No trips ended yet today.' },
 ];
 
 export function KarenBucketLogisticsScreen() {
-  const { loading, error, groups, actioning, load, dispatch, receive, reset } = useKarenBucketLogisticsStore();
+  const [tab, setTab] = useState<Tab>('routes');
+  const { loading, error, groups, routes, actioning, load, dispatch, receive, reset } = useKarenBucketLogisticsStore();
   const { showSuccess, showError } = useToast();
 
   useEffect(() => {
@@ -47,7 +56,15 @@ export function KarenBucketLogisticsScreen() {
 
   return (
     <Screen title="Bucket Logistics" loading={loading} error={error} onRetry={load} onRefresh={load}>
-      {!loading && totalTrips === 0 ? (
+      <Segmented value={tab} options={TABS} onChange={setTab} />
+
+      {tab === 'routes' ? (
+        !loading && routes.length === 0 ? (
+          <Text style={s.empty}>No trucks planned for today yet.</Text>
+        ) : (
+          routes.map((route) => <RouteCard key={route.vehicle} route={route} />)
+        )
+      ) : !loading && totalTrips === 0 ? (
         <Text style={s.empty}>No bucket request trips yet today.</Text>
       ) : (
         SECTIONS.map((section) => (
