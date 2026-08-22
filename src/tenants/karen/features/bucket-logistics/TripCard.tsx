@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { Button } from '@/src/core/ui/Button';
 import { StatusPills } from './StatusPills';
-import type { Trip, TripStatus } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
+import { stageToPills, type Trip, type TripStatus } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
 
 function fillColor(pct: number): string {
   if (pct >= 100) return COLORS.success;
@@ -69,6 +69,11 @@ export function TripCard({
                 <Text style={s.orderBkt}>{o.buckets}</Text>
               </View>
             ))}
+            {stageToPills(stop.stage).length > 0 ? (
+              <View style={s.stopPills}>
+                <StatusPills pills={stageToPills(stop.stage)} />
+              </View>
+            ) : null}
           </View>
         ))}
       </View>
@@ -117,6 +122,7 @@ const s = StyleSheet.create({
   orderRow: { flexDirection: 'row', justifyContent: 'space-between', paddingLeft: 22, marginTop: 2 },
   orderName: { flex: 1, fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary },
   orderBkt: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted },
+  stopPills: { paddingLeft: 22 },
   action: { marginTop: spacing.md },
   turnaround: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

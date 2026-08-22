@@ -6,7 +6,6 @@ import type {
   RawTransferScheduleData,
   RawTrip,
   RawTripActionResponse,
-  RawTruckStatus,
 } from '../api/karen-bucket-logistics-api';
 import { mapAxiosError } from '@/src/core/api/client';
 
@@ -16,10 +15,14 @@ export type TripStatusPill = {
   count: number;
 };
 
+/** Live bucket-stage breakdown, already deduped by (order_pick_list, farm). */
+export type StageCounts = { awaiting: number; loaded: number; inTransit: number; shelved: number };
+
 export type TripStop = {
   farm: string;
   buckets: number;
   orders: { orderName: string; customer: string; varieties: string; buckets: number }[];
+  stage: StageCounts;
 };
 
 export type TripStatus = 'Draft' | 'Scheduled' | 'Dispatched' | 'Received';
@@ -80,6 +83,12 @@ function groupForStatus(status: string): TripGroup {
   return 'planned'; // Draft, Scheduled
 }
 
+const ZERO_STAGE: StageCounts = { awaiting: 0, loaded: 0, inTransit: 0, shelved: 0 };
+
+function addStage(a: StageCounts, b: StageCounts): StageCounts {
+  return { awaiting: a.awaiting + b.awaiting, loaded: a.loaded + b.loaded, inTransit: a.inTransit + b.inTransit, shelved: a.shelved + b.shelved };
+}
+
 function buildStops(trip: RawTrip): TripStop[] {
   const sequence = (trip.collection_order || '')
     .split(',')
@@ -87,9 +96,16 @@ function buildStops(trip: RawTrip): TripStop[] {
     .filter(Boolean);
 
   const byFarm = new Map<string, TripStop>();
+  // Stage counts are per (order_pick_list, farm) but the SAME pair can appear on
+  // multiple order rows within one trip (real data: multi-round planning adds a new
+  // row each time rather than merging into the existing one). Each duplicate row
+  // reports the pair's full stage counts, so dedupe by opl before summing into the
+  // stop total — summing every row would multiply the true count.
+  const seenOplPerFarm = new Map<string, Set<string>>();
+
   for (const row of trip.orders) {
     const farm = row.farm || '?';
-    if (!byFarm.has(farm)) byFarm.set(farm, { farm, buckets: 0, orders: [] });
+    if (!byFarm.has(farm)) byFarm.set(farm, { farm, buckets: 0, orders: [], stage: ZERO_STAGE });
     const stop = byFarm.get(farm)!;
     stop.buckets += row.buckets;
     stop.orders.push({
@@ -98,6 +114,18 @@ function buildStops(trip: RawTrip): TripStop[] {
       varieties: row.varieties,
       buckets: row.buckets,
     });
+
+    const seenOpls = seenOplPerFarm.get(farm) ?? new Set<string>();
+    seenOplPerFarm.set(farm, seenOpls);
+    if (!seenOpls.has(row.order_pick_list)) {
+      seenOpls.add(row.order_pick_list);
+      stop.stage = addStage(stop.stage, {
+        awaiting: row.awaiting || 0,
+        loaded: row.loaded || 0,
+        inTransit: row.in_transit || 0,
+        shelved: row.shelved || 0,
+      });
+    }
   }
 
   const known = Array.from(byFarm.keys());
@@ -106,19 +134,23 @@ function buildStops(trip: RawTrip): TripStop[] {
   return [...sequenced, ...rest].map((f) => byFarm.get(f)!);
 }
 
-const PILL_DEFS: { key: TripStatusPill['key']; label: string }[] = [
-  { key: 'awaiting', label: 'Awaiting' },
-  { key: 'loaded', label: 'Loading' },
-  { key: 'in_transit', label: 'In transit' },
-  { key: 'shelved', label: 'Arrived' },
+const PILL_DEFS: { key: TripStatusPill['key']; label: string; stageKey: keyof StageCounts }[] = [
+  { key: 'awaiting', label: 'Awaiting', stageKey: 'awaiting' },
+  { key: 'loaded', label: 'Loading', stageKey: 'loaded' },
+  { key: 'in_transit', label: 'In transit', stageKey: 'inTransit' },
+  { key: 'shelved', label: 'Arrived', stageKey: 'shelved' },
 ];
 
-function buildPills(vehicle: string, truckStatus: RawTruckStatus[]): TripStatusPill[] {
-  const s = truckStatus.find((t) => t.truck === vehicle);
-  if (!s || !s.total) return [];
+/** Stage counts -> display pills, dropping zero counts. Exported for per-stop use in the UI. */
+export function stageToPills(stage: StageCounts): TripStatusPill[] {
   return PILL_DEFS
-    .map((d) => ({ key: d.key, label: d.label, count: Number(s[d.key] ?? 0) }))
+    .map((d) => ({ key: d.key, label: d.label, count: stage[d.stageKey] }))
     .filter((p) => p.count > 0);
+}
+
+/** Trip-wide stage pills, summed across its (already-deduped) stops. */
+function buildPills(stops: TripStop[]): TripStatusPill[] {
+  return stageToPills(stops.reduce((acc, s) => addStage(acc, s.stage), ZERO_STAGE));
 }
 
 /** Every schedule-feed order whose OPL is on this trip. */
@@ -158,15 +190,11 @@ export function turnaroundLabel(dispatchedAt: string, receivedAt: string): strin
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-function buildTrip(
-  raw: RawTrip,
-  scheduleOrders: RawScheduleOrder[],
-  truckStatus: RawTruckStatus[],
-  sequence: number,
-): Trip {
+function buildTrip(raw: RawTrip, scheduleOrders: RawScheduleOrder[], sequence: number): Trip {
   const cap = raw.capacity_buckets || 0;
   const fillPct = cap > 0 ? Math.max(0, Math.min(100, Math.round((raw.total_buckets / cap) * 100))) : 0;
   const matches = scheduleMatches(raw, scheduleOrders);
+  const stops = buildStops(raw);
   return {
     name: raw.name,
     sequence,
@@ -176,8 +204,8 @@ function buildTrip(
     totalBuckets: raw.total_buckets || 0,
     totalStems: raw.total_stems || 0,
     fillPct,
-    stops: buildStops(raw),
-    pills: buildPills(raw.vehicle, truckStatus),
+    stops,
+    pills: buildPills(stops),
     scheduleContext: buildScheduleContext(matches),
     dispatchedAt: raw.dispatched_at || '',
     receivedAt: raw.received_at || '',
@@ -197,7 +225,7 @@ export function groupTrips(data: RawTransferScheduleData): Record<TripGroup, Tri
 
   const groups: Record<TripGroup, Trip[]> = { planned: [], on_the_road: [], back: [] };
   ranked.forEach(({ raw }, i) => {
-    const trip = buildTrip(raw, data.orders, data.truck_status, i + 1);
+    const trip = buildTrip(raw, data.orders, i + 1);
     groups[groupForStatus(trip.status)].push(trip);
   });
   return groups;

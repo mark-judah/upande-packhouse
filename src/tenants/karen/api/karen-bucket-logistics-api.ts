@@ -3,7 +3,7 @@ import { api } from '@/src/core/api/client';
 // =====================================================================
 // Bucket logistics coordinator: today's transfer schedule (orders by
 // farm/variety with packhouse-schedule priority, today's Bucket Request
-// Trips, live truck status) + trip dispatch/receive actions.
+// Trips with live per-farm bucket-stage counts) + trip dispatch/receive.
 // Server methods: getTransferScheduleData, dispatchBucketTrip,
 // receiveBucketTrip. Same backend as the desktop transfer-control page —
 // see docs/superpowers/specs/2026-08-22-bucket-logistics-coordinator-design.md.
@@ -39,7 +39,16 @@ export type RawScheduleOrder = {
   farms: RawScheduleOrderFarm[];
 };
 
-/** One (order, farm) row on a Bucket Request Trip. */
+/**
+ * One (order, farm) row on a Bucket Request Trip. `awaiting`/`loaded`/`in_transit`/
+ * `shelved` are live, computed server-side from Pick List Item flags for this exact
+ * (order_pick_list, farm) pair — NOT specific to this row. If the same
+ * (order_pick_list, farm) pair appears on more than one row within a trip (it does,
+ * in real data — see the store's buildStops), these four counts will be identical
+ * across those duplicate rows: dedupe by (order_pick_list, farm) before summing, or
+ * a multi-round-planned trip's stage totals will be inflated by however many
+ * duplicate rows share that pair.
+ */
 export type RawTripOrder = {
   order_pick_list: string;
   order_name: string;
@@ -50,6 +59,10 @@ export type RawTripOrder = {
   stems: number;
   full_farm_buckets: number;
   is_partial: number;
+  awaiting: number;
+  loaded: number;
+  in_transit: number;
+  shelved: number;
 };
 
 export type RawTrip = {
@@ -86,28 +99,15 @@ export type RawRoute = {
   farms: string[];
 };
 
-/** Live per-vehicle position, derived server-side from custom_transit_truck flags. */
-export type RawTruckStatus = {
-  truck: string;
-  total: number;
-  awaiting: number;
-  loaded: number;
-  in_transit: number;
-  shelved: number;
-  location: string;
-  farm: string;
-  loading_pct: number;
-  last: string;
-};
-
-// The real getTransferScheduleData response also includes `vehicles` and
-// `distances` — omitted here because this screen doesn't consume them
-// (route *building* stays desktop-only; `routes` itself is read for
-// visibility only — "what did the sales team already plan for today").
+// The real getTransferScheduleData response also includes `vehicles`,
+// `distances`, and `truck_status` — omitted here because this screen
+// doesn't consume them. `truck_status` in particular is a vehicle-wide
+// aggregate (can't tell trips on the same vehicle apart, never counted
+// shelved buckets) — superseded for this screen by the bucket-accurate
+// per-(order, farm) counts now on RawTripOrder above.
 export type RawTransferScheduleData = {
   orders: RawScheduleOrder[];
   trips: RawTrip[];
-  truck_status: RawTruckStatus[];
   routes: RawRoute[];
   packhouse: string;
   window: { from: string; to: string };
@@ -119,7 +119,7 @@ export type RawTripActionResponse = {
 };
 
 export const karenBucketLogisticsApi = {
-  /** Today's transfer schedule: orders-by-farm, today's trips, live truck status. */
+  /** Today's transfer schedule: orders-by-farm, today's trips with live bucket-stage counts. */
   fetch(): Promise<RawTransferScheduleData> {
     return api<RawTransferScheduleData>({
       method: 'GET',
