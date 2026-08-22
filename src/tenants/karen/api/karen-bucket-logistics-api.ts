@@ -64,6 +64,26 @@ export type RawTrip = {
   total_stems: number;
   capacity_buckets: number;
   orders: RawTripOrder[];
+  /** '' until dispatchBucketTrip is called. */
+  dispatched_at: string;
+  /** '' until receiveBucketTrip is called. */
+  received_at: string;
+};
+
+export type RawRouteLeg = {
+  leg: string;
+  from_farm: string;
+  to_farm: string;
+  distance_km: number;
+};
+
+/** One vehicle's planned physical route for today (Bucket Logistics Route). */
+export type RawRoute = {
+  name: string;
+  vehicle: string;
+  total_km: number;
+  legs: RawRouteLeg[];
+  farms: string[];
 };
 
 /** Live per-vehicle position, derived server-side from custom_transit_truck flags. */
@@ -80,13 +100,15 @@ export type RawTruckStatus = {
   last: string;
 };
 
-// The real getTransferScheduleData response also includes `vehicles`,
-// `distances`, and `routes` — omitted here because this screen doesn't
-// consume them (route/vehicle planning stays desktop-only).
+// The real getTransferScheduleData response also includes `vehicles` and
+// `distances` — omitted here because this screen doesn't consume them
+// (route *building* stays desktop-only; `routes` itself is read for
+// visibility only — "what did the sales team already plan for today").
 export type RawTransferScheduleData = {
   orders: RawScheduleOrder[];
   trips: RawTrip[];
   truck_status: RawTruckStatus[];
+  routes: RawRoute[];
   packhouse: string;
   window: { from: string; to: string };
   generated_at: string;

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { karenBucketLogisticsApi } from '../api/karen-bucket-logistics-api';
 import type {
+  RawRoute,
   RawScheduleOrder,
   RawTransferScheduleData,
   RawTrip,
@@ -25,6 +26,8 @@ export type TripStatus = 'Draft' | 'Scheduled' | 'Dispatched' | 'Received';
 
 export type Trip = {
   name: string;
+  /** 1-based, global across all of today's trips, lowest packhouse-schedule number first. */
+  sequence: number;
   vehicle: string;
   status: TripStatus;
   capacityBuckets: number;
@@ -36,9 +39,23 @@ export type Trip = {
   pills: TripStatusPill[];
   /** e.g. "Team A · #2 in queue" — from the matching order's team/schedule; '' if none match. */
   scheduleContext: string;
+  /** Raw Frappe datetime strings, '' until set. */
+  dispatchedAt: string;
+  receivedAt: string;
+  /** e.g. "1h 45m" once both timestamps are present; '' otherwise. */
+  turnaround: string;
 };
 
 export type TripGroup = 'planned' | 'on_the_road' | 'back';
+
+export type Route = {
+  vehicle: string;
+  /** Full drive chain including the packhouse at both ends; [] if no route set today. */
+  stops: string[];
+  totalKm: number;
+  hasRoute: boolean;
+  trip: { name: string; status: TripStatus } | null;
+};
 
 type ActionOutcome = { kind: 'success' | 'error'; message: string };
 
@@ -47,6 +64,7 @@ type State = {
   error: string | null;
   actioning: Record<string, boolean>;
   groups: Record<TripGroup, Trip[]>;
+  routes: Route[];
 
   load: () => Promise<void>;
   dispatch: (name: string) => Promise<ActionOutcome>;
@@ -103,19 +121,55 @@ function buildPills(vehicle: string, truckStatus: RawTruckStatus[]): TripStatusP
     .filter((p) => p.count > 0);
 }
 
-function buildScheduleContext(trip: RawTrip, scheduleOrders: RawScheduleOrder[]): string {
+/** Every schedule-feed order whose OPL is on this trip. */
+function scheduleMatches(trip: RawTrip, scheduleOrders: RawScheduleOrder[]): RawScheduleOrder[] {
   const oplSet = new Set(trip.orders.map((o) => o.order_pick_list));
-  const matches = scheduleOrders.filter((o) => oplSet.has(o.opl));
+  return scheduleOrders.filter((o) => oplSet.has(o.opl));
+}
+
+function buildScheduleContext(matches: RawScheduleOrder[]): string {
   if (!matches.length) return '';
   const best = matches.reduce((a, b) => (b.schedule < a.schedule ? b : a));
   return best.team ? `${best.team} · #${best.schedule} in queue` : `#${best.schedule} in queue`;
 }
 
-function buildTrip(raw: RawTrip, scheduleOrders: RawScheduleOrder[], truckStatus: RawTruckStatus[]): Trip {
+/** Lowest packhouse-schedule number among this trip's cargo; +Infinity if none match
+ * (pushes trips with no schedule context to the back of the global sequence). */
+function bestScheduleSeq(matches: RawScheduleOrder[]): number {
+  if (!matches.length) return Number.POSITIVE_INFINITY;
+  return matches.reduce((min, o) => Math.min(min, o.schedule), Number.POSITIVE_INFINITY);
+}
+
+function parseDt(s: string): Date | null {
+  if (!s) return null;
+  // Frappe datetimes come as "YYYY-MM-DD HH:MM:SS[.ffffff]".
+  const d = new Date(s.trim().replace(' ', 'T'));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** e.g. "1h 45m" between dispatch and arrival; '' if either timestamp is missing/invalid. */
+export function turnaroundLabel(dispatchedAt: string, receivedAt: string): string {
+  const start = parseDt(dispatchedAt);
+  const end = parseDt(receivedAt);
+  if (!start || !end) return '';
+  const minutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function buildTrip(
+  raw: RawTrip,
+  scheduleOrders: RawScheduleOrder[],
+  truckStatus: RawTruckStatus[],
+  sequence: number,
+): Trip {
   const cap = raw.capacity_buckets || 0;
   const fillPct = cap > 0 ? Math.max(0, Math.min(100, Math.round((raw.total_buckets / cap) * 100))) : 0;
+  const matches = scheduleMatches(raw, scheduleOrders);
   return {
     name: raw.name,
+    sequence,
     vehicle: raw.vehicle || 'Unassigned',
     status: (raw.status || 'Draft') as TripStatus,
     capacityBuckets: cap,
@@ -124,18 +178,66 @@ function buildTrip(raw: RawTrip, scheduleOrders: RawScheduleOrder[], truckStatus
     fillPct,
     stops: buildStops(raw),
     pills: buildPills(raw.vehicle, truckStatus),
-    scheduleContext: buildScheduleContext(raw, scheduleOrders),
+    scheduleContext: buildScheduleContext(matches),
+    dispatchedAt: raw.dispatched_at || '',
+    receivedAt: raw.received_at || '',
+    turnaround: turnaroundLabel(raw.dispatched_at, raw.received_at),
   };
 }
 
-/** Pure: raw feed -> trips grouped by lifecycle stage. Exported for testing. */
+/**
+ * Pure: raw feed -> trips grouped by lifecycle stage, numbered Trip 1, Trip 2, ...
+ * globally in ascending packhouse-schedule priority (Trip 1 = whichever truck's
+ * cargo is needed soonest), independent of status. Exported for testing.
+ */
 export function groupTrips(data: RawTransferScheduleData): Record<TripGroup, Trip[]> {
+  const ranked = data.trips
+    .map((raw) => ({ raw, seq: bestScheduleSeq(scheduleMatches(raw, data.orders)) }))
+    .sort((a, b) => a.seq - b.seq || a.raw.name.localeCompare(b.raw.name));
+
   const groups: Record<TripGroup, Trip[]> = { planned: [], on_the_road: [], back: [] };
-  for (const raw of data.trips) {
-    const trip = buildTrip(raw, data.orders, data.truck_status);
+  ranked.forEach(({ raw }, i) => {
+    const trip = buildTrip(raw, data.orders, data.truck_status, i + 1);
     groups[groupForStatus(trip.status)].push(trip);
-  }
+  });
   return groups;
+}
+
+/** The full drive chain (packhouse at both ends) from a route's ordered legs. */
+function routeStops(route: RawRoute): string[] {
+  if (!route.legs.length) return [];
+  return [route.legs[0].from_farm, ...route.legs.map((l) => l.to_farm)];
+}
+
+/**
+ * Pure: today's planned routes per vehicle, cross-referenced with whether a trip
+ * already exists for that vehicle — "what did the sales team plan" independent of
+ * "has anyone dispatched it yet". Includes vehicles that have a trip but no route
+ * (a data-quality signal worth surfacing, not hiding). Exported for testing.
+ */
+export function buildRoutes(data: RawTransferScheduleData): Route[] {
+  const tripByVehicle = new Map<string, RawTrip>();
+  for (const t of data.trips) {
+    if (t.vehicle && !tripByVehicle.has(t.vehicle)) tripByVehicle.set(t.vehicle, t);
+  }
+
+  const vehicles = new Set<string>();
+  data.routes.forEach((r) => { if (r.vehicle) vehicles.add(r.vehicle); });
+  data.trips.forEach((t) => { if (t.vehicle) vehicles.add(t.vehicle); });
+
+  return Array.from(vehicles)
+    .sort()
+    .map((vehicle) => {
+      const raw = data.routes.find((r) => r.vehicle === vehicle) || null;
+      const trip = tripByVehicle.get(vehicle) || null;
+      return {
+        vehicle,
+        stops: raw ? routeStops(raw) : [],
+        totalKm: raw ? raw.total_km : 0,
+        hasRoute: !!raw,
+        trip: trip ? { name: trip.name, status: (trip.status || 'Draft') as TripStatus } : null,
+      };
+    });
 }
 
 function unwrapAction(raw: RawTripActionResponse | undefined): { status?: string; message?: string } {
@@ -183,6 +285,10 @@ async function moveTrip(
       return { kind: 'error', message: result.message || 'Action failed.' };
     }
     set({ actioning: { ...get().actioning, [name]: false } });
+    // The optimistic move above doesn't know the server-set dispatched_at/received_at
+    // timestamp yet (needed for turnaround time) — refresh in the background to pick
+    // it up. Not awaited: the success outcome shouldn't wait on this round-trip.
+    get().load();
     return { kind: 'success', message: successMessage };
   } catch (err) {
     await get().load();
@@ -196,12 +302,13 @@ export const useKarenBucketLogisticsStore = create<State>((set, get) => ({
   error: null,
   actioning: {},
   groups: EMPTY_GROUPS,
+  routes: [],
 
   load: async () => {
     set({ loading: true, error: null });
     try {
       const raw = await karenBucketLogisticsApi.fetch();
-      set({ loading: false, groups: groupTrips(raw) });
+      set({ loading: false, groups: groupTrips(raw), routes: buildRoutes(raw) });
     } catch (err) {
       set({ loading: false, error: mapAxiosError(err).message || 'Could not load trips.' });
     }
@@ -211,7 +318,7 @@ export const useKarenBucketLogisticsStore = create<State>((set, get) => ({
     moveTrip(get, set, name, 'planned', 'on_the_road', 'Dispatched', karenBucketLogisticsApi.dispatch, 'Truck dispatched.'),
 
   receive: (name) =>
-    moveTrip(get, set, name, 'on_the_road', 'back', 'Received', karenBucketLogisticsApi.receive, 'Truck received.'),
+    moveTrip(get, set, name, 'on_the_road', 'back', 'Received', karenBucketLogisticsApi.receive, 'Trip ended.'),
 
-  reset: () => set({ loading: false, error: null, actioning: {}, groups: EMPTY_GROUPS }),
+  reset: () => set({ loading: false, error: null, actioning: {}, groups: EMPTY_GROUPS, routes: [] }),
 }));
