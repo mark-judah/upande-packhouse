@@ -29,6 +29,9 @@ export type RawPickListItem = {
   custom_spec?: string;
   /** Stem length from the Sales Order Item (`custom_length`). */
   custom_so_length?: string;
+  /** Item group of this variety (e.g. "Standard Roses" vs "Spray Roses"): the
+   *  server attaches it per line so packing can pick scan vs manual entry. */
+  item_group?: string;
 };
 
 export type RawPackListItem = {
@@ -74,6 +77,18 @@ export type RawPackingGuide = {
   remaining_stems?: number;
   overall_percentage?: number;
   items?: RawPackingGuideItem[];
+  /** Mixed-bunch bouquet: recipe (per-bunch colour/variety/stems) + spec + guide image. */
+  is_mixed_bunch?: boolean;
+  bouquet_guide?: {
+    colour?: string;
+    variety?: string;
+    variety_name?: string;
+    stems_per_bunch?: number | string;
+    length?: string;
+  }[];
+  spec?: string;
+  /** File URL of the spec's guide image (may be a /private/files/… path). */
+  spec_image?: string;
 };
 
 export type RawOrderPickList = {
@@ -139,7 +154,7 @@ export const karenPackingApi = {
   fetchPicklists(date: string): Promise<RawPicklistsResponse> {
     return api<RawPicklistsResponse>({
       method: 'GET',
-      url: '/api/method/fetchPicklists',
+      url: '/api/method/upande_packhouse.mobile.api.fetchPicklists',
       params: { date },
     });
   },
@@ -148,7 +163,7 @@ export const karenPackingApi = {
   fetchPickListWithFpl(oplId: string): Promise<RawPickListWithFplResponse> {
     return api<RawPickListWithFplResponse>({
       method: 'GET',
-      url: '/api/method/get_pick_list_with_farm_pack_list',
+      url: '/api/method/upande_packhouse.mobile.api.get_pick_list_with_farm_pack_list',
       params: { pick_list_id: oplId },
     });
   },
@@ -157,7 +172,7 @@ export const karenPackingApi = {
   fetchBunchForPacking(bunchId: string): Promise<RawBunchResponse> {
     return api<RawBunchResponse>({
       method: 'POST',
-      url: '/api/method/fetchStockEntryByBunch',
+      url: '/api/method/upande_packhouse.mobile.api.fetchStockEntryByBunch',
       data: { custom_bunch_id: bunchId, action: 'packing' },
     });
   },
@@ -172,7 +187,7 @@ export const karenPackingApi = {
   }): Promise<RawCreateFplResponse> {
     return api<RawCreateFplResponse>({
       method: 'POST',
-      url: '/api/method/createOrUpdateFarmPackList',
+      url: '/api/method/upande_packhouse.mobile.api.createOrUpdateFarmPackList',
       data: payload,
     });
   },

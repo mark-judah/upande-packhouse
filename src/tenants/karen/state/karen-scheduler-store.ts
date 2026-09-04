@@ -32,6 +32,8 @@ export type SchedulerOrder = {
   scheduleNumber: number;
   customer: string;
   team: string;
+  /** Linked Sales Order (for search). */
+  salesOrder: string;
   issuingPct: number;
   packed: boolean;
   totalStems: number;
@@ -98,6 +100,7 @@ function buildOrder(
     scheduleNumber: Math.round(num(schedule[name])),
     customer: (o.customer ?? '').toString(),
     team: (o.custom_team ?? '').toString(),
+    salesOrder: (o.sales_order ?? '').toString(),
     issuingPct,
     packed: packed[name] === 1,
     totalStems: Math.round(num(o.custom_total_stems)),

@@ -16,7 +16,7 @@ export type RawUserRolesResponse = {
 export async function fetchCurrentUserRoles(): Promise<string[]> {
   const res = await api<RawUserRolesResponse>({
     method: 'POST',
-    url: '/api/method/getCurrentUserRoles',
+    url: '/api/method/upande_packhouse.mobile.api.getCurrentUserRoles',
   });
   const payload = res.data ?? res.message ?? {};
   return Array.isArray(payload.roles) ? payload.roles : [];

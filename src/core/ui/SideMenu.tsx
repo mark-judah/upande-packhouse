@@ -29,6 +29,7 @@ const ROUTE_ICONS: Record<DrawerItem['route'], IconName> = {
   'bunch-handover': 'swap-horizontal-outline',
   staging: 'layers-outline',
   loading: 'car-outline',
+  'bucket-logistics': 'navigate-outline',
   dispatch: 'paper-plane-outline',
 };
 

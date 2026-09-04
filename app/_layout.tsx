@@ -94,6 +94,7 @@ export default function RootLayout() {
                 <Stack.Screen name="issuing" />
                 <Stack.Screen name="packing" />
                 <Stack.Screen name="loading" />
+                <Stack.Screen name="bucket-logistics" />
                 <Stack.Screen name="dispatch" />
                 <Stack.Screen name="configure-station" />
                 <Stack.Screen name="settings" />

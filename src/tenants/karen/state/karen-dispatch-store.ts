@@ -1,114 +1,134 @@
 import { create } from 'zustand';
 import { karenDispatchApi } from '../api/karen-dispatch-api';
-import type {
-  RawFetchDispatchTrucksResponse,
-  RawCreateDispatchEntryResponse,
-} from '../api/karen-dispatch-api';
+import type { RawLoadedOrdersResponse, RawRebuildResponse } from '../api/karen-dispatch-api';
 import { mapAxiosError } from '@/src/core/api/client';
+import { tomorrowISO } from '@/src/core/date';
 
-export type DispatchTruck = { licensePlate: string };
+export type LoadedOrder = {
+  salesOrder: string;
+  orderName: string;
+  customer: string;
+  deliveryPoint: string;
+  farm: string;
+  consignee: string;
+  boxesLoaded: number;
+};
 
 export type DispatchOutcome =
-  | { kind: 'success'; boxLabel: string; truck: string; message?: string }
+  | { kind: 'success'; message: string }
   | { kind: 'error'; message: string };
 
 type State = {
-  trucks: DispatchTruck[];
-  trucksLoading: boolean;
-  selectedTruck: string | null;
-  submitting: boolean;
+  loading: boolean;
+  saving: boolean;
+  /** Delivery date being viewed (YYYY-MM-DD); defaults to tomorrow. */
+  selectedDate: string;
+  /** Date echoed by the server for the current data. */
+  deliveryDate: string;
+  orders: LoadedOrder[];
+  totalBoxes: number;
   lastOutcome: DispatchOutcome | null;
 
-  loadTrucks: () => Promise<void>;
-  setSelectedTruck: (plate: string | null) => void;
-  submitBoxLabel: (boxLabel: string) => Promise<DispatchOutcome>;
+  loadOrders: () => Promise<void>;
+  save: () => Promise<DispatchOutcome>;
+  setDate: (date: string) => Promise<void>;
   reset: () => void;
 };
 
-function extractTrucks(raw: RawFetchDispatchTrucksResponse): DispatchTruck[] {
-  const msg = raw?.message;
-  if (!msg) return [];
-  // `frappe.response.message` may be the array directly OR { status, data }
-  const list = Array.isArray(msg) ? msg : (msg.data ?? []);
-  return list
-    .map((t) => ({ licensePlate: (t.license_plate ?? '').trim() }))
-    .filter((t) => t.licensePlate.length > 0);
-}
-
-function extractMessage(raw: RawCreateDispatchEntryResponse): string {
+function unwrap<T extends { status?: string; message?: string; data?: unknown }>(
+  raw: { message?: T | string } | undefined,
+): T | undefined {
   const m = raw?.message;
-  if (!m) return '';
-  if (typeof m === 'string') return m;
-  return m.message ?? '';
+  if (!m) return undefined;
+  if (typeof m === 'string') {
+    try {
+      return JSON.parse(m) as T;
+    } catch {
+      return undefined;
+    }
+  }
+  return m;
 }
 
 export const useKarenDispatchStore = create<State>((set, get) => ({
-  trucks: [],
-  trucksLoading: false,
-  selectedTruck: null,
-  submitting: false,
+  loading: false,
+  saving: false,
+  selectedDate: tomorrowISO(),
+  deliveryDate: '',
+  orders: [],
+  totalBoxes: 0,
   lastOutcome: null,
 
-  loadTrucks: async () => {
-    set({ trucksLoading: true });
+  loadOrders: async () => {
+    set({ loading: true });
     try {
-      const raw = await karenDispatchApi.fetchTrucks();
-      const trucks = extractTrucks(raw);
-      set({ trucks, trucksLoading: false });
-    } catch (err) {
-      const message = mapAxiosError(err).message;
+      const raw: RawLoadedOrdersResponse = await karenDispatchApi.fetchLoadedOrders(get().selectedDate);
+      const msg = unwrap(raw);
+      const data = msg?.data ?? {};
+      const orders: LoadedOrder[] = (data.orders ?? []).map((o) => ({
+        salesOrder: (o.sales_order ?? '').toString(),
+        orderName: (o.order_name ?? o.sales_order ?? '').toString(),
+        customer: (o.customer ?? '').toString(),
+        deliveryPoint: (o.delivery_point ?? '').toString(),
+        farm: (o.farm ?? '').toString(),
+        consignee: (o.consignee ?? '').toString(),
+        boxesLoaded: Number(o.boxes_loaded ?? 0),
+      }));
       set({
-        trucksLoading: false,
-        trucks: [],
-        lastOutcome: { kind: 'error', message: message || 'Could not load trucks.' },
+        loading: false,
+        orders,
+        totalBoxes: Number(data.total_boxes ?? 0),
+        deliveryDate: (data.delivery_date ?? '').toString(),
+      });
+    } catch (err) {
+      set({
+        loading: false,
+        orders: [],
+        totalBoxes: 0,
+        lastOutcome: { kind: 'error', message: mapAxiosError(err).message || 'Could not load orders.' },
       });
     }
   },
 
-  setSelectedTruck: (plate) => set({ selectedTruck: plate }),
-
-  submitBoxLabel: async (boxLabel) => {
-    const truck = get().selectedTruck;
-    if (!truck) {
-      const outcome: DispatchOutcome = {
-        kind: 'error',
-        message: 'Select a truck before scanning a box.',
-      };
-      set({ lastOutcome: outcome });
-      return outcome;
-    }
-    const cleaned = boxLabel.trim();
-    if (!cleaned) {
-      const outcome: DispatchOutcome = { kind: 'error', message: 'Empty box scan.' };
-      set({ lastOutcome: outcome });
-      return outcome;
-    }
-
-    set({ submitting: true });
+  save: async () => {
+    set({ saving: true });
     try {
-      const raw = await karenDispatchApi.createEntry({ truck, box_label: cleaned });
-      const outcome: DispatchOutcome = {
+      const raw: RawRebuildResponse = await karenDispatchApi.createOrUpdateDispatch(get().selectedDate);
+      const msg = unwrap(raw);
+      if (msg?.status === 'error') {
+        const out: DispatchOutcome = { kind: 'error', message: msg.message || 'Could not save dispatch.' };
+        set({ saving: false, lastOutcome: out });
+        return out;
+      }
+      const out: DispatchOutcome = {
         kind: 'success',
-        truck,
-        boxLabel: cleaned,
-        message: extractMessage(raw) || undefined,
+        message: msg?.message || 'Dispatch form saved from loaded boxes.',
       };
-      set({ submitting: false, lastOutcome: outcome });
-      return outcome;
+      set({ saving: false, lastOutcome: out });
+      return out;
     } catch (err) {
-      const message = mapAxiosError(err).message || 'Could not submit dispatch entry.';
-      const outcome: DispatchOutcome = { kind: 'error', message };
-      set({ submitting: false, lastOutcome: outcome });
-      return outcome;
+      const out: DispatchOutcome = {
+        kind: 'error',
+        message: mapAxiosError(err).message || 'Could not save dispatch form.',
+      };
+      set({ saving: false, lastOutcome: out });
+      return out;
     }
+  },
+
+  setDate: async (date) => {
+    set({ selectedDate: date, orders: [], totalBoxes: 0 });
+    await get().loadOrders();
   },
 
   reset: () =>
     set({
-      trucks: [],
-      trucksLoading: false,
-      selectedTruck: null,
-      submitting: false,
+      loading: false,
+      saving: false,
+      selectedDate: tomorrowISO(),
+      deliveryDate: '',
+      orders: [],
+      totalBoxes: 0,
       lastOutcome: null,
     }),
 }));

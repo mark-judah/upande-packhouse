@@ -11,7 +11,11 @@ export type StageOutcome =
 type State = {
   submitting: boolean;
   lastOutcome: StageOutcome | null;
-  /** Parse a scanned box QR, stage it, return the outcome. */
+  /** Current dispatch-coldstore location (from a scanned location QR). */
+  location: string;
+  /** Set the staging location from a scanned location QR. */
+  setLocation: (raw: string) => void;
+  /** Parse a scanned box QR, stage it at the current location, return the outcome. */
   submitScan: (raw: string) => Promise<StageOutcome>;
   reset: () => void;
 };
@@ -25,6 +29,20 @@ function extractBoxLabel(raw: string): string {
     const parsed = JSON.parse(text) as Record<string, unknown>;
     const label = parsed.box_label;
     return typeof label === 'string' ? label.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Pull the location from a scan: `{location|name|place:"…"}` or a bare string. */
+function extractLocation(raw: string): string {
+  const text = raw.replace(/[\r\n]+/g, '').trim();
+  if (!text) return '';
+  if (!text.startsWith('{')) return text;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const v = parsed.location ?? parsed.name ?? parsed.place;
+    return typeof v === 'string' ? v.trim() : '';
   } catch {
     return '';
   }
@@ -49,9 +67,16 @@ function resolve(raw: RawStagingResponse): { status?: string; message?: string }
   return {};
 }
 
-export const useKarenStagingStore = create<State>((set) => ({
+export const useKarenStagingStore = create<State>((set, get) => ({
   submitting: false,
   lastOutcome: null,
+  location: '',
+
+  setLocation: (raw) => {
+    const loc = extractLocation(raw);
+    if (loc) set({ location: loc, lastOutcome: { kind: 'success', message: `Staging location set: ${loc}` } });
+    else set({ lastOutcome: { kind: 'warning', message: 'Could not read a valid location QR.' } });
+  },
 
   submitScan: async (raw) => {
     const fail = (kind: 'error' | 'warning', message: string): StageOutcome => {
@@ -60,13 +85,16 @@ export const useKarenStagingStore = create<State>((set) => ({
       return out;
     };
 
+    const location = get().location;
+    if (!location) return fail('warning', 'Scan a staging location first.');
+
     const boxLabel = extractBoxLabel(raw);
     if (!boxLabel) return fail('warning', 'Please scan a valid box QR code.');
 
     set({ submitting: true });
     let result: { status?: string; message?: string };
     try {
-      const res = await karenStagingApi.createStagingEntry(boxLabel);
+      const res = await karenStagingApi.createStagingEntry(boxLabel, location);
       result = resolve(res);
     } catch (err) {
       set({ submitting: false });
@@ -86,5 +114,5 @@ export const useKarenStagingStore = create<State>((set) => ({
     return fail('error', result.message || 'Failed to create staging entry.');
   },
 
-  reset: () => set({ submitting: false, lastOutcome: null }),
+  reset: () => set({ submitting: false, lastOutcome: null, location: '' }),
 }));

@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card } from '@/src/core/ui/Card';
 import { DateSelector } from '@/src/core/ui/DateSelector';
@@ -31,10 +31,21 @@ const STAGE_SHORT: Record<string, string> = {
 
 export function KarenSchedulerScreen() {
   const { loading, error, date, orders, load, setDate } = useKarenSchedulerStore();
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter((o) =>
+      [o.customer, o.orderName, o.salesOrder, o.team].some((v) =>
+        (v || '').toLowerCase().includes(q),
+      ),
+    );
+  }, [orders, query]);
 
   return (
     <Screen title="Scheduler">
@@ -47,20 +58,36 @@ export function KarenSchedulerScreen() {
           resetTo={tomorrowISO()}
           resetLabel="Tomorrow"
         />
+        <TextInput
+          style={s.search}
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search customer, order, sales order, team"
+          placeholderTextColor={COLORS.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          clearButtonMode="while-editing"
+        />
         <Text style={s.helper}>
           {loading
             ? 'Loading…'
-            : `${orders.length} order${orders.length === 1 ? '' : 's'} · in processing order`}
+            : query.trim()
+              ? `${filtered.length} of ${orders.length} order${orders.length === 1 ? '' : 's'} match`
+              : `${orders.length} order${orders.length === 1 ? '' : 's'} · in processing order`}
         </Text>
         {error ? <Text style={s.err}>{error}</Text> : null}
       </Card>
 
-      {orders.map((o) => (
+      {filtered.map((o) => (
         <OrderRow key={o.oplName} order={o} />
       ))}
 
       {!loading && orders.length === 0 && !error ? (
         <Card><Text style={s.helper}>No orders for this delivery date.</Text></Card>
+      ) : null}
+
+      {!loading && orders.length > 0 && filtered.length === 0 ? (
+        <Card><Text style={s.helper}>No orders match “{query.trim()}”.</Text></Card>
       ) : null}
     </Screen>
   );
@@ -81,12 +108,11 @@ function OrderRow({ order }: { order: SchedulerOrder }) {
 
       <View style={s.body}>
         <View style={s.titleLine}>
-          <Text style={s.orderName} numberOfLines={1}>{order.orderName}</Text>
+          <Text style={s.customer} numberOfLines={1}>{order.customer || '—'}</Text>
           {order.packed ? <Text style={s.packed}>packed</Text> : null}
         </View>
-        <Text style={s.sub} numberOfLines={1}>
-          {[order.customer, order.team].filter(Boolean).join('  ·  ')}
-        </Text>
+        <Text style={s.orderName} numberOfLines={1}>{order.orderName}</Text>
+        {order.team ? <Text style={s.sub} numberOfLines={1}>{order.team}</Text> : null}
 
         {order.specs.length > 0 ? (
           <View style={s.specs}>
@@ -95,6 +121,7 @@ function OrderRow({ order }: { order: SchedulerOrder }) {
                 <Text style={s.specText} numberOfLines={1}>
                   {sp.spec || sp.variety}
                 </Text>
+                {sp.length ? <Text style={s.specLen}>{sp.length}</Text> : null}
                 <Text style={s.specBoxes}>{sp.boxes} {sp.boxes === 1 ? 'box' : 'boxes'}</Text>
               </View>
             ))}
@@ -137,6 +164,17 @@ function Stat({ label, value }: { label: string; value: string }) {
 const s = StyleSheet.create({
   helper: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: spacing.xs },
   err: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: '#dc2626', marginTop: spacing.xs },
+  search: {
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.sm,
+    color: COLORS.text,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    marginTop: spacing.sm,
+  },
 
   row: {
     flexDirection: 'row',
@@ -159,12 +197,14 @@ const s = StyleSheet.create({
 
   body: { flex: 1, minWidth: 0 },
   titleLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  orderName: { flex: 1, fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },
+  customer: { flex: 1, fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: COLORS.text },
+  orderName: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textSecondary, marginTop: 1 },
   packed: { fontFamily: fontFamily.bold, fontSize: 10, color: '#16a34a' },
   sub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 1 },
   specs: { marginTop: 6, gap: 2 },
   specRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   specText: { flex: 1, fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: COLORS.text },
+  specLen: { fontFamily: fontFamily.semiBold, fontSize: 10, color: COLORS.primary },
   specBoxes: { fontFamily: fontFamily.medium, fontSize: 10, color: COLORS.textSecondary },
 
   badges: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 },

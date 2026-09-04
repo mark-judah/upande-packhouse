@@ -91,13 +91,22 @@ export type RawLoadingEntryResponse = {
 };
 
 export const karenLoadingApi = {
-  /** The day's loading data for a farm; pass an empty `vehicle` for the
-   *  vehicle list + available plans, or a license plate for its plan. */
-  fetchLoadingData(farm: string, vehicle: string): Promise<RawLoadingResponse> {
+  /** Loading data for a farm on a delivery date; pass an empty `vehicle` for the
+   *  vehicle list + available plans, or a license plate for its plan.
+   *  `deliveryDate` optional — server defaults to tomorrow. */
+  fetchLoadingData(
+    farm: string,
+    vehicle: string,
+    deliveryDate?: string,
+    plan?: string,
+  ): Promise<RawLoadingResponse> {
+    const params: Record<string, string> = { farm, vehicle };
+    if (deliveryDate) params.delivery_date = deliveryDate;
+    if (plan) params.plan = plan;
     return api<RawLoadingResponse>({
       method: 'GET',
-      url: '/api/method/fetchLoadingData',
-      params: { farm, vehicle },
+      url: '/api/method/upande_packhouse.mobile.api.fetchLoadingData',
+      params,
     });
   },
 
@@ -105,7 +114,7 @@ export const karenLoadingApi = {
   createLoadingEntry(payload: LoadingEntryPayload): Promise<RawLoadingEntryResponse> {
     return api<RawLoadingEntryResponse>({
       method: 'POST',
-      url: '/api/method/createLoadingEntry',
+      url: '/api/method/upande_packhouse.mobile.api.createLoadingEntry',
       data: { data: payload },
     });
   },

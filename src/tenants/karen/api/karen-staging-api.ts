@@ -12,12 +12,12 @@ export type RawStagingResponse = {
 };
 
 export const karenStagingApi = {
-  /** Stage one scanned box label onto the day's staging area. */
-  createStagingEntry(boxLabel: string): Promise<RawStagingResponse> {
+  /** Stage one scanned box label at a dispatch-coldstore location. */
+  createStagingEntry(boxLabel: string, location: string): Promise<RawStagingResponse> {
     return api<RawStagingResponse>({
       method: 'POST',
-      url: '/api/method/createStagingEntry',
-      data: { box_label: boxLabel },
+      url: '/api/method/upande_packhouse.mobile.api.createStagingEntry',
+      data: { box_label: boxLabel, location },
     });
   },
 };

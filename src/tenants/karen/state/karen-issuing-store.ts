@@ -8,7 +8,7 @@ import type {
   RawReadySaleOrderItem,
 } from '../api/karen-issuing-api';
 import { mapAxiosError } from '@/src/core/api/client';
-import { todayISO } from '@/src/core/date';
+import { tomorrowISO } from '@/src/core/date';
 
 /** Normalised packing-list row used by the screen. */
 export type PackingItem = {
@@ -35,7 +35,7 @@ export type ReadyOrder = { name: string; itemGroups: string[]; teams: string[] }
 type State = {
   ordersLoading: boolean;
   availableOrders: ReadyOrder[];
-  /** Day being viewed (YYYY-MM-DD). Defaults to today; lets users see past orders. */
+  /** Day being viewed (YYYY-MM-DD). Defaults to tomorrow — pack/issue today for tomorrow's shipments; lets users pick other days. */
   selectedDate: string;
   /** Active item-group filter for the order picker; null = show all. */
   selectedItemGroup: string | null;
@@ -194,7 +194,7 @@ function extractBucketIdFromScan(raw: string): string {
 export const useKarenIssuingStore = create<State>((set, get) => ({
   ordersLoading: false,
   availableOrders: [],
-  selectedDate: todayISO(),
+  selectedDate: tomorrowISO(),
   selectedItemGroup: null,
   selectedTeam: null,
 
@@ -356,7 +356,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
     set({
       ordersLoading: false,
       availableOrders: [],
-      selectedDate: todayISO(),
+      selectedDate: tomorrowISO(),
       selectedItemGroup: null,
       selectedTeam: null,
       packingLoading: false,

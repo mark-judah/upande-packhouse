@@ -5,7 +5,7 @@ import { storage, StorageKeys } from '@/src/core/storage';
 
 export const APP_VERSION: string = Constants.expoConfig?.version ?? '1.0.0';
 
-const ENDPOINT = '/api/method/reportAppVersion';
+const ENDPOINT = '/api/method/upande_packhouse.mobile.api.reportAppVersion';
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);

@@ -10,12 +10,15 @@ const URL_TO_TENANT: Record<string, Tenant> = {
   'https://upande-kaitet2.c.frappe.cloud': 'Karen',
   'https://kaitet-group-staging.upande.com': 'Karen',
   'https://upande-insights.frappe.cloud': 'Demo',
-  'http://81.17.101.149:8082': 'Karen',
+  'http://10.112.207.154:8002': 'Karen',
   'http://10.42.177.154:8001': 'Karen',
   'http://192.168.43.97:8001': 'Karen',
+  'http://10.56.207.154:8002': 'Karen',
+  'http://10.209.26.154:8002': 'Karen',
   'https://mona-flowers-staging.upande.com': 'Mona',
   'https://mona-flowers.upande.com': 'Mona',
   'https://xflora.fsn.frappe.cloud': 'Xflora',
+
 };
 
 export function getTenantByUrl(url: string | null | undefined): Tenant | null {

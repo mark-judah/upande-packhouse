@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
+import { storage, StorageKeys } from '@/src/core/storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card, Alert } from '@/src/core/ui/Card';
 import { Button } from '@/src/core/ui/Button';
 import { Dropdown } from '@/src/core/ui/Dropdown';
 import { DateSelector } from '@/src/core/ui/DateSelector';
+import { tomorrowISO } from '@/src/core/date';
 import { ItemGroupFilter } from '@/src/core/ui/ItemGroupFilter';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
 import { focusWhenReady } from '@/src/core/scanning/focus';
@@ -14,6 +16,15 @@ import { useToast } from '@/src/core/ui/Toast';
 import { useKarenPackingStore, stemsPerBunch } from '@/src/tenants/karen/state/karen-packing-store';
 import { audio } from '@/src/core/audio';
 import { COLORS, fontFamily, fontSize, spacing, borderRadius } from '@/src/core/theme';
+
+const COLOUR_HEX: Record<string, string> = {
+  red: '#dc2626', white: '#f3f4f6', pink: '#ec4899', yellow: '#eab308',
+  orange: '#f97316', cream: '#fde68a', peach: '#fca5a5', purple: '#9333ea',
+  lavender: '#a78bfa', green: '#16a34a', bicolor: '#8b5cf6', cerise: '#db2777',
+};
+function colourHex(name?: string): string {
+  return COLOUR_HEX[(name || '').trim().toLowerCase()] || '#9ca3af';
+}
 
 export function KarenPackingScreen() {
   const scanRef = useRef<ScanFieldHandle>(null);
@@ -53,6 +64,28 @@ export function KarenPackingScreen() {
   }, [loadPicklists, reset]);
 
   const isStandardRoses = packingGuide?.itemGroup === 'Standard Roses';
+
+  // Guide image is a (possibly private) Frappe file — needs base URL + session cookie.
+  const [imgBase, setImgBase] = useState<string | null>(null);
+  const [imgCookie, setImgCookie] = useState<string | null>(null);
+  useEffect(() => {
+    (async () => {
+      setImgBase((await storage.get(StorageKeys.instanceUrl)) || null);
+      setImgCookie((await storage.get(StorageKeys.cookie)) || null);
+    })();
+  }, []);
+
+  const bouquetImage = useMemo(() => {
+    const p = packingGuide?.specImage;
+    if (!p || !imgBase) return null;
+    const uri = p.startsWith('http') ? p : imgBase.replace(/\/$/, '') + encodeURI(p);
+    return imgCookie ? { uri, headers: { Cookie: imgCookie } } : { uri };
+  }, [packingGuide?.specImage, imgBase, imgCookie]);
+
+  const totalPerBunch = useMemo(
+    () => (packingGuide?.bouquetGuide ?? []).reduce((n, b) => n + b.stemsPerBunch, 0),
+    [packingGuide?.bouquetGuide],
+  );
 
   // Spray/mixed roses scan against bunch QRs; standard roses are entered
   // manually. Hand focus to the scanner when we're in scan mode.
@@ -234,7 +267,14 @@ export function KarenPackingScreen() {
   return (
     <Screen title="Packing Entry">
       <Card title="Order">
-        <DateSelector value={selectedDate} onChange={setDate} label="Order date" />
+        <DateSelector
+          value={selectedDate}
+          onChange={setDate}
+          label="Delivery date"
+          maxDate={null}
+          resetTo={tomorrowISO()}
+          resetLabel="Tomorrow"
+        />
         {teams.length > 0 ? (
           <ItemGroupFilter
             label="Team"
@@ -285,6 +325,32 @@ export function KarenPackingScreen() {
           </Text>
         ) : null}
       </Card>
+
+      {showTable && packingGuide?.isMixedBunch ? (
+        <Card title="Bouquet Guide">
+          {bouquetImage ? (
+            <Image source={bouquetImage} style={s.bouquetImg} resizeMode="contain" />
+          ) : packingGuide.specImage ? (
+            <Text style={s.helper}>Loading guide image…</Text>
+          ) : null}
+          <Text style={s.bouquetHint}>Build each bunch to match the photo — per bunch:</Text>
+          {packingGuide.bouquetGuide.map((b, i) => (
+            <View key={`${b.variety}-${i}`} style={s.recipeRow}>
+              <View style={[s.colourDot, { backgroundColor: colourHex(b.colour) }]} />
+              <Text style={s.recipeStems}>{b.stemsPerBunch}</Text>
+              <Text style={s.recipeStemsLbl}>stems</Text>
+              <Text style={s.recipeName} numberOfLines={1}>
+                {[b.colour, b.varietyName].filter(Boolean).join(' — ')}
+                {b.length ? `  ·  ${b.length}` : ''}
+              </Text>
+            </View>
+          ))}
+          <Text style={s.recipeTotal}>
+            {totalPerBunch} stems per bunch · {packingGuide.bouquetGuide.length} colour
+            {packingGuide.bouquetGuide.length === 1 ? '' : 's'}
+          </Text>
+        </Card>
+      ) : null}
 
       {orderIssues.length > 0 ? (
         <Alert tone="warn">
@@ -483,6 +549,59 @@ const s = StyleSheet.create({
     fontSize: fontSize.xs,
     color: COLORS.textMuted,
     marginTop: spacing.xs,
+  },
+
+  bouquetImg: {
+    width: '100%',
+    height: 220,
+    borderRadius: borderRadius.md,
+    backgroundColor: '#f3f4f6',
+    marginBottom: spacing.sm,
+  },
+  bouquetHint: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.sm,
+    color: COLORS.text,
+    marginBottom: spacing.xs,
+  },
+  recipeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  colourDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,0,0,0.25)',
+  },
+  recipeStems: {
+    fontFamily: fontFamily.bold,
+    fontSize: fontSize.md,
+    color: COLORS.text,
+    minWidth: 22,
+    textAlign: 'right',
+  },
+  recipeStemsLbl: {
+    fontFamily: fontFamily.regular,
+    fontSize: 10,
+    color: COLORS.textMuted,
+  },
+  recipeName: {
+    flex: 1,
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.sm,
+    color: COLORS.text,
+  },
+  recipeTotal: {
+    fontFamily: fontFamily.bold,
+    fontSize: fontSize.xs,
+    color: COLORS.textMuted,
+    marginTop: spacing.sm,
   },
 
   boxHeader: {

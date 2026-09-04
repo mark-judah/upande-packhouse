@@ -6,6 +6,7 @@ import type {
   RawLoadingResponse,
 } from '../api/karen-loading-api';
 import { mapAxiosError } from '@/src/core/api/client';
+import { tomorrowISO } from '@/src/core/date';
 
 // ---------------------------------------------------------------------
 // Normalised view models (mirror of the Flutter KaitetLoadingData model)
@@ -247,19 +248,28 @@ type State = {
   loaded: boolean;
   data: LoadingData | null;
 
-  /** License plate of the chosen truck, or null before one is picked. */
+  /** The chosen loading plan (LP-…), or null before one is picked. This — not
+   *  the vehicle — is the selection flag, since a plan may have no vehicle. */
+  selectedPlan: string | null;
+  /** The chosen plan's vehicle (from the response); may be blank/null. */
   selectedVehicle: string | null;
   expandedDeliveryPoint: string | null;
+  /** Delivery date being viewed (YYYY-MM-DD); defaults to tomorrow. */
+  selectedDate: string;
 
   submitting: boolean;
   lastOutcome: LoadOutcome | null;
 
-  /** Initial load: vehicle list + available plans (no vehicle scope). */
+  /** Initial load: vehicle list + available plans (no plan scope). */
   loadInitial: (farm: string) => Promise<void>;
-  /** Pick a truck and fetch its plan. */
-  selectVehicle: (farm: string, licensePlate: string) => Promise<void>;
-  /** Re-fetch the current view (vehicle plan if one is selected, else list). */
+  /** Pick a loading plan (by name) and fetch it. */
+  selectPlan: (farm: string, planName: string) => Promise<void>;
+  /** Re-fetch the current view (the chosen plan if one is selected, else list). */
   reload: (farm: string) => Promise<void>;
+  /** Change the delivery date and reload the day's available plans. */
+  setDate: (farm: string, date: string) => Promise<void>;
+  /** Clear the chosen plan and return to the day's plan list. */
+  deselectVehicle: (farm: string) => Promise<void>;
   toggleDeliveryPoint: (deliveryPoint: string) => void;
   submitScan: (farm: string, raw: string, temperature: number) => Promise<LoadOutcome>;
   reset: () => void;
@@ -276,11 +286,13 @@ async function fetchData(
   vehicle: string,
   mode: 'full' | 'vehicle' | 'silent',
   set: (partial: Partial<State> | ((s: State) => Partial<State>)) => void,
+  deliveryDate?: string,
+  plan?: string,
 ): Promise<void> {
   if (mode === 'full') set({ loading: true });
   else if (mode === 'vehicle') set({ vehicleLoading: true });
   try {
-    const raw = await karenLoadingApi.fetchLoadingData(farm, vehicle);
+    const raw = await karenLoadingApi.fetchLoadingData(farm, vehicle, deliveryDate, plan);
     const result = unwrap(raw);
     if (!result || result.status !== 'success') {
       // A failed silent refresh leaves the existing plan untouched.
@@ -301,6 +313,8 @@ async function fetchData(
       vehicleLoading: false,
       loaded: true,
       data,
+      // Reflect the plan's own vehicle (may be blank) for display + loading entry.
+      selectedVehicle: plan ? (data.selectedVehicle || null) : s.selectedVehicle,
       expandedDeliveryPoint:
         s.expandedDeliveryPoint ?? (dps.length > 0 ? dps[0] : null),
     }));
@@ -320,24 +334,37 @@ export const useKarenLoadingStore = create<State>((set, get) => ({
   vehicleLoading: false,
   loaded: false,
   data: null,
+  selectedPlan: null,
   selectedVehicle: null,
   expandedDeliveryPoint: null,
+  selectedDate: tomorrowISO(),
   submitting: false,
   lastOutcome: null,
 
   loadInitial: async (farm) => {
-    await fetchData(farm, '', 'full', set);
+    await fetchData(farm, '', 'full', set, get().selectedDate);
   },
 
-  selectVehicle: async (farm, licensePlate) => {
-    set({ selectedVehicle: licensePlate, expandedDeliveryPoint: null });
-    await fetchData(farm, licensePlate, 'vehicle', set);
+  selectPlan: async (farm, planName) => {
+    set({ selectedPlan: planName, selectedVehicle: null, expandedDeliveryPoint: null });
+    await fetchData(farm, '', 'vehicle', set, get().selectedDate, planName);
   },
 
   reload: async (farm) => {
-    const { selectedVehicle } = get();
-    if (selectedVehicle) await fetchData(farm, selectedVehicle, 'vehicle', set);
-    else await fetchData(farm, '', 'full', set);
+    const { selectedPlan, selectedDate } = get();
+    if (selectedPlan) await fetchData(farm, '', 'vehicle', set, selectedDate, selectedPlan);
+    else await fetchData(farm, '', 'full', set, selectedDate);
+  },
+
+  setDate: async (farm, date) => {
+    // A new day has its own plans — drop the current selection.
+    set({ selectedDate: date, selectedPlan: null, selectedVehicle: null, data: null, expandedDeliveryPoint: null });
+    await fetchData(farm, '', 'full', set, date);
+  },
+
+  deselectVehicle: async (farm) => {
+    set({ selectedPlan: null, selectedVehicle: null, expandedDeliveryPoint: null });
+    await fetchData(farm, '', 'full', set, get().selectedDate);
   },
 
   toggleDeliveryPoint: (deliveryPoint) => {
@@ -354,7 +381,7 @@ export const useKarenLoadingStore = create<State>((set, get) => ({
       return out;
     };
 
-    if (!state.selectedVehicle) return fail('warning', 'Please select a Vehicle first.');
+    if (!state.selectedPlan) return fail('warning', 'Please select a loading plan first.');
 
     const boxLabel = extractBoxLabel(raw);
     if (!boxLabel) return fail('warning', 'Please scan a valid box QR code.');
@@ -364,9 +391,9 @@ export const useKarenLoadingStore = create<State>((set, get) => ({
     try {
       const res = await karenLoadingApi.createLoadingEntry({
         box_label_name: boxLabel,
-        vehicle: state.selectedVehicle,
+        vehicle: state.selectedVehicle ?? state.data?.selectedVehicle ?? '',
         temperature: Number.isFinite(temperature) ? temperature : 0,
-        delivery_date: state.data?.deliveryDate ?? '',
+        delivery_date: state.data?.deliveryDate ?? state.selectedDate ?? '',
       });
       result = unwrap(res as RawLoadingEntryResponse);
     } catch (err) {
@@ -382,7 +409,7 @@ export const useKarenLoadingStore = create<State>((set, get) => ({
     set({ lastOutcome: { kind: 'success', message: result.message } });
     // Silent refresh: update loaded counts in place without hiding the plan
     // or stealing focus from the scanner, so the operator keeps scanning.
-    await fetchData(farm, state.selectedVehicle, 'silent', set);
+    await fetchData(farm, '', 'silent', set, state.selectedDate, state.selectedPlan ?? undefined);
     return { kind: 'success', message: result.message };
   },
 
@@ -392,8 +419,10 @@ export const useKarenLoadingStore = create<State>((set, get) => ({
       vehicleLoading: false,
       loaded: false,
       data: null,
+      selectedPlan: null,
       selectedVehicle: null,
       expandedDeliveryPoint: null,
+      selectedDate: tomorrowISO(),
       submitting: false,
       lastOutcome: null,
     }),

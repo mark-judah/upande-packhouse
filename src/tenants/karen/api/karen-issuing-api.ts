@@ -1,6 +1,6 @@
 import { api } from '@/src/core/api/client';
 
-/** Raw line returned by `/api/method/getReadySaleOrderItemsData`. */
+/** Raw line returned by `/api/method/upande_packhouse.mobile.api.getReadySaleOrderItemsData`. */
 export type RawReadySaleOrderItem = {
   variety?: string;
   bucket?: string;
@@ -65,7 +65,7 @@ export const karenIssuingApi = {
   fetchReadyOrders(date: string): Promise<RawReadyOrdersResponse> {
     return api<RawReadyOrdersResponse>({
       method: 'GET',
-      url: '/api/method/getReadySaleOrderItems',
+      url: '/api/method/upande_packhouse.mobile.api.getReadySaleOrderItems',
       params: { date },
     });
   },
@@ -75,7 +75,7 @@ export const karenIssuingApi = {
   fetchPackingList(orderName: string): Promise<RawPackingListResponse> {
     return api<RawPackingListResponse>({
       method: 'POST',
-      url: '/api/method/getReadySaleOrderItemsData',
+      url: '/api/method/upande_packhouse.mobile.api.getReadySaleOrderItemsData',
       data: { custom_order_name: orderName },
     });
   },
@@ -88,7 +88,7 @@ export const karenIssuingApi = {
   }): Promise<RawIssueResponse> {
     return api<RawIssueResponse>({
       method: 'POST',
-      url: '/api/method/issueBucketToSaleOrderItem',
+      url: '/api/method/upande_packhouse.mobile.api.issueBucketToSaleOrderItem',
       data: payload,
     });
   },

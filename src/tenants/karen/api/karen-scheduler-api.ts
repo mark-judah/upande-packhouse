@@ -70,7 +70,7 @@ export const karenSchedulerApi = {
   fetchData(deliveryDate: string): Promise<RawSchedulerDataResponse> {
     return api<RawSchedulerDataResponse>({
       method: 'GET',
-      url: '/api/method/getSchedulerData',
+      url: '/api/method/upande_packhouse.mobile.api.getSchedulerData',
       params: { delivery_date: deliveryDate },
     });
   },
@@ -79,7 +79,7 @@ export const karenSchedulerApi = {
   fetchMeta(oplNames: string[]): Promise<RawSchedulerMetaResponse> {
     return api<RawSchedulerMetaResponse>({
       method: 'POST',
-      url: '/api/method/getSchedulerMeta',
+      url: '/api/method/upande_packhouse.mobile.api.getSchedulerMeta',
       data: { names: oplNames.join(JOIN) },
     });
   },
@@ -88,7 +88,7 @@ export const karenSchedulerApi = {
   setOrder(oplNames: string[]): Promise<RawSetOrderResponse> {
     return api<RawSetOrderResponse>({
       method: 'POST',
-      url: '/api/method/setSchedulerOrder',
+      url: '/api/method/upande_packhouse.mobile.api.setSchedulerOrder',
       data: { order: oplNames.join(JOIN) },
     });
   },

@@ -4,7 +4,8 @@ import { useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card, Alert } from '@/src/core/ui/Card';
-import { Dropdown } from '@/src/core/ui/Dropdown';
+import { DateSelector } from '@/src/core/ui/DateSelector';
+import { tomorrowISO } from '@/src/core/date';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
 import { focusWhenReady } from '@/src/core/scanning/focus';
 import { useToast } from '@/src/core/ui/Toast';
@@ -16,7 +17,6 @@ import {
   isItemFullyLoaded,
   itemsForCustomerAtDeliveryPoint,
   summaryForDeliveryPoint,
-  vehiclesWithPlans,
   type LoadingData,
   type LoadingPlanItem,
 } from '@/src/tenants/karen/state/karen-loading-store';
@@ -34,12 +34,17 @@ export function KarenLoadingScreen() {
     vehicleLoading,
     loaded,
     data,
+    selectedPlan,
     selectedVehicle,
     expandedDeliveryPoint,
+    selectedDate,
     submitting,
+    lastOutcome,
     loadInitial,
-    selectVehicle,
+    selectPlan,
     reload,
+    setDate,
+    deselectVehicle,
     toggleDeliveryPoint,
     submitScan,
     reset,
@@ -50,7 +55,7 @@ export function KarenLoadingScreen() {
     return () => reset();
   }, [farm, loadInitial, reset]);
 
-  const hasPlan = !!selectedVehicle && !vehicleLoading && !!data?.hasLoadingPlan;
+  const hasPlan = !!selectedPlan && !vehicleLoading && !!data?.hasLoadingPlan;
 
   useFocusEffect(
     useCallback(() => {
@@ -86,56 +91,61 @@ export function KarenLoadingScreen() {
     );
   }
 
-  const vehicleOptions =
-    data?.vehicles.map((v) => {
-      const withPlan = vehiclesWithPlans(data);
-      return {
-        label: v.licensePlate,
-        value: v.licensePlate,
-        sublabel: withPlan.has(v.name) ? 'Plan available' : undefined,
-      };
-    }) ?? [];
-
   return (
     <Screen title="Loading Entry" onRefresh={() => reload(farm)}>
-      {/* ── STEP 1: pick a truck ── */}
-      <Card title="Select truck">
-        <Dropdown
-          label="Truck"
-          value={selectedVehicle}
-          options={vehicleOptions}
-          placeholder={loading ? 'Loading…' : 'Choose a truck to load'}
-          iconName="truck-outline"
-          onChange={(plate) => {
-            if (plate && plate !== selectedVehicle) selectVehicle(farm, plate);
-          }}
-          disabled={loading || vehicleOptions.length === 0}
+      {/* ── Delivery day ── */}
+      <Card title="Delivery day">
+        <DateSelector
+          value={selectedDate}
+          onChange={(d) => { if (d !== selectedDate) setDate(farm, d); }}
+          label="Delivery date"
+          maxDate={null}
+          resetTo={tomorrowISO()}
+          resetLabel="Tomorrow"
         />
-        {vehicleLoading ? (
-          <View style={s.inlineLoader}>
-            <ActivityIndicator color={COLORS.primary} />
-            <Text style={s.helper}>Loading plan for {selectedVehicle}…</Text>
-          </View>
-        ) : null}
       </Card>
 
-      {/* ── No vehicle chosen: show the day's available plans ── */}
-      {!selectedVehicle && !vehicleLoading && data ? (
-        <AvailablePlans data={data} onPick={(plate) => selectVehicle(farm, plate)} />
+      {/* Fetching a picked plan */}
+      {vehicleLoading ? (
+        <Card>
+          <View style={s.inlineLoader}>
+            <ActivityIndicator color={COLORS.primary} />
+            <Text style={s.helper}>Loading plan…</Text>
+          </View>
+        </Card>
       ) : null}
 
-      {/* ── Vehicle chosen but no plan for it ── */}
-      {selectedVehicle && !vehicleLoading && data && !data.hasLoadingPlan ? (
+      {/* ── Load failed: the fetch errored and left us with no data. Say so
+             instead of showing a blank screen with no feedback. ── */}
+      {!loading && !vehicleLoading && !data ? (
         <Alert tone="warn">
-          No loading plan for {selectedVehicle} on {data.deliveryDate || 'the delivery date'}.
-          Create one in the ERP first.
+          {lastOutcome && lastOutcome.kind === 'error'
+            ? lastOutcome.message
+            : 'Couldn’t load the day’s loading plans. Pull down to refresh and try again.'}
+        </Alert>
+      ) : null}
+
+      {/* ── No plan chosen: show the day's loading plans (each carries its truck) ── */}
+      {!selectedPlan && !vehicleLoading && data ? (
+        <AvailablePlans data={data} onPick={(planName) => selectPlan(farm, planName)} />
+      ) : null}
+
+      {/* ── Plan chosen but it didn't load ── */}
+      {selectedPlan && !vehicleLoading && data && !data.hasLoadingPlan ? (
+        <Alert tone="warn">
+          Could not load plan {selectedPlan} for {data.deliveryDate || 'the delivery date'}.
         </Alert>
       ) : null}
 
       {/* ── Vehicle chosen, plan loaded ── */}
       {hasPlan && data ? (
         <>
-          <TruckSummary data={data} vehicle={selectedVehicle ?? ''} />
+          <TruckSummary data={data} vehicle={selectedVehicle || selectedPlan || ''} />
+
+          <Pressable style={s.changeTruck} onPress={() => deselectVehicle(farm)} hitSlop={6}>
+            <MaterialCommunityIcons name="swap-horizontal" size={16} color={COLORS.primary} />
+            <Text style={s.changeTruckText}>Change truck / plan</Text>
+          </Pressable>
 
           <Card title="Scan boxes">
             <TextInput
@@ -182,7 +192,7 @@ function AvailablePlans({
   onPick,
 }: {
   data: LoadingData;
-  onPick: (licensePlate: string) => void;
+  onPick: (planName: string) => void;
 }) {
   if (data.availablePlans.length === 0) {
     return (
@@ -194,18 +204,19 @@ function AvailablePlans({
   return (
     <Card title={`${data.availablePlans.length} plan${data.availablePlans.length === 1 ? '' : 's'} for ${data.deliveryDate || 'the delivery date'}`}>
       {data.availablePlans.map((plan) => {
-        const vehicle = data.vehicles.find((v) => v.name === plan.vehicle);
-        const plate = vehicle?.licensePlate;
+        // The plan carries its own truck (custom_vehicle). Show the friendly
+        // plate when we can resolve it, but ALWAYS pick by plan.vehicle so the
+        // row works even when the vehicle isn't in the dispatch-truck list.
+        const plate = data.vehicles.find((v) => v.name === plan.vehicle)?.licensePlate;
         return (
           <Pressable
             key={plan.name}
             style={s.planRow}
-            onPress={() => plate && onPick(plate)}
-            disabled={!plate}
+            onPress={() => onPick(plan.name)}
           >
             <MaterialCommunityIcons name="truck-outline" size={18} color={COLORS.textSecondary} />
             <View style={{ flex: 1 }}>
-              <Text style={s.planVehicle}>{plate || plan.vehicle}</Text>
+              <Text style={s.planVehicle}>{plate || plan.vehicle || '—'}</Text>
               <Text style={s.planName} numberOfLines={1}>{plan.name}</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={20} color={COLORS.textMuted} />
@@ -358,6 +369,16 @@ const s = StyleSheet.create({
   centerPad: { alignItems: 'center', paddingVertical: spacing.lg, gap: spacing.sm },
   helper: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: spacing.xs },
   inlineLoader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm },
+
+  changeTruck: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  changeTruckText: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: COLORS.primary },
 
   // Available plans
   planRow: {

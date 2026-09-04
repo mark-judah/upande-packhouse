@@ -123,7 +123,7 @@ export const karenBucketLogisticsApi = {
   fetch(): Promise<RawTransferScheduleData> {
     return api<RawTransferScheduleData>({
       method: 'GET',
-      url: '/api/method/getTransferScheduleData',
+      url: '/api/method/upande_packhouse.mobile.api.getTransferScheduleData',
     });
   },
 
@@ -131,7 +131,7 @@ export const karenBucketLogisticsApi = {
   dispatch(name: string): Promise<RawTripActionResponse> {
     return api<RawTripActionResponse>({
       method: 'POST',
-      url: '/api/method/dispatchBucketTrip',
+      url: '/api/method/upande_packhouse.mobile.api.dispatchBucketTrip',
       data: { name },
     });
   },
@@ -140,7 +140,7 @@ export const karenBucketLogisticsApi = {
   receive(name: string): Promise<RawTripActionResponse> {
     return api<RawTripActionResponse>({
       method: 'POST',
-      url: '/api/method/receiveBucketTrip',
+      url: '/api/method/upande_packhouse.mobile.api.receiveBucketTrip',
       data: { name },
     });
   },

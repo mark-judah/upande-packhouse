@@ -18,7 +18,7 @@ export type RawHandoverResponse = {
 export const karenBunchHandoverApi = {
   /** Active Post-Harvest graders and packers (Employee, custom_farm "Post Harvest"). */
   fetchStaff(): Promise<RawStaffResponse> {
-    return api<RawStaffResponse>({ method: 'GET', url: '/api/method/getPostHarvestStaff' });
+    return api<RawStaffResponse>({ method: 'GET', url: '/api/method/upande_packhouse.mobile.api.getPostHarvestStaff' });
   },
 
   /** Record how many bunches a grader handed to a packer (timestamped server-side). */
@@ -29,7 +29,7 @@ export const karenBunchHandoverApi = {
   }): Promise<RawHandoverResponse> {
     return api<RawHandoverResponse>({
       method: 'POST',
-      url: '/api/method/createBunchHandover',
+      url: '/api/method/upande_packhouse.mobile.api.createBunchHandover',
       data: payload,
     });
   },

@@ -8,6 +8,7 @@ export type DrawerItem = {
     | 'bunch-handover'
     | 'staging'
     | 'loading'
+    | 'bucket-logistics'
     | 'dispatch';
   icon: string; // Ionicons name
   /** Show in the drawer but render a "Coming soon" state and ignore taps. */

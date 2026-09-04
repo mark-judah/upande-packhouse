@@ -22,7 +22,23 @@ export async function probeBaseUrl(rawUrl: string): Promise<string> {
     return trimmed.replace(/\/$/, '');
   }
 
-  // No protocol supplied — probe HTTPS, fall back to HTTP.
+  // No protocol supplied. Real public hostnames are ALWAYS HTTPS — never
+  // silently downgrade to cleartext HTTP, which breaks release/standalone
+  // Android builds (the HTTPS HEAD probe can fail/timeout on a cold native
+  // start, and the cleartext POST then throws "Network error"). Only local /
+  // IP / explicit-port dev benches may legitimately be HTTP, so we probe those.
+  const host = trimmed.replace(/\/.*$/, '');
+  const isLocalOrIp =
+    /^(\d{1,3}\.){3}\d{1,3}(:\d+)?$/.test(host) || // IPv4 (optional port)
+    /:\d+$/.test(host) ||                            // any host:port
+    /^localhost(:\d+)?$/i.test(host) ||
+    /\.local$/i.test(host);
+
+  if (!isLocalOrIp) {
+    return `https://${trimmed}`;
+  }
+
+  // Local / IP / dev bench — probe HTTPS, fall back to HTTP.
   const httpsUrl = `https://${trimmed}`;
   const config: LoggableConfig = attachStartTime({ method: 'HEAD', url: httpsUrl });
   logRequest(config);

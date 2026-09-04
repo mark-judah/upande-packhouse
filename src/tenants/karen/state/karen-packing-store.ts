@@ -9,7 +9,7 @@ import type {
   RawPicklistsResponse,
 } from '../api/karen-packing-api';
 import { mapAxiosError } from '@/src/core/api/client';
-import { todayISO } from '@/src/core/date';
+import { tomorrowISO } from '@/src/core/date';
 
 // ---------------------------------------------------------------------
 // Normalised view models
@@ -25,12 +25,24 @@ export type PickListLine = {
   stemLength: string;
   /** Specification from the Sales Order line (custom_line), e.g. "DI05 CERISE 52CM". */
   spec: string;
+  /** Item group of this variety (e.g. "Standard Roses" vs "Spray Roses"): decides
+   *  manual-entry vs scan during packing. '' when the lookup returned nothing. */
+  itemGroup: string;
 };
 
 export type PackingGuideItem = {
   itemCode: string;
   itemName: string;
   plannedStems: number;
+};
+
+/** One colour/variety component of a mixed-bunch bouquet (the packing recipe). */
+export type BouquetGuideItem = {
+  colour: string;
+  variety: string;
+  varietyName: string;
+  stemsPerBunch: number;
+  length: string;
 };
 
 export type PackingGuide = {
@@ -40,6 +52,11 @@ export type PackingGuide = {
   plannedBoxes: number;
   packratePerBox: number;
   items: PackingGuideItem[];
+  /** Mixed BUNCH: this order's bunch is composed of the bouquet-guide rows below. */
+  isMixedBunch: boolean;
+  bouquetGuide: BouquetGuideItem[];
+  /** Spec guide-image path (relative, e.g. /private/files/…); '' when none. */
+  specImage: string;
 };
 
 export type PackOutcome =
@@ -53,7 +70,7 @@ type State = {
   // picklist selection
   picklistsLoading: boolean;
   availablePicklists: OplOption[];
-  /** Day being viewed (YYYY-MM-DD). Defaults to today; lets users see past orders. */
+  /** Day being viewed (YYYY-MM-DD). Defaults to tomorrow — pack/issue today for tomorrow's shipments; lets users pick other days. */
   selectedDate: string;
   /** Active item-group filter for the picklist picker; null = show all. */
   selectedItemGroup: string | null;
@@ -145,7 +162,9 @@ function plannedBoxesFrom(planned: number | null | undefined): number {
   return n > 0 ? Math.ceil(n) : 1;
 }
 
-/** Build the normalised packing view from the server payload. */
+/** Build the normalised packing view from the server payload. Each order line
+ *  carries its Item group (server-provided) so packing can tell scan-per-bunch
+ *  (spray) from manual-entry (standard) varieties. */
 function buildGuideView(payload: RawPickListWithFpl): {
   pickListItems: PickListLine[];
   packingGuide: PackingGuide | null;
@@ -158,15 +177,19 @@ function buildGuideView(payload: RawPickListWithFpl): {
   const farmPackLists = payload.farm_pack_lists ?? [];
   const guideRaw = payload.packing_guide ?? {};
 
-  const pickListItems: PickListLine[] = (opl.locations ?? []).map((l) => ({
-    itemCode: (l.item_code ?? '').toString(),
-    itemName: (l.item_name ?? l.item_code ?? '').toString(),
-    qty: toNum(l.qty),
-    uom: (l.uom ?? '').toString(),
-    warehouse: (l.warehouse ?? '').toString(),
-    stemLength: (l.custom_stem_length ?? '').toString(),
-    spec: (l.custom_spec ?? '').toString(),
-  }));
+  const pickListItems: PickListLine[] = (opl.locations ?? []).map((l) => {
+    const itemCode = (l.item_code ?? '').toString();
+    return {
+      itemCode,
+      itemName: (l.item_name ?? l.item_code ?? '').toString(),
+      qty: toNum(l.qty),
+      uom: (l.uom ?? '').toString(),
+      warehouse: (l.warehouse ?? '').toString(),
+      stemLength: (l.custom_stem_length ?? '').toString(),
+      spec: (l.custom_spec ?? '').toString(),
+      itemGroup: (l.item_group ?? '').toString(),
+    };
+  });
 
   // stems already packed, per variety per box
   const varietyStemsInBox: Record<string, Record<number, number>> = {};
@@ -211,6 +234,15 @@ function buildGuideView(payload: RawPickListWithFpl): {
       itemName: (it.item_name ?? it.item_code ?? '').toString(),
       plannedStems: toNum(it.planned_stems, 0),
     })),
+    isMixedBunch: guideRaw.is_mixed_bunch === true,
+    bouquetGuide: (guideRaw.bouquet_guide ?? []).map((b) => ({
+      colour: (b.colour ?? '').toString(),
+      variety: (b.variety ?? '').toString(),
+      varietyName: (b.variety_name ?? b.variety ?? '').toString(),
+      stemsPerBunch: toNum(b.stems_per_bunch, 0),
+      length: (b.length ?? '').toString(),
+    })),
+    specImage: (guideRaw.spec_image ?? '').toString(),
   };
 
   return {
@@ -240,7 +272,7 @@ function targetPerVariety(guide: PackingGuide, variety: string): number {
 export const useKarenPackingStore = create<State>((set, get) => ({
   picklistsLoading: false,
   availablePicklists: [],
-  selectedDate: todayISO(),
+  selectedDate: tomorrowISO(),
   selectedItemGroup: null,
   selectedTeam: null,
 
@@ -585,7 +617,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     set({
       picklistsLoading: false,
       availablePicklists: [],
-      selectedDate: todayISO(),
+      selectedDate: tomorrowISO(),
       selectedItemGroup: null,
       guideLoading: false,
       showTable: false,

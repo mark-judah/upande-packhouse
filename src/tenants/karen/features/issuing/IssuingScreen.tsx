@@ -6,6 +6,7 @@ import { Card, Alert } from '@/src/core/ui/Card';
 import { Button } from '@/src/core/ui/Button';
 import { Dropdown } from '@/src/core/ui/Dropdown';
 import { DateSelector } from '@/src/core/ui/DateSelector';
+import { tomorrowISO } from '@/src/core/date';
 import { ItemGroupFilter } from '@/src/core/ui/ItemGroupFilter';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
 import { focusWhenReady } from '@/src/core/scanning/focus';
@@ -127,7 +128,14 @@ export function KarenIssuingScreen() {
   return (
     <Screen title="Issue from Coldstore">
       <Card title="Sale order">
-        <DateSelector value={selectedDate} onChange={setDate} label="Order date" />
+        <DateSelector
+          value={selectedDate}
+          onChange={setDate}
+          label="Delivery date"
+          maxDate={null}
+          resetTo={tomorrowISO()}
+          resetLabel="Tomorrow"
+        />
         {itemGroups.length > 0 ? (
           <ItemGroupFilter
             groups={itemGroups}
