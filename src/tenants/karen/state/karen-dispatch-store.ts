@@ -11,6 +11,7 @@ export type LoadedOrder = {
   deliveryPoint: string;
   farm: string;
   consignee: string;
+  boxesRequired: number;
   boxesLoaded: number;
 };
 
@@ -27,9 +28,20 @@ type State = {
   deliveryDate: string;
   orders: LoadedOrder[];
   totalBoxes: number;
+  totalRequired: number;
+  /** True once this date's dispatch has already been confirmed (Loading
+   *  Sheet status = Departed) -- the confirm action locks after this. */
+  dispatched: boolean;
+  /** Seal number already recorded on the server, once dispatched. */
+  savedSealNumber: string;
+  /** The operator's in-progress seal-number entry, before confirming. */
+  sealNumberInput: string;
   lastOutcome: DispatchOutcome | null;
 
   loadOrders: () => Promise<void>;
+  setSealNumberInput: (v: string) => void;
+  /** Confirms dispatch for the day -- a one-time action once `dispatched`
+   *  is true. */
   save: () => Promise<DispatchOutcome>;
   setDate: (date: string) => Promise<void>;
   reset: () => void;
@@ -57,7 +69,13 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
   deliveryDate: '',
   orders: [],
   totalBoxes: 0,
+  totalRequired: 0,
+  dispatched: false,
+  savedSealNumber: '',
+  sealNumberInput: '',
   lastOutcome: null,
+
+  setSealNumberInput: (v) => set({ sealNumberInput: v }),
 
   loadOrders: async () => {
     set({ loading: true });
@@ -72,19 +90,28 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
         deliveryPoint: (o.delivery_point ?? '').toString(),
         farm: (o.farm ?? '').toString(),
         consignee: (o.consignee ?? '').toString(),
+        boxesRequired: Number(o.boxes_required ?? 0),
         boxesLoaded: Number(o.boxes_loaded ?? 0),
       }));
+      const savedSealNumber = (data.seal_number ?? '').toString();
       set({
         loading: false,
         orders,
         totalBoxes: Number(data.total_boxes ?? 0),
+        totalRequired: orders.reduce((sum, o) => sum + o.boxesRequired, 0),
         deliveryDate: (data.delivery_date ?? '').toString(),
+        dispatched: !!data.dispatched,
+        savedSealNumber,
+        // Don't clobber an in-progress entry with an empty server value on a
+        // background refresh -- only seed it once there's nothing typed yet.
+        sealNumberInput: get().sealNumberInput || savedSealNumber,
       });
     } catch (err) {
       set({
         loading: false,
         orders: [],
         totalBoxes: 0,
+        totalRequired: 0,
         lastOutcome: { kind: 'error', message: mapAxiosError(err).message || 'Could not load orders.' },
       });
     }
@@ -93,23 +120,26 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
   save: async () => {
     set({ saving: true });
     try {
-      const raw: RawRebuildResponse = await karenDispatchApi.createOrUpdateDispatch(get().selectedDate);
+      const raw: RawRebuildResponse = await karenDispatchApi.createOrUpdateDispatch(
+        get().selectedDate,
+        get().sealNumberInput.trim(),
+      );
       const msg = unwrap(raw);
       if (msg?.status === 'error') {
-        const out: DispatchOutcome = { kind: 'error', message: msg.message || 'Could not save dispatch.' };
+        const out: DispatchOutcome = { kind: 'error', message: msg.message || 'Could not confirm dispatch.' };
         set({ saving: false, lastOutcome: out });
         return out;
       }
       const out: DispatchOutcome = {
         kind: 'success',
-        message: msg?.message || 'Dispatch form saved from loaded boxes.',
+        message: msg?.message || 'Dispatch confirmed.',
       };
-      set({ saving: false, lastOutcome: out });
+      set({ saving: false, lastOutcome: out, dispatched: true });
       return out;
     } catch (err) {
       const out: DispatchOutcome = {
         kind: 'error',
-        message: mapAxiosError(err).message || 'Could not save dispatch form.',
+        message: mapAxiosError(err).message || 'Could not confirm dispatch.',
       };
       set({ saving: false, lastOutcome: out });
       return out;
@@ -117,7 +147,7 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
   },
 
   setDate: async (date) => {
-    set({ selectedDate: date, orders: [], totalBoxes: 0 });
+    set({ selectedDate: date, orders: [], totalBoxes: 0, totalRequired: 0, sealNumberInput: '', savedSealNumber: '', dispatched: false });
     await get().loadOrders();
   },
 
@@ -129,6 +159,10 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
       deliveryDate: '',
       orders: [],
       totalBoxes: 0,
+      totalRequired: 0,
+      dispatched: false,
+      savedSealNumber: '',
+      sealNumberInput: '',
       lastOutcome: null,
     }),
 }));

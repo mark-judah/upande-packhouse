@@ -39,7 +39,7 @@ export function KarenBunchHandoverScreen() {
   };
 
   return (
-    <Screen title="Bunch Handover">
+    <Screen title="Bunch Handover" onRefresh={loadStaff}>
       <Card title="Log handover">
         <Dropdown
           label="Grader"

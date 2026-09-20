@@ -12,12 +12,18 @@ export type RawLoadedOrder = {
   delivery_point?: string;
   farm?: string;
   consignee?: string;
+  boxes_required?: number;
   boxes_loaded?: number;
 };
 
 export type RawLoadedOrdersData = {
   delivery_date?: string;
   loading_sheet?: string | null;
+  loading_sheet_status?: string;
+  /** True once this date's Loading Sheet has been confirmed Departed --
+   *  dispatch is a one-time action, so the UI locks once this is true. */
+  dispatched?: boolean;
+  seal_number?: string;
   total_boxes?: number;
   total_orders?: number;
   orders?: RawLoadedOrder[];
@@ -28,10 +34,14 @@ export type RawLoadedOrdersResponse = {
 };
 
 export type RawRebuildForm = { name?: string; farm?: string; truck?: string; boxes?: number };
+export type RawRebuildData = {
+  forms?: RawRebuildForm[];
+  total_boxes?: number;
+  seal_number?: string;
+  dispatched?: boolean;
+};
 export type RawRebuildResponse = {
-  message?:
-    | { status?: string; message?: string; data?: { forms?: RawRebuildForm[]; total_boxes?: number } }
-    | string;
+  message?: { status?: string; message?: string; data?: RawRebuildData } | string;
 };
 
 export const karenDispatchApi = {
@@ -45,14 +55,14 @@ export const karenDispatchApi = {
     });
   },
 
-  /** Create or update the day's Dispatch Form(s) from all loaded boxes.
-   *  Reuses an existing draft form for the farm+date (updates its rows) or
-   *  creates a new one — never deletes. */
-  createOrUpdateDispatch(deliveryDate?: string): Promise<RawRebuildResponse> {
+  /** Confirm dispatch for the day: builds the Delivery Note(s) from all loaded
+   *  boxes and records the truck's seal number. One-time — the server refuses
+   *  a repeat call once the day's Loading Sheet is marked Departed. */
+  createOrUpdateDispatch(deliveryDate: string | undefined, sealNumber: string): Promise<RawRebuildResponse> {
     return api<RawRebuildResponse>({
       method: 'POST',
       url: '/api/method/upande_packhouse.mobile.api.createOrUpdateDispatch',
-      data: deliveryDate ? { delivery_date: deliveryDate } : {},
+      data: { ...(deliveryDate ? { delivery_date: deliveryDate } : {}), seal_number: sealNumber },
     });
   },
 };

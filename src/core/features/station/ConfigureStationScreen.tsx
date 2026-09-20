@@ -82,6 +82,7 @@ export function ConfigureStationScreen({ next }: Props) {
       loading={loading && farms.length === 0 && greenhouses.length === 0}
       error={error}
       onRetry={load}
+      onRefresh={load}
     >
       <Card>
         <Dropdown

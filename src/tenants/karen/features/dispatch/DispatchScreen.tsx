@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Alert as RNAlert, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card, Alert } from '@/src/core/ui/Card';
 import { Button } from '@/src/core/ui/Button';
@@ -10,6 +11,10 @@ import { useToast } from '@/src/core/ui/Toast';
 import { useKarenDispatchStore } from '@/src/tenants/karen/state/karen-dispatch-store';
 import { COLORS, fontFamily, fontSize, spacing, borderRadius } from '@/src/core/theme';
 
+// Dispatch is a read-only confirmation clipboard, not a form: it shows what
+// the day's orders required vs what actually got loaded, then a single final
+// "Confirm dispatch" action -- once confirmed the Loading Sheet is marked
+// Departed server-side and this screen locks (see karen-dispatch-store.save).
 export function KarenDispatchScreen() {
   const {
     loading,
@@ -18,8 +23,13 @@ export function KarenDispatchScreen() {
     deliveryDate,
     orders,
     totalBoxes,
+    totalRequired,
+    dispatched,
+    savedSealNumber,
+    sealNumberInput,
     lastOutcome,
     loadOrders,
+    setSealNumberInput,
     save,
     setDate,
     reset,
@@ -38,15 +48,29 @@ export function KarenDispatchScreen() {
     }, [loadOrders]),
   );
 
-  const onSave = async () => {
+  const doConfirm = async () => {
     const outcome = await save();
     if (outcome.kind === 'success') showSuccess(outcome.message);
     else showError(outcome.message);
     loadOrders();
   };
 
+  const onConfirmPress = () => {
+    RNAlert.alert(
+      'Confirm dispatch',
+      `This finalizes dispatch for ${deliveryDate || selectedDate} with seal number ` +
+        `"${sealNumberInput.trim()}" and cannot be undone. Continue?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Confirm dispatch', style: 'destructive', onPress: doConfirm },
+      ],
+    );
+  };
+
+  const canConfirm = !saving && !loading && orders.length > 0 && !!sealNumberInput.trim();
+
   return (
-    <Screen title="Dispatch">
+    <Screen title="Dispatch" onRefresh={loadOrders}>
       <Card title="Delivery day">
         <DateSelector
           value={selectedDate}
@@ -58,60 +82,103 @@ export function KarenDispatchScreen() {
         />
       </Card>
 
-      <Card title="Loaded orders">
+      {dispatched ? (
+        <Card>
+          <View style={s.dispatchedBanner}>
+            <MaterialCommunityIcons name="check-circle" size={22} color="#16a34a" />
+            <View style={{ flex: 1 }}>
+              <Text style={s.dispatchedTitle}>Dispatched</Text>
+              <Text style={s.helper}>
+                Seal number {savedSealNumber || '—'} · {totalBoxes} box{totalBoxes === 1 ? '' : 'es'} loaded
+              </Text>
+            </View>
+          </View>
+        </Card>
+      ) : null}
+
+      <Card title="Dispatch clipboard">
         <View style={s.summaryRow}>
           <Text style={s.summary}>
-            {orders.length} order{orders.length === 1 ? '' : 's'} · {totalBoxes} box
-            {totalBoxes === 1 ? '' : 'es'} loaded
+            {orders.length} order{orders.length === 1 ? '' : 's'} · {totalBoxes}/{totalRequired} box
+            {totalRequired === 1 ? '' : 'es'} loaded
           </Text>
           {deliveryDate ? <Text style={s.date}>{deliveryDate}</Text> : null}
         </View>
         <Text style={s.helper}>
           {loading
             ? 'Loading…'
-            : 'These are the orders loaded for dispatch (from the loading sheet).'}
+            : 'What the day’s orders require vs what has actually been loaded onto the truck.'}
         </Text>
+
+        <View style={{ height: spacing.sm }} />
+        <View style={s.tableHead}>
+          <Text style={[s.th, { flex: 1 }]}>Order</Text>
+          <Text style={s.thNum}>Req.</Text>
+          <Text style={s.thNum}>Loaded</Text>
+        </View>
+
+        {!loading && orders.length === 0 ? (
+          <Text style={s.helper}>No orders planned for this delivery date.</Text>
+        ) : (
+          orders.map((o) => {
+            const complete = o.boxesRequired > 0 && o.boxesLoaded >= o.boxesRequired;
+            const short = o.boxesRequired > 0 && o.boxesLoaded < o.boxesRequired;
+            return (
+              <View key={o.salesOrder || o.orderName} style={s.orderRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.orderName} numberOfLines={1}>
+                    {[o.customer, o.deliveryPoint].filter(Boolean).join('  ·  ')}
+                  </Text>
+                  <Text style={s.orderSub} numberOfLines={1}>
+                    {[o.orderName, o.farm].filter(Boolean).join('  ·  ')}
+                  </Text>
+                </View>
+                <Text style={s.tdNum}>{o.boxesRequired}</Text>
+                <View style={[s.boxTag, complete && s.boxTagDone, short && s.boxTagShort]}>
+                  <Text style={[s.boxTagText, (complete || short) && s.boxTagTextAlt]}>
+                    {o.boxesLoaded}
+                  </Text>
+                </View>
+              </View>
+            );
+          })
+        )}
       </Card>
 
-      {!loading && orders.length === 0 ? (
-        <Card>
-          <Text style={s.helper}>No orders have been loaded yet.</Text>
-        </Card>
-      ) : (
-        orders.map((o) => (
-          <View key={o.salesOrder || o.orderName} style={s.orderCard}>
-            <View style={s.orderTop}>
-              <Text style={s.orderName} numberOfLines={1}>{o.orderName}</Text>
-              <View style={s.boxTag}>
-                <Text style={s.boxTagText}>{o.boxesLoaded} box{o.boxesLoaded === 1 ? '' : 'es'}</Text>
-              </View>
-            </View>
-            <Text style={s.orderSub} numberOfLines={1}>
-              {[o.customer, o.deliveryPoint, o.farm].filter(Boolean).join('  ·  ')}
-            </Text>
-          </View>
-        ))
-      )}
-
-      <Card title="Dispatch">
-        <Text style={s.helper}>
-          Create or update the day&rsquo;s dispatch form from all loaded boxes. An existing
-          draft form is updated with the current details; otherwise a new one is created.
-        </Text>
+      <Card title="Seal number">
+        <Text style={s.helper}>The seal number on the truck, recorded once at dispatch.</Text>
         <View style={{ height: spacing.sm }} />
-        <Button
-          label={saving ? 'Saving…' : 'Create / update dispatch form'}
-          onPress={onSave}
-          disabled={saving || loading || orders.length === 0}
+        <TextInput
+          value={sealNumberInput}
+          onChangeText={setSealNumberInput}
+          placeholder="e.g. SL-102938"
+          placeholderTextColor={COLORS.textMuted}
+          editable={!dispatched}
+          autoCapitalize="characters"
+          style={[s.sealInput, dispatched && s.sealInputLocked]}
         />
       </Card>
 
+      {!dispatched ? (
+        <Card title="Confirm dispatch">
+          <Text style={s.helper}>
+            This is a one-time confirmation, not a form you can resave — once confirmed, dispatch
+            for this date is final and cannot be edited again.
+          </Text>
+          <View style={{ height: spacing.sm }} />
+          <Button
+            label={saving ? 'Confirming…' : 'Confirm dispatch'}
+            onPress={onConfirmPress}
+            disabled={!canConfirm}
+          />
+          {!sealNumberInput.trim() ? (
+            <Text style={s.blockedHint}>Enter the seal number before confirming.</Text>
+          ) : null}
+        </Card>
+      ) : null}
+
       {lastOutcome?.kind === 'error' ? (
         <Alert tone="danger">{lastOutcome.message}</Alert>
-      ) : lastOutcome?.kind === 'success' ? (
-        <Card title="Last action">
-          <Text style={s.rowValue}>{lastOutcome.message}</Text>
-        </Card>
       ) : null}
     </Screen>
   );
@@ -127,23 +194,61 @@ const s = StyleSheet.create({
   summaryRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   summary: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: COLORS.text },
   date: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted },
-  orderCard: {
-    backgroundColor: COLORS.surface,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
+
+  tableHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
   },
-  orderTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  orderName: { flex: 1, fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: COLORS.text },
+  th: { fontFamily: fontFamily.semiBold, fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.3 },
+  thNum: { width: 56, textAlign: 'right', fontFamily: fontFamily.semiBold, fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.3 },
+
+  orderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  orderName: { fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: COLORS.text },
+  orderSub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary, marginTop: 3 },
+  tdNum: { width: 56, textAlign: 'right', fontFamily: fontFamily.medium, fontSize: fontSize.sm, color: COLORS.textSecondary },
+
   boxTag: {
-    backgroundColor: COLORS.primary,
+    width: 56,
+    alignItems: 'center',
+    backgroundColor: COLORS.border,
     borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
-  boxTagText: { fontFamily: fontFamily.bold, fontSize: 11, color: '#fff' },
-  orderSub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary, marginTop: 3 },
-  rowValue: { fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },
+  boxTagDone: { backgroundColor: '#16a34a' },
+  boxTagShort: { backgroundColor: '#dc2626' },
+  boxTagText: { fontFamily: fontFamily.bold, fontSize: 11, color: COLORS.textSecondary },
+  boxTagTextAlt: { color: '#fff' },
+
+  dispatchedBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  dispatchedTitle: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: '#16a34a' },
+
+  sealInput: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    fontFamily: fontFamily.semiBold,
+    fontSize: fontSize.md,
+    color: COLORS.text,
+  },
+  sealInputLocked: { backgroundColor: COLORS.bg, color: COLORS.textMuted },
+  blockedHint: {
+    marginTop: spacing.xs,
+    fontFamily: fontFamily.regular,
+    fontSize: fontSize.xs,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+  },
 });

@@ -48,7 +48,7 @@ export function KarenSchedulerScreen() {
   }, [orders, query]);
 
   return (
-    <Screen title="Scheduler">
+    <Screen title="Scheduler" onRefresh={load}>
       <Card title="Delivery day">
         <DateSelector
           value={date}

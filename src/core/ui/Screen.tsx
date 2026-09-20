@@ -5,11 +5,11 @@ import {
   Platform,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
@@ -28,6 +28,10 @@ type Props = {
   contentPadded?: boolean;
   children: ReactNode;
   footer?: ReactNode;
+  /** Replaces the header's right-side spacer with a custom action (e.g. a
+   *  comment button). Falls back to the plain spacer when omitted, so the
+   *  title stays centred on screens that don't set it. */
+  headerRight?: ReactNode;
 };
 
 export function Screen({
@@ -41,6 +45,7 @@ export function Screen({
   contentPadded = true,
   children,
   footer,
+  headerRight,
 }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -76,12 +81,18 @@ export function Screen({
       </View>
     );
   } else if (scroll) {
+    // KeyboardAwareScrollView (not a plain ScrollView) so a focused input is
+    // actually scrolled clear of the keyboard on both platforms -- a plain
+    // ScrollView + the KeyboardAvoidingView below only padded on iOS and did
+    // nothing to bring the focused field/button into view.
     body = (
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={[s.content, padding]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
+        enableOnAndroid
+        extraScrollHeight={40}
         refreshControl={
           handleRefresh ? (
             <RefreshControl
@@ -94,7 +105,7 @@ export function Screen({
         }
       >
         {children}
-      </ScrollView>
+      </KeyboardAwareScrollView>
     );
   } else {
     body = <View style={[s.flex, padding]}>{children}</View>;
@@ -117,17 +128,23 @@ export function Screen({
             <View style={s.menuBtn} />
           )}
           <Text style={s.title} numberOfLines={1}>{title}</Text>
-          {/* Symmetric spacer keeps the title centred */}
-          <View style={s.menuBtn} />
+          {/* Symmetric spacer keeps the title centred when there's no custom action */}
+          {headerRight ?? <View style={s.menuBtn} />}
         </View>
       ) : null}
       {!hideMenu ? <SideMenu visible={menuOpen} onClose={() => setMenuOpen(false)} /> : null}
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={s.flex}
-      >
-        {body}
-      </KeyboardAvoidingView>
+      {scroll && !loading && !error ? (
+        // KeyboardAwareScrollView above already handles keyboard avoidance --
+        // wrapping it in KeyboardAvoidingView too double-compensates on iOS.
+        body
+      ) : (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={s.flex}
+        >
+          {body}
+        </KeyboardAvoidingView>
+      )}
       {footer ? <View style={s.footer}>{footer}</View> : null}
     </SafeAreaView>
   );
