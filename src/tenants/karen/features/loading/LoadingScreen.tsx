@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card, Alert } from '@/src/core/ui/Card';
@@ -9,6 +9,7 @@ import { tomorrowISO } from '@/src/core/date';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
 import { focusWhenReady } from '@/src/core/scanning/focus';
 import { useToast } from '@/src/core/ui/Toast';
+import { Button } from '@/src/core/ui/Button';
 import { useUserStation } from '@/src/core/tenant/user-station';
 import {
   useKarenLoadingStore,
@@ -17,6 +18,7 @@ import {
   isItemFullyLoaded,
   itemsForCustomerAtDeliveryPoint,
   summaryForDeliveryPoint,
+  sumOrderTotals,
   type LoadingData,
   type LoadingPlanItem,
 } from '@/src/tenants/karen/state/karen-loading-store';
@@ -26,7 +28,7 @@ export function KarenLoadingScreen() {
   const scanRef = useRef<ScanFieldHandle>(null);
   const [temperature, setTemperature] = useState('');
   const { showSuccess, showError, showInfo } = useToast();
-  const { station } = useUserStation();
+  const { station, loaded: stationLoaded } = useUserStation();
   const farm = station?.userFarm ?? '';
 
   const {
@@ -79,6 +81,39 @@ export function KarenLoadingScreen() {
     scanRef.current?.clear();
     if (hasPlan) focusWhenReady(scanRef);
   };
+
+  // The device-wide farm/station config hydrates from storage asynchronously,
+  // and this screen (unlike Issuing/Packing, which resolve farm server-side
+  // from the logged-in Employee) depends on it client-side. Before it
+  // resolves, `farm` reads as '' — which used to fall straight through to the
+  // "couldn't load the day's loading plans" error below on every first open,
+  // even though no fetch had actually been attempted yet. Show a neutral
+  // spinner instead while station is still hydrating.
+  if (!stationLoaded) {
+    return (
+      <Screen title="Loading Entry">
+        <View style={s.centerPad}>
+          <ActivityIndicator color={COLORS.primary} />
+        </View>
+      </Screen>
+    );
+  }
+
+  // Station hydrated but no farm configured on this device -- send them to
+  // configure it instead of showing a misleading "pull to refresh" error
+  // that retrying can never fix.
+  if (!farm) {
+    return (
+      <Screen title="Loading Entry">
+        <Alert tone="warn">No farm configured on this device yet.</Alert>
+        <View style={{ height: spacing.sm }} />
+        <Button
+          label="Configure station"
+          onPress={() => router.push({ pathname: '/configure-station', params: { next: '/loading' } })}
+        />
+      </Screen>
+    );
+  }
 
   // Initial full-screen loader, before anything has arrived.
   if (loading && !loaded) {
@@ -320,8 +355,10 @@ function DropOff({
 }
 
 function CustomerBlock({ customer, items }: { customer: string; items: LoadingPlanItem[] }) {
-  const totalLoaded = items.reduce((s2, it) => s2 + it.boxesLoaded, 0);
-  const totalAllocated = items.reduce((s2, it) => s2 + it.boxesAllocated, 0);
+  // Dedupe by Sales Order, not a raw per-row sum — a customer can have
+  // several rows at one stop (one per box type / a position split) that
+  // all carry the same underlying order(s).
+  const { allocated: totalAllocated, loaded: totalLoaded } = sumOrderTotals(items);
   const done = totalAllocated > 0 && totalLoaded >= totalAllocated;
 
   return (
@@ -344,20 +381,54 @@ function CustomerBlock({ customer, items }: { customer: string; items: LoadingPl
       {items.map((item, i) => {
         const p = item.boxesAllocated > 0 ? Math.min(1, item.boxesLoaded / item.boxesAllocated) : 0;
         const itemDone = isItemFullyLoaded(item);
+        // Order name + variety (or mix name, for a mixed box/bunch) behind
+        // this row — usually one OPL, but the last row of a stop can absorb
+        // more than one if a customer has more OPLs than plan rows (see
+        // fetchLoadingData's per-OPL matching).
+        const orderLines = item.orders.map((o) =>
+          [o.orderName, o.isMixed && o.variety ? `${o.variety} (Mixed)` : o.variety]
+            .filter(Boolean)
+            .join(' · '),
+        ).filter(Boolean);
+        // Where to physically find the boxes still waiting to be loaded --
+        // grouped by location (usually the same coldstore zone per stop) so
+        // the operator doesn't have to hunt for each box number separately.
+        const stagedByLocation = new Map<string, number>();
+        for (const o of item.orders) {
+          for (const b of o.stagedBoxes) {
+            const loc = b.stagingLocation || 'Unknown location';
+            stagedByLocation.set(loc, (stagedByLocation.get(loc) ?? 0) + 1);
+          }
+        }
         return (
-          <View key={`${item.boxType}-${i}`} style={s.boxRow}>
-            {item.boxType ? (
-              <View style={s.boxTag}>
-                <Text style={s.boxTagText}>{item.boxType}</Text>
+          <View key={`${item.boxType}-${i}`} style={s.boxRowWrap}>
+            <View style={s.boxRow}>
+              {item.boxType ? (
+                <View style={s.boxTag}>
+                  <Text style={s.boxTagText}>{item.boxType}</Text>
+                </View>
+              ) : null}
+              <Text style={s.boxQty}>
+                {item.numberOfBoxes} box{item.numberOfBoxes === 1 ? '' : 'es'}
+              </Text>
+              <View style={s.boxTrack}>
+                <View style={[s.boxFill, { width: `${p * 100}%` }, itemDone && s.boxFillDone]} />
+              </View>
+              <Text style={s.boxCount}>{item.boxesLoaded}/{item.boxesAllocated}</Text>
+            </View>
+            {orderLines.length > 0 ? (
+              <Text style={s.boxOrderName} numberOfLines={1}>{orderLines.join(', ')}</Text>
+            ) : null}
+            {!itemDone && stagedByLocation.size > 0 ? (
+              <View style={s.stagingRow}>
+                <MaterialCommunityIcons name="map-marker-outline" size={12} color={COLORS.primary} />
+                <Text style={s.stagingText} numberOfLines={1}>
+                  {[...stagedByLocation.entries()]
+                    .map(([loc, count]) => `${loc} (${count})`)
+                    .join(', ')}
+                </Text>
               </View>
             ) : null}
-            <Text style={s.boxQty}>
-              {item.numberOfBoxes} box{item.numberOfBoxes === 1 ? '' : 'es'}
-            </Text>
-            <View style={s.boxTrack}>
-              <View style={[s.boxFill, { width: `${p * 100}%` }, itemDone && s.boxFillDone]} />
-            </View>
-            <Text style={s.boxCount}>{item.boxesLoaded}/{item.boxesAllocated}</Text>
           </View>
         );
       })}
@@ -426,7 +497,24 @@ const s = StyleSheet.create({
   custNameDone: { color: '#166534' },
   custCount: { fontFamily: fontFamily.bold, fontSize: 11, color: COLORS.textMuted },
 
+  boxRowWrap: { gap: 2 },
   boxRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 21 },
+  boxOrderName: {
+    fontFamily: fontFamily.regular,
+    fontSize: 9,
+    color: COLORS.textMuted,
+    paddingLeft: 21,
+  },
+  stagingRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingLeft: 21, marginTop: 1,
+  },
+  stagingText: {
+    fontFamily: fontFamily.medium,
+    fontSize: 9,
+    color: COLORS.primary,
+    flex: 1,
+  },
   boxTag: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, backgroundColor: '#eff6ff' },
   boxTagText: { fontFamily: fontFamily.semiBold, fontSize: 10, color: '#1d4ed8' },
   boxQty: { fontFamily: fontFamily.regular, fontSize: 10, color: COLORS.textMuted },

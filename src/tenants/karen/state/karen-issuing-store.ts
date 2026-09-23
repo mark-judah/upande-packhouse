@@ -29,8 +29,18 @@ export type IssueOutcome =
   | { kind: 'success'; bucket: string; message?: string }
   | { kind: 'error';   bucket: string | null; message: string };
 
-/** A sale order ready to be issued, with the OPL item group(s) + team(s) it spans. */
-export type ReadyOrder = { name: string; itemGroups: string[]; teams: string[] };
+/** One Order Pick List ready to be issued — the issuing unit. A sale order
+ *  can have several of these (e.g. split by team); each is its own row. */
+export type ReadyOrder = {
+  oplName: string;
+  name: string;
+  customer: string;
+  varieties: string[];
+  stemLengths: string[];
+  qty: string;
+  itemGroups: string[];
+  teams: string[];
+};
 
 type State = {
   ordersLoading: boolean;
@@ -43,7 +53,8 @@ type State = {
   selectedTeam: string | null;
 
   packingLoading: boolean;
-  selectedOrder: string | null;
+  /** Currently selected Order Pick List name (the issuing unit). */
+  selectedOpl: string | null;
   packingItems: PackingItem[];
 
   submitting: boolean;
@@ -53,7 +64,7 @@ type State = {
   setDate: (date: string) => Promise<void>;
   setItemGroup: (group: string | null) => void;
   setTeam: (team: string | null) => void;
-  selectOrder: (orderName: string) => Promise<void>;
+  selectOrder: (oplName: string) => Promise<void>;
   /** Parse a scanned bucket QR, find the matching packing line, submit. */
   submitScan: (raw: string) => Promise<IssueOutcome>;
   reset: () => void;
@@ -68,37 +79,46 @@ function toStringList(value: string | string[] | undefined): string[] {
     .filter((s) => s.length > 0);
 }
 
-/** Coerce one raw entry (bare name or enriched object) into a ReadyOrder. */
+/** Coerce one raw entry (bare name or enriched object) into a ReadyOrder.
+ *  A bare string has no OPL identity — skipped, since every entry the
+ *  backend actually sends now carries `opl_name`. */
 function toReadyOrder(entry: string | RawReadyOrder): ReadyOrder | null {
-  if (typeof entry === 'string') {
-    const name = entry.trim();
-    return name ? { name, itemGroups: [], teams: [] } : null;
-  }
-  if (entry && typeof entry === 'object') {
-    const name = (
-      entry.name ??
-      entry.order ??
-      entry.sale_order ??
-      entry.custom_order_name ??
-      ''
-    )
-      .toString()
-      .trim();
-    if (!name) return null;
-    return {
-      name,
-      itemGroups: toStringList(entry.custom_item_group ?? entry.item_group),
-      teams: toStringList(entry.custom_team ?? entry.team),
-    };
-  }
-  return null;
+  if (typeof entry === 'string') return null;
+  if (!entry || typeof entry !== 'object') return null;
+
+  const oplName = (entry.opl_name ?? '').toString().trim();
+  if (!oplName) return null;
+
+  const name = (
+    entry.name ??
+    entry.order ??
+    entry.sale_order ??
+    entry.custom_order_name ??
+    oplName
+  )
+    .toString()
+    .trim();
+
+  return {
+    oplName,
+    name,
+    customer: (entry.customer ?? '').toString().trim(),
+    varieties: toStringList(entry.varieties),
+    stemLengths: toStringList(entry.stem_lengths),
+    qty: (entry.qty ?? '').toString(),
+    itemGroups: toStringList(entry.custom_item_group ?? entry.item_group),
+    teams: toStringList(entry.custom_team ?? entry.team),
+  };
 }
 
 export function extractOrders(raw: RawReadyOrdersResponse): ReadyOrder[] {
-  // Real Frappe response: `{message: "Found N orders…", orders: [...]}`.
+  // Real Frappe response: `{message: "Found N pick lists…", orders: [...]}`.
   // The orders live at the top level — `message` is a human-readable string.
-  // We also tolerate the legacy nested shapes for safety. Entries may be bare
-  // name strings or objects enriched with the OPL item group.
+  // We also tolerate the legacy nested shapes for safety.
+  //
+  // One row PER ORDER PICK LIST — never merged by sale order name. A sale
+  // order can have several OPLs (e.g. split by team), each with its own
+  // customer/variety/qty and its own buckets to issue.
   let list: (string | RawReadyOrder)[] = [];
   if (Array.isArray(raw?.orders)) {
     list = raw.orders;
@@ -108,29 +128,13 @@ export function extractOrders(raw: RawReadyOrdersResponse): ReadyOrder[] {
     else if (m && typeof m !== 'string') list = m.orders ?? [];
   }
 
-  // Merge by order name: the backend may emit one row per OPL, so the same
-  // order can appear several times carrying different item groups.
-  const byName = new Map<string, ReadyOrder>();
+  const byOpl = new Map<string, ReadyOrder>();
   for (const entry of list) {
     const ro = toReadyOrder(entry);
     if (!ro) continue;
-    const existing = byName.get(ro.name);
-    if (existing) {
-      for (const g of ro.itemGroups) {
-        if (!existing.itemGroups.includes(g)) existing.itemGroups.push(g);
-      }
-      for (const t of ro.teams) {
-        if (!existing.teams.includes(t)) existing.teams.push(t);
-      }
-    } else {
-      byName.set(ro.name, {
-        name: ro.name,
-        itemGroups: [...ro.itemGroups],
-        teams: [...ro.teams],
-      });
-    }
+    byOpl.set(ro.oplName, ro);
   }
-  return [...byName.values()];
+  return [...byOpl.values()];
 }
 
 function extractPackingList(raw: RawPackingListResponse): PackingItem[] {
@@ -199,7 +203,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
   selectedTeam: null,
 
   packingLoading: false,
-  selectedOrder: null,
+  selectedOpl: null,
   packingItems: [],
 
   submitting: false,
@@ -233,10 +237,10 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
   },
 
   setDate: async (date) => {
-    // New day: clear the selected order + packing list, then refetch.
+    // New day: clear the selected OPL + packing list, then refetch.
     set({
       selectedDate: date,
-      selectedOrder: null,
+      selectedOpl: null,
       packingItems: [],
       selectedItemGroup: null,
       selectedTeam: null,
@@ -248,15 +252,15 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
   setItemGroup: (group) => set({ selectedItemGroup: group }),
   setTeam: (team) => set({ selectedTeam: team }),
 
-  selectOrder: async (orderName) => {
+  selectOrder: async (oplName) => {
     set({
-      selectedOrder: orderName,
+      selectedOpl: oplName,
       packingItems: [],
       packingLoading: true,
       lastOutcome: null,
     });
     try {
-      const raw = await karenIssuingApi.fetchPackingList(orderName);
+      const raw = await karenIssuingApi.fetchPackingList(oplName);
       set({ packingItems: extractPackingList(raw), packingLoading: false });
     } catch (err) {
       const message = mapAxiosError(err).message || 'Could not load packing list.';
@@ -270,11 +274,11 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
 
   submitScan: async (raw) => {
     const state = get();
-    if (!state.selectedOrder) {
+    if (!state.selectedOpl) {
       const out: IssueOutcome = {
         kind: 'error',
         bucket: null,
-        message: 'Pick a sale order before scanning.',
+        message: 'Pick a pick list before scanning.',
       };
       set({ lastOutcome: out });
       return out;
@@ -299,7 +303,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
       const out: IssueOutcome = {
         kind: 'error',
         bucket: bucketId,
-        message: `Bucket ${bucketId} isn't allocated to ${state.selectedOrder}.`,
+        message: `Bucket ${bucketId} isn't allocated to ${state.selectedOpl}.`,
       };
       set({ lastOutcome: out });
       return out;
@@ -360,7 +364,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
       selectedItemGroup: null,
       selectedTeam: null,
       packingLoading: false,
-      selectedOrder: null,
+      selectedOpl: null,
       packingItems: [],
       submitting: false,
       lastOutcome: null,

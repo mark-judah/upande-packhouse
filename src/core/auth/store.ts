@@ -49,10 +49,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   biometricLocked: false,
 
   hydrate: async () => {
-    const [hasSession, roles, email, instanceUrl, bioFlag] = await Promise.all([
+    // fullName was never read back here before -- every fresh app launch
+    // (not a brand-new login within the same session) left it null in
+    // memory, so the home screen's `fullName || email` greeting fell back
+    // to the email on every relaunch regardless of what login() had stored.
+    const [hasSession, roles, email, fullName, instanceUrl, bioFlag] = await Promise.all([
       authRepository.hasSession(),
       authRepository.loadRoles(),
       storage.get(StorageKeys.emailBackup),
+      storage.get(StorageKeys.fullName),
       storage.get(StorageKeys.instanceUrl),
       storage.get(StorageKeys.biometricEnabled),
     ]);
@@ -63,6 +68,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       hydrated: true,
       roles,
       email,
+      fullName,
       instanceUrl,
       biometricEnabled,
       biometricLocked,

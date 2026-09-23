@@ -23,6 +23,7 @@ import type { DrawerItem } from '@/src/core/tenant/types';
 type IconName = keyof typeof Ionicons.glyphMap;
 
 const ROUTE_ICONS: Record<DrawerItem['route'], IconName> = {
+  home: 'home-outline',
   scheduler: 'list-outline',
   issuing: 'send-outline',
   packing: 'cube-outline',

@@ -3,12 +3,14 @@ import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card } from '@/src/core/ui/Card';
 import { DateSelector } from '@/src/core/ui/DateSelector';
+import { ItemGroupFilter } from '@/src/core/ui/ItemGroupFilter';
 import { tomorrowISO } from '@/src/core/date';
 import {
   useKarenSchedulerStore,
   STAGES,
   type SchedulerOrder,
 } from '@/src/tenants/karen/state/karen-scheduler-store';
+import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
 import { COLORS, borderRadius, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
 // Stage → colour, matching the bucket-logistics dashboard.
@@ -31,21 +33,40 @@ const STAGE_SHORT: Record<string, string> = {
 
 export function KarenSchedulerScreen() {
   const { loading, error, date, orders, load, setDate } = useKarenSchedulerStore();
+  const teams = useKarenTeamsStore((s) => s.teams);
+  const loadTeams = useKarenTeamsStore((s) => s.load);
   const [query, setQuery] = useState('');
+  const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  useEffect(() => {
+    loadTeams();
+  }, [loadTeams]);
+
+  // Canonical team list (Packing Teams doctype), each showing how many of
+  // TODAY's orders carry it -- a team with none today still shows up (0),
+  // matching Packing/Issuing's own team filter chips.
+  const teamOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const o of orders) {
+      if (o.team) counts.set(o.team, (counts.get(o.team) || 0) + 1);
+    }
+    return teams.map((t) => ({ name: t, count: counts.get(t) || 0 }));
+  }, [teams, orders]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter((o) =>
-      [o.customer, o.orderName, o.salesOrder, o.team].some((v) =>
+    return orders.filter((o) => {
+      if (selectedTeam && o.team !== selectedTeam) return false;
+      if (!q) return true;
+      return [o.customer, o.orderName, o.salesOrder, o.team].some((v) =>
         (v || '').toLowerCase().includes(q),
-      ),
-    );
-  }, [orders, query]);
+      );
+    });
+  }, [orders, query, selectedTeam]);
 
   return (
     <Screen title="Scheduler" onRefresh={load}>
@@ -71,12 +92,24 @@ export function KarenSchedulerScreen() {
         <Text style={s.helper}>
           {loading
             ? 'Loading…'
-            : query.trim()
+            : query.trim() || selectedTeam
               ? `${filtered.length} of ${orders.length} order${orders.length === 1 ? '' : 's'} match`
               : `${orders.length} order${orders.length === 1 ? '' : 's'} · in processing order`}
         </Text>
         {error ? <Text style={s.err}>{error}</Text> : null}
       </Card>
+
+      {teamOptions.length > 0 ? (
+        <Card>
+          <ItemGroupFilter
+            label="Team"
+            groups={teamOptions}
+            totalCount={orders.length}
+            selected={selectedTeam}
+            onSelect={setSelectedTeam}
+          />
+        </Card>
+      ) : null}
 
       {filtered.map((o) => (
         <OrderRow key={o.oplName} order={o} />

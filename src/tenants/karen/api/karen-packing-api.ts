@@ -4,7 +4,16 @@ import { api } from '@/src/core/api/client';
 // fetchPicklists — list of order pick lists available for packing.
 // Real shape: { message: { success, data: [{opl_name, order_name, item_group}], count } }
 // =====================================================================
-export type RawOplItem = { opl_name?: string; order_name?: string; item_group?: string; team?: string };
+export type RawOplItem = {
+  opl_name?: string;
+  order_name?: string;
+  item_group?: string;
+  team?: string;
+  customer?: string;
+  varieties?: string[];
+  stem_lengths?: string[];
+  qty?: string | number;
+};
 export type RawPicklistsResponse = {
   message?: { success?: boolean; data?: RawOplItem[]; count?: number };
 };
@@ -39,6 +48,10 @@ export type RawPackListItem = {
   bunch_uom?: string;
   bunch_qty?: number | string;
   custom_number_of_stems?: number | string;
+  /** The real persisted stems figure (Farm Packlist Item's actual field --
+   *  see farm_packlist_item.json; that doctype has no custom_number_of_stems
+   *  field at all, so a returned row's stems always come back here). */
+  stock_qty?: number | string;
   stem_length?: string;
   box_id?: string;
   bunch_id?: string;
@@ -149,6 +162,32 @@ export type RawCreateFplResponse = {
   message?: { status?: string; message?: string } | string;
 };
 
+// =====================================================================
+// getUnderPackReasons / setPackListBoxUnderPackReason — the Under Pack
+// Reason master, and saving a chosen reason against a box.
+// =====================================================================
+export type RawUnderPackReason = { name?: string; reason?: string; description?: string };
+export type RawUnderPackReasonsResponse = {
+  data?: RawUnderPackReason[];
+};
+
+export type RawSetReasonResponse = {
+  data?: { status?: string; message?: string };
+  message?: { status?: string; message?: string } | string;
+};
+
+// =====================================================================
+// getPackingBypassReasons / createPackingBypass — the Packing Bypass
+// Reason master, and logging a bypassed (unscannable) bunch count.
+// =====================================================================
+export type RawPackingBypassReason = { name?: string; reason?: string; description?: string };
+export type RawPackingBypassReasonsResponse = {
+  data?: RawPackingBypassReason[];
+};
+export type RawPackingBypassResponse = {
+  data?: { status?: string; message?: string; docname?: string };
+};
+
 export const karenPackingApi = {
   /** List order pick lists for a given day (YYYY-MM-DD; defaults to today). */
   fetchPicklists(date: string): Promise<RawPicklistsResponse> {
@@ -188,6 +227,53 @@ export const karenPackingApi = {
     return api<RawCreateFplResponse>({
       method: 'POST',
       url: '/api/method/upande_packhouse.mobile.api.createOrUpdateFarmPackList',
+      data: payload,
+    });
+  },
+
+  /** List the Under Pack Reason master, for the reason picker. */
+  fetchUnderPackReasons(): Promise<RawUnderPackReasonsResponse> {
+    return api<RawUnderPackReasonsResponse>({
+      method: 'GET',
+      url: '/api/method/upande_packhouse.mobile.api.getUnderPackReasons',
+    });
+  },
+
+  /** Save an Under Pack Reason against a box. Requires at least one item
+   *  already packed into that box on this OPL. */
+  setPackListBoxUnderPackReason(payload: {
+    order_pick_list: string;
+    box_id: string;
+    reason: string;
+  }): Promise<RawSetReasonResponse> {
+    return api<RawSetReasonResponse>({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.mobile.api.setPackListBoxUnderPackReason',
+      data: payload,
+    });
+  },
+
+  /** List the Packing Bypass Reason master, for the bypass picker. */
+  fetchPackingBypassReasons(): Promise<RawPackingBypassReasonsResponse> {
+    return api<RawPackingBypassReasonsResponse>({
+      method: 'GET',
+      url: '/api/method/upande_packhouse.mobile.api.getPackingBypassReasons',
+    });
+  },
+
+  /** Log a packing bypass (unscannable bunches) against an OPL/box. Does
+   *  NOT itself update the box tally -- pair with createOrUpdateFarmPackList
+   *  for that, same as a manually-entered pack. Farm is derived server-side
+   *  from the OPL's Sales Order, not sent from here. */
+  createPackingBypass(payload: {
+    order_pick_list: string;
+    box_id: string;
+    reason: string;
+    bunches: number;
+  }): Promise<RawPackingBypassResponse> {
+    return api<RawPackingBypassResponse>({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.mobile.api.createPackingBypass',
       data: payload,
     });
   },

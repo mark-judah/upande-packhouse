@@ -7,6 +7,8 @@ import type {
   RawPickListWithFpl,
   RawPickListWithFplResponse,
   RawPicklistsResponse,
+  RawPackingBypassReasonsResponse,
+  RawUnderPackReasonsResponse,
 } from '../api/karen-packing-api';
 import { mapAxiosError } from '@/src/core/api/client';
 import { tomorrowISO } from '@/src/core/date';
@@ -14,7 +16,16 @@ import { tomorrowISO } from '@/src/core/date';
 // ---------------------------------------------------------------------
 // Normalised view models
 // ---------------------------------------------------------------------
-export type OplOption = { oplName: string; orderName: string; itemGroup: string; team: string };
+export type OplOption = {
+  oplName: string;
+  orderName: string;
+  itemGroup: string;
+  team: string;
+  customer: string;
+  varieties: string[];
+  stemLengths: string[];
+  qty: string;
+};
 
 export type PickListLine = {
   itemCode: string;
@@ -64,6 +75,14 @@ export type PackOutcome =
   | { kind: 'error'; message: string }
   | { kind: 'warning'; message: string };
 
+/** One reason an operator can pick when a box came in under its packrate. */
+export type UnderPackReason = { name: string; reason: string; description: string };
+
+/** One reason an operator can pick when a bunch can't be scanned at all
+ *  (damaged/missing QR, or it was never graded) and needs to be logged
+ *  instead. */
+export type PackingBypassReason = { name: string; reason: string; description: string };
+
 const DEFAULT_SOURCE_WAREHOUSE = 'Goods sold - KF';
 
 type State = {
@@ -85,6 +104,11 @@ type State = {
   customerId: string;
   pickListItems: PickListLine[];
   packingGuide: PackingGuide | null;
+  /** Which pick-list line manual entry currently targets — key(itemCode,
+   *  uom, stemLength). A straight box has exactly one line, so this never
+   *  needs to change; a mixed bunch/box has several, and the operator
+   *  switches between them here instead of being stuck on line 0. */
+  selectedItemKey: string | null;
 
   // packing progress
   /** key `${itemCode}|${uom}|${stemLength}` -> packed bunch count. */
@@ -94,9 +118,21 @@ type State = {
   scannedBunchIds: string[];
   currentBoxId: number;
   lastScannedKey: string | null;
+  /** Boxes closed via an Under Pack Reason this session -- packable stems
+   *  remain (it was closed short of packrate on purpose), but the box is
+   *  done and must not accept any more. Keyed by box number. */
+  closedBoxes: Record<number, boolean>;
 
   submitting: boolean;
   lastOutcome: PackOutcome | null;
+
+  underPackReasons: UnderPackReason[];
+  underPackReasonsLoading: boolean;
+  reasonSubmitting: boolean;
+
+  packingBypassReasons: PackingBypassReason[];
+  packingBypassReasonsLoading: boolean;
+  bypassSubmitting: boolean;
 
   // actions
   loadPicklists: () => Promise<void>;
@@ -104,9 +140,18 @@ type State = {
   setItemGroup: (group: string | null) => void;
   setTeam: (team: string | null) => void;
   selectOpl: (oplName: string) => Promise<void>;
+  /** Switch which pick-list line manual entry targets. */
+  selectPackItem: (itemKey: string) => void;
   setBox: (box: number) => void;
   submitScan: (raw: string) => Promise<PackOutcome>;
   submitManual: (enteredQty: number) => Promise<PackOutcome>;
+  loadUnderPackReasons: () => Promise<void>;
+  /** Save a chosen Under Pack Reason against the current box. */
+  submitUnderPackReason: (reasonName: string) => Promise<PackOutcome>;
+  loadPackingBypassReasons: () => Promise<void>;
+  /** Log `bunches` unscannable bunches against the currently selected line's
+   *  box (same caps as submitManual) and record the bypass reason. */
+  submitBypass: (reasonName: string, bunches: number) => Promise<PackOutcome>;
   reset: () => void;
 };
 
@@ -128,8 +173,75 @@ export function stemsPerBunch(uom: string): number {
   return m ? parseInt(m[1], 10) : 10;
 }
 
+/** Parse a stem length ('60cm', '60', ' 60 CM ') to a number of cm, or 0 when
+ *  unusable. Mirrors the server's _length_cm (upande_packhouse/mobile/api.py)
+ *  so the client applies the exact same downgrade rule before ever calling it. */
+function lengthCm(value: string): number {
+  const n = parseInt(value.toLowerCase().replace('cm', '').trim(), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** A bunch is graded once and its QR label carries that length for life, but
+ *  sales allocation can send its BUCKET to an order asking for a SHORTER
+ *  length (the stems get cut down at packing) -- so the label and the order
+ *  legitimately disagree and the scan must not be refused for it. The reverse
+ *  never holds: a 50cm bunch cannot fill a 60cm line. Mirrors the server's
+ *  _bunch_packing_target: among pick-list lines for this variety+uom whose
+ *  own length is the bunch's length or shorter, the shallowest downgrade
+ *  (largest qualifying length) wins.
+ *
+ *  Returns the matching line, or null with `upgradeOnly` true when every
+ *  same-variety+uom line on this pick list wants something LONGER than the
+ *  bunch actually is (a real mismatch, not a valid downgrade). */
+function findPackTarget(
+  pickListItems: PickListLine[],
+  itemCode: string,
+  uom: string,
+  gradedLength: string,
+): { match: PickListLine | null; upgradeOnly: boolean } {
+  const gradedCm = lengthCm(gradedLength);
+  const sameVarietyUom = pickListItems.filter((it) => it.itemCode === itemCode && it.uom === uom);
+  if (!gradedCm) return { match: sameVarietyUom[0] ?? null, upgradeOnly: false };
+
+  let best: PickListLine | null = null;
+  let bestCm = -1;
+  for (const it of sameVarietyUom) {
+    const cm = lengthCm(it.stemLength);
+    if (!cm || cm > gradedCm) continue; // 0 = unusable; > gradedCm = upgrade, not allowed
+    if (cm > bestCm) {
+      best = it;
+      bestCm = cm;
+    }
+  }
+  return { match: best, upgradeOnly: best === null && sameVarietyUom.length > 0 };
+}
+
 function key(itemCode: string, uom: string, stemLength: string): string {
   return `${itemCode}|${uom}|${stemLength}`;
+}
+
+/** First pick-list line that isn't fully packed yet, so a fresh load (or
+ *  finishing the current line) lands manual entry somewhere useful instead
+ *  of a completed line — falls back to the first line, or null if there
+ *  are none at all. */
+function firstIncompleteItemKey(
+  items: PickListLine[],
+  tally: Record<string, number>,
+): string | null {
+  for (const item of items) {
+    const k = key(item.itemCode, item.uom, item.stemLength);
+    if (Math.trunc(tally[k] ?? 0) < Math.trunc(item.qty)) return k;
+  }
+  return items[0] ? key(items[0].itemCode, items[0].uom, items[0].stemLength) : null;
+}
+
+/** Normalise a value (string or list) into a clean string list. */
+function toStringList(value: string | string[] | undefined): string[] {
+  const raw = Array.isArray(value) ? value : value != null ? [value] : [];
+  return raw
+    .filter((s): s is string => typeof s === 'string')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 function extractPicklists(raw: RawPicklistsResponse): OplOption[] {
@@ -140,8 +252,34 @@ function extractPicklists(raw: RawPicklistsResponse): OplOption[] {
       orderName: (d.order_name ?? '').toString(),
       itemGroup: (d.item_group ?? '').toString(),
       team: (d.team ?? '').toString(),
+      customer: (d.customer ?? '').toString(),
+      varieties: toStringList(d.varieties),
+      stemLengths: toStringList(d.stem_lengths),
+      qty: (d.qty ?? '').toString(),
     }))
     .filter((o) => o.oplName.length > 0);
+}
+
+function extractUnderPackReasons(raw: RawUnderPackReasonsResponse): UnderPackReason[] {
+  const data = raw?.data ?? [];
+  return data
+    .map((d) => ({
+      name: (d.name ?? d.reason ?? '').toString(),
+      reason: (d.reason ?? d.name ?? '').toString(),
+      description: (d.description ?? '').toString(),
+    }))
+    .filter((r) => r.name.length > 0);
+}
+
+function extractPackingBypassReasons(raw: RawPackingBypassReasonsResponse): PackingBypassReason[] {
+  const data = raw?.data ?? [];
+  return data
+    .map((d) => ({
+      name: (d.name ?? d.reason ?? '').toString(),
+      reason: (d.reason ?? d.name ?? '').toString(),
+      description: (d.description ?? '').toString(),
+    }))
+    .filter((r) => r.name.length > 0);
 }
 
 function extractPickListWithFpl(
@@ -185,7 +323,13 @@ function buildGuideView(payload: RawPickListWithFpl): {
       qty: toNum(l.qty),
       uom: (l.uom ?? '').toString(),
       warehouse: (l.warehouse ?? '').toString(),
-      stemLength: (l.custom_stem_length ?? '').toString(),
+      // The ORDER's own required length (Sales Order Item.custom_length), not
+      // custom_stem_length -- that field holds the bucket's own graded length,
+      // which is longer than the order on every downgraded line by design.
+      // Comparing a scanned bunch against custom_stem_length here made
+      // findPackTarget reject every valid downgrade as "needs longer", since
+      // the bucket's graded length is never <= itself minus the downgrade.
+      stemLength: (l.custom_so_length || l.custom_stem_length || '').toString(),
       spec: (l.custom_spec ?? '').toString(),
       itemGroup: (l.item_group ?? '').toString(),
     };
@@ -196,8 +340,20 @@ function buildGuideView(payload: RawPickListWithFpl): {
   for (const fpl of farmPackLists) {
     for (const item of fpl.pack_list_item ?? []) {
       const boxNum = parseInt((item.box_id ?? '1').toString(), 10) || 1;
+      // Farm Packlist Item has no `custom_number_of_stems` field at all (only
+      // `stock_qty` -- see farm_packlist_item.json); `custom_number_of_stems`
+      // is an outbound-only field this app sends when packing, never one the
+      // server returns. Reading it here always came back 0, so every row
+      // silently fell through to the `bunch_qty * 10` guess -- correct only
+      // for the 10-stem spray bunches this was tested against, and wrong for
+      // any other bunch size (e.g. Standard Roses' 15-stem "Bunch (15)"),
+      // under-counting stems already in a box and letting the client's own
+      // box-full guard (submitScan/submitManual above) wave through an entry
+      // the server's authoritative over-pack guard then has to reject.
       const stems =
-        toNum(item.custom_number_of_stems, 0) || toNum(item.bunch_qty, 0) * 10;
+        toNum(item.stock_qty, 0) ||
+        toNum(item.custom_number_of_stems, 0) ||
+        toNum(item.bunch_qty, 0) * 10;
       const variety = (item.item_code ?? '').toString();
       if (!variety) continue;
       varietyStemsInBox[variety] = varietyStemsInBox[variety] ?? {};
@@ -255,11 +411,20 @@ function buildGuideView(payload: RawPickListWithFpl): {
   };
 }
 
-function extractBunch(raw: RawBunchResponse): RawBunchEntry | null {
+/** The backend already computes a specific reason for every rejection (not
+ *  graded, already packed, discarded, ...) via frappe.throw -- collapsing
+ *  all of them to null here previously threw away that message, so every
+ *  rejection surfaced as the same generic "not graded" text regardless of
+ *  the real cause (confirmed live: a bunch that was already packed showed
+ *  "Bunch not graded. Perform grading scan first." instead of "This bunch
+ *  has already been packed"). Carry the real message through instead. */
+function extractBunch(raw: RawBunchResponse): { bunch: RawBunchEntry | null; errorMessage: string | null } {
   const m = raw?.message;
-  if (!m || typeof m !== 'object') return null;
-  if ('error' in m && m.error === true) return null;
-  return m as RawBunchEntry;
+  if (!m || typeof m !== 'object') return { bunch: null, errorMessage: null };
+  if ('error' in m && m.error === true) {
+    return { bunch: null, errorMessage: (m as { message?: string }).message || null };
+  }
+  return { bunch: m as RawBunchEntry, errorMessage: null };
 }
 
 /** target stems per variety per box for a mixed box. */
@@ -283,15 +448,25 @@ export const useKarenPackingStore = create<State>((set, get) => ({
   customerId: '',
   pickListItems: [],
   packingGuide: null,
+  selectedItemKey: null,
 
   packedBunchesTally: {},
   varietyStemsInBox: {},
   scannedBunchIds: [],
   currentBoxId: 1,
   lastScannedKey: null,
+  closedBoxes: {},
 
   submitting: false,
   lastOutcome: null,
+
+  underPackReasons: [],
+  underPackReasonsLoading: false,
+  reasonSubmitting: false,
+
+  packingBypassReasons: [],
+  packingBypassReasonsLoading: false,
+  bypassSubmitting: false,
 
   loadPicklists: async () => {
     set({ picklistsLoading: true });
@@ -328,11 +503,13 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       showTable: false,
       packingGuide: null,
       pickListItems: [],
+      selectedItemKey: null,
       packedBunchesTally: {},
       varietyStemsInBox: {},
       scannedBunchIds: [],
       currentBoxId: 1,
       lastScannedKey: null,
+      closedBoxes: {},
       selectedItemGroup: null,
       selectedTeam: null,
     });
@@ -352,15 +529,19 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       showTable: false,
       packingGuide: null,
       pickListItems: [],
+      selectedItemKey: null,
       packedBunchesTally: {},
       varietyStemsInBox: {},
       scannedBunchIds: [],
       currentBoxId: 1,
       lastScannedKey: null,
+      closedBoxes: {},
       lastOutcome: null,
     });
     await reloadGuide(oplName, set);
   },
+
+  selectPackItem: (itemKey) => set({ selectedItemKey: itemKey }),
 
   setBox: (box) => {
     set({ currentBoxId: box, lastOutcome: { kind: 'success', message: `Packing Box ${box}` } });
@@ -376,8 +557,22 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       return out;
     };
 
+    // Reentrancy guard, checked synchronously before any await: a scanner
+    // that keeps injecting keystrokes (or a double-tap) can fire a second
+    // onScan before React has re-rendered the ScanField's `editable={false}`,
+    // so that UI-level disable alone doesn't stop an overlapping call. Two
+    // overlapping submitScan calls can each load the Farm Pack List before
+    // the other's append is committed, so the FPL auto-submits and generates
+    // its Box Label from whichever snapshot is missing the other's item.
+    if (state.submitting) {
+      return fail('warning', 'Still submitting the previous scan — please wait.');
+    }
+
     if (!state.selectedOpl || !state.showTable) {
       return fail('warning', 'Select an order before scanning.');
+    }
+    if (state.closedBoxes[state.currentBoxId]) {
+      return fail('warning', `Box ${state.currentBoxId} is closed (under-packed). Switch to the next box.`);
     }
 
     // Parse the bunch QR.
@@ -420,15 +615,20 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       }
     }
 
+    // scannedBunchIds only ever gains an id after a successful pack (see
+    // below) -- a hit here means this exact bunch was already packed this
+    // session, not merely "scanned", so say that (matches the backend's own
+    // wording for the same condition, fetched via fetchBunchForPacking below).
     if (state.scannedBunchIds.includes(bunchId)) {
-      return fail('warning', 'You have already scanned this bunch.');
+      return fail('warning', 'This bunch has already been packed.');
     }
 
     set({ submitting: true });
     let bunch: RawBunchEntry | null;
+    let bunchErrorMessage: string | null;
     try {
       const res = await karenPackingApi.fetchBunchForPacking(bunchId);
-      bunch = extractBunch(res);
+      ({ bunch, errorMessage: bunchErrorMessage } = extractBunch(res));
     } catch (err) {
       set({ submitting: false });
       return fail('error', mapAxiosError(err).message || 'Bunch lookup failed.');
@@ -436,7 +636,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
     if (!bunch) {
       set({ submitting: false });
-      return fail('warning', 'Bunch not graded. Perform grading scan first.');
+      return fail('warning', bunchErrorMessage || 'Bunch not graded. Perform grading scan first.');
     }
     if (bunch.stock_entry_type === 'Discard') {
       set({ submitting: false });
@@ -452,10 +652,9 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     const pLength = (bunch.stem_length ?? '').toString();
     const pStems = stemsPerBunch(pUom);
 
-    // The bunch must match an order line (variety + uom + length).
-    const match = state.pickListItems.find(
-      (it) => it.itemCode === pVariety && it.uom === pUom && it.stemLength === pLength,
-    );
+    // The bunch must match an order line (variety + uom), at its own graded
+    // length or a shorter one on that line -- never longer. See findPackTarget.
+    const { match, upgradeOnly } = findPackTarget(state.pickListItems, pVariety, pUom, pLength);
     if (!match) {
       set({ submitting: false });
       const byCode = state.pickListItems.filter((e) => e.itemCode === pVariety);
@@ -465,14 +664,19 @@ export const useKarenPackingStore = create<State>((set, get) => ({
           ? `Variety (${pVariety}) not in pick list.`
           : byCodeUom.length === 0
             ? `Size (${pUom}) invalid for ${pVariety}.`
-            : `Stem length (${pLength}) mismatch for ${pVariety}.`;
+            : upgradeOnly
+              ? `Bunch graded ${pLength} but ${pVariety} on this pick list needs longer. A bunch can be packed shorter, never longer.`
+              : `Stem length (${pLength}) mismatch for ${pVariety}.`;
       return fail('warning', message);
     }
+    // The order's own length (may be shorter than what the bunch was graded
+    // at) is the length this pack actually counts against.
+    const targetLength = match.stemLength;
 
-    const compoundKey = key(pVariety, pUom, pLength);
+    const compoundKey = key(pVariety, pUom, targetLength);
     if ((state.packedBunchesTally[compoundKey] ?? 0) >= match.qty) {
       set({ submitting: false });
-      return fail('warning', `${pVariety} (${pLength}) is already fully packed.`);
+      return fail('warning', `${pVariety} (${targetLength}) is already fully packed.`);
     }
 
     // Re-check mixed target against the bunch's resolved variety.
@@ -496,7 +700,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       sales_order_id: state.saleOrderId,
       customer_id: state.customerId,
       custom_number_of_stems: pStems,
-      custom_stem_length: pLength,
+      custom_stem_length: targetLength,
       box_id: state.currentBoxId.toString(),
       bunch_id: bunch.bunch_id ?? bunchId,
     };
@@ -521,7 +725,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       lastOutcome: { kind: 'success', message: 'Packed successfully' },
     });
     // Refresh tallies from the server while keeping box + scan history.
-    await reloadGuide(state.selectedOpl, set);
+    await reloadGuide(state.selectedOpl, set, state.selectedItemKey);
     return { kind: 'success', message: 'Packed successfully' };
   },
 
@@ -533,8 +737,23 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       return out;
     };
 
+    // Same reentrancy guard as submitScan -- see its comment.
+    if (state.submitting) {
+      return fail('warning', 'Still submitting the previous entry — please wait.');
+    }
+
     if (!state.selectedOpl) return fail('warning', 'Select an order first.');
-    const item = state.pickListItems[0];
+    if (state.closedBoxes[state.currentBoxId]) {
+      return fail('warning', `Box ${state.currentBoxId} is closed (under-packed). Switch to the next box.`);
+    }
+    // Resolve the SELECTED line, not always the first — a straight box has
+    // just one line so this is unchanged for it, but a mixed bunch/box has
+    // several, and hardcoding index 0 here used to make every one of them
+    // (Athena, Pink Ice, ...) unreachable once the first line was full.
+    const item =
+      state.pickListItems.find(
+        (i) => key(i.itemCode, i.uom, i.stemLength) === state.selectedItemKey,
+      ) ?? state.pickListItems[0];
     if (!item) return fail('warning', 'No order line to pack.');
 
     if (!Number.isFinite(enteredQty) || enteredQty <= 0) {
@@ -609,8 +828,180 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     }
 
     set({ submitting: false, lastOutcome: { kind: 'success', message: 'Packed successfully' } });
-    await reloadGuide(state.selectedOpl, set);
+    await reloadGuide(state.selectedOpl, set, state.selectedItemKey);
     return { kind: 'success', message: 'Packed successfully' };
+  },
+
+  loadUnderPackReasons: async () => {
+    if (get().underPackReasons.length > 0) return; // static master data — fetch once per session
+    set({ underPackReasonsLoading: true });
+    try {
+      const raw = await karenPackingApi.fetchUnderPackReasons();
+      set({ underPackReasons: extractUnderPackReasons(raw), underPackReasonsLoading: false });
+    } catch {
+      set({ underPackReasonsLoading: false });
+    }
+  },
+
+  submitUnderPackReason: async (reasonName) => {
+    const state = get();
+    const fail = (kind: 'error' | 'warning', message: string): PackOutcome => {
+      const out: PackOutcome = { kind, message };
+      set({ lastOutcome: out });
+      return out;
+    };
+
+    if (!state.selectedOpl) return fail('warning', 'Select an order first.');
+    const reason = reasonName.trim();
+    if (!reason) return fail('warning', 'Pick a reason first.');
+    if (state.closedBoxes[state.currentBoxId]) {
+      return fail('warning', `Box ${state.currentBoxId} is already closed.`);
+    }
+
+    set({ reasonSubmitting: true });
+    try {
+      await karenPackingApi.setPackListBoxUnderPackReason({
+        order_pick_list: state.selectedOpl,
+        box_id: state.currentBoxId.toString(),
+        reason,
+      });
+    } catch (err) {
+      set({ reasonSubmitting: false });
+      return fail('error', mapAxiosError(err).message || 'Could not save reason.');
+    }
+
+    // Closed on purpose, short of packrate -- must never accept another
+    // scan/manual pack/bypass, unlike a box that's merely not full yet.
+    const out: PackOutcome = { kind: 'success', message: `Box ${state.currentBoxId} closed as under-packed.` };
+    set((s) => ({
+      reasonSubmitting: false,
+      lastOutcome: out,
+      closedBoxes: { ...s.closedBoxes, [state.currentBoxId]: true },
+    }));
+    return out;
+  },
+
+  loadPackingBypassReasons: async () => {
+    if (get().packingBypassReasons.length > 0) return; // static master data — fetch once per session
+    set({ packingBypassReasonsLoading: true });
+    try {
+      const raw = await karenPackingApi.fetchPackingBypassReasons();
+      set({ packingBypassReasons: extractPackingBypassReasons(raw), packingBypassReasonsLoading: false });
+    } catch {
+      set({ packingBypassReasonsLoading: false });
+    }
+  },
+
+  submitBypass: async (reasonName, bunches) => {
+    const state = get();
+    const fail = (kind: 'error' | 'warning', message: string): PackOutcome => {
+      const out: PackOutcome = { kind, message };
+      set({ lastOutcome: out });
+      return out;
+    };
+
+    if (state.bypassSubmitting) {
+      return fail('warning', 'Still submitting the previous bypass — please wait.');
+    }
+    if (!state.selectedOpl) return fail('warning', 'Select an order first.');
+    if (state.closedBoxes[state.currentBoxId]) {
+      return fail('warning', `Box ${state.currentBoxId} is closed (under-packed). Switch to the next box.`);
+    }
+    const reason = reasonName.trim();
+    if (!reason) return fail('warning', 'Pick a reason first.');
+    if (!Number.isFinite(bunches) || bunches <= 0) {
+      return fail('warning', 'Enter a valid number of bunches.');
+    }
+
+    // Same line + same three caps as submitManual -- a bypassed bunch still
+    // counts toward the order line, the box's packrate, and (for a mixed
+    // box) this variety's own per-box target, exactly like a normal pack.
+    const item =
+      state.pickListItems.find(
+        (i) => key(i.itemCode, i.uom, i.stemLength) === state.selectedItemKey,
+      ) ?? state.pickListItems[0];
+    if (!item) return fail('warning', 'No order line to pack.');
+
+    const guide = state.packingGuide;
+    const perBunch = stemsPerBunch(item.uom);
+    const k = key(item.itemCode, item.uom, item.stemLength);
+    const alreadyPacked = Math.trunc(state.packedBunchesTally[k] ?? 0);
+    const orderRemaining = Math.max(0, Math.trunc(item.qty) - alreadyPacked);
+
+    let boxRemaining = Infinity;
+    if (guide && guide.packratePerBox > 0) {
+      const boxStems = Object.values(state.varietyStemsInBox).reduce(
+        (sum, byBox) => sum + (byBox[state.currentBoxId] ?? 0),
+        0,
+      );
+      boxRemaining = Math.max(0, Math.floor((guide.packratePerBox - boxStems) / perBunch));
+    }
+
+    let varietyRemaining = Infinity;
+    if (guide && guide.isMixed) {
+      const target = targetPerVariety(guide, item.itemCode);
+      const inBox = state.varietyStemsInBox[item.itemCode]?.[state.currentBoxId] ?? 0;
+      varietyRemaining = Math.max(0, Math.floor((target - inBox) / perBunch));
+    }
+
+    const maxBunches = Math.min(orderRemaining, boxRemaining, varietyRemaining);
+    if (bunches > maxBunches) {
+      if (orderRemaining === 0) {
+        return fail('warning', `${item.itemCode} is already fully packed.`);
+      }
+      if (maxBunches === boxRemaining && boxRemaining < orderRemaining) {
+        return fail(
+          'warning',
+          `Box ${state.currentBoxId} has room for ${maxBunches} more bunch(es). Switch to the next box.`,
+        );
+      }
+      return fail('warning', `Cannot exceed ${maxBunches} remaining bunch(es).`);
+    }
+
+    const payload: PackListItemPayload = {
+      item_code: item.itemCode,
+      bunch_uom: item.uom,
+      bunch_qty: bunches,
+      source_warehouse: item.warehouse ? item.warehouse : DEFAULT_SOURCE_WAREHOUSE,
+      sales_order_id: state.saleOrderId,
+      customer_id: state.customerId,
+      custom_number_of_stems: bunches * perBunch,
+      custom_stem_length: item.stemLength,
+      box_id: state.currentBoxId.toString(),
+      bunch_id: null,
+    };
+
+    set({ bypassSubmitting: true });
+    try {
+      await karenPackingApi.createOrUpdateFarmPackList({
+        custom_farm: item.warehouse ? item.warehouse : '',
+        custom_customer: state.customerId,
+        custom_sales_order: state.saleOrderId,
+        custom_order_pick_list: state.selectedOpl,
+        items: [payload],
+      });
+    } catch (err) {
+      set({ bypassSubmitting: false });
+      return fail('error', mapAxiosError(err).message || 'Packing failed.');
+    }
+
+    // The box tally is already updated at this point -- a failure logging
+    // the reason is reported but doesn't undo it or block moving on.
+    let logMessage = `Bypass logged: ${bunches} bunch(es) — ${reason}.`;
+    try {
+      await karenPackingApi.createPackingBypass({
+        order_pick_list: state.selectedOpl,
+        box_id: state.currentBoxId.toString(),
+        reason,
+        bunches,
+      });
+    } catch (err) {
+      logMessage = `Packed, but the bypass log failed: ${mapAxiosError(err).message}`;
+    }
+
+    set({ bypassSubmitting: false, lastOutcome: { kind: 'success', message: logMessage } });
+    await reloadGuide(state.selectedOpl, set, state.selectedItemKey);
+    return { kind: 'success', message: logMessage };
   },
 
   reset: () =>
@@ -626,13 +1017,17 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       customerId: '',
       pickListItems: [],
       packingGuide: null,
+      selectedItemKey: null,
       packedBunchesTally: {},
       varietyStemsInBox: {},
       scannedBunchIds: [],
       currentBoxId: 1,
       lastScannedKey: null,
+      closedBoxes: {},
       submitting: false,
       lastOutcome: null,
+      reasonSubmitting: false,
+      bypassSubmitting: false,
     }),
 }));
 
@@ -641,6 +1036,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 async function reloadGuide(
   oplName: string,
   set: (partial: Partial<State>) => void,
+  currentSelectedItemKey: string | null = null,
 ): Promise<void> {
   set({ guideLoading: true });
   try {
@@ -655,11 +1051,30 @@ async function reloadGuide(
       return;
     }
     const view = buildGuideView(payload);
+
+    // Keep the operator on their current line as long as it still has room;
+    // advance to the next incomplete line the moment it doesn't (e.g. right
+    // after packing the last bunch of Aqua, this moves on to Athena instead
+    // of leaving manual entry stuck on a now-finished line with nowhere to
+    // go). A fresh load (no prior selection) just picks the first incomplete
+    // line outright.
+    const current = view.pickListItems.find(
+      (i) => key(i.itemCode, i.uom, i.stemLength) === currentSelectedItemKey,
+    );
+    const currentStillOpen =
+      !!current &&
+      Math.trunc(view.packedBunchesTally[currentSelectedItemKey as string] ?? 0) <
+        Math.trunc(current.qty);
+    const selectedItemKey = currentStillOpen
+      ? currentSelectedItemKey
+      : firstIncompleteItemKey(view.pickListItems, view.packedBunchesTally);
+
     set({
       guideLoading: false,
       showTable: true,
       pickListItems: view.pickListItems,
       packingGuide: view.packingGuide,
+      selectedItemKey,
       packedBunchesTally: view.packedBunchesTally,
       varietyStemsInBox: view.varietyStemsInBox,
       saleOrderId: view.saleOrderId,

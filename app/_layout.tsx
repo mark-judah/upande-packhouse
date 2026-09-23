@@ -54,7 +54,7 @@ export default function RootLayout() {
     if (hydrated && hasSession && !biometricLocked) reportVersionIfDue();
   }, [hydrated, hasSession, biometricLocked]);
 
-  // Auth gate: route to login → biometric-lock → shelving based on state.
+  // Auth gate: route to login → biometric-lock → home based on state.
   useEffect(() => {
     if (!hydrated) return;
     const first = segments[0] as string | undefined;
@@ -68,7 +68,7 @@ export default function RootLayout() {
       return;
     }
     if (first === 'login' || first === 'biometric-lock') {
-      router.replace('/issuing');
+      router.replace('/home');
     }
   }, [hydrated, hasSession, biometricLocked, segments, router]);
 
@@ -91,6 +91,7 @@ export default function RootLayout() {
                 <Stack.Screen name="index" />
                 <Stack.Screen name="login" />
                 <Stack.Screen name="biometric-lock" options={{ animation: 'fade' }} />
+                <Stack.Screen name="home" />
                 <Stack.Screen name="issuing" />
                 <Stack.Screen name="packing" />
                 <Stack.Screen name="loading" />

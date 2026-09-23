@@ -27,6 +27,7 @@ export function KarenDispatchScreen() {
     dispatched,
     savedSealNumber,
     sealNumberInput,
+    missingBoxes,
     lastOutcome,
     loadOrders,
     setSealNumberInput,
@@ -67,7 +68,8 @@ export function KarenDispatchScreen() {
     );
   };
 
-  const canConfirm = !saving && !loading && orders.length > 0 && !!sealNumberInput.trim();
+  const canConfirm =
+    !saving && !loading && orders.length > 0 && !!sealNumberInput.trim() && missingBoxes.length === 0;
 
   return (
     <Screen title="Dispatch" onRefresh={loadOrders}>
@@ -93,6 +95,36 @@ export function KarenDispatchScreen() {
               </Text>
             </View>
           </View>
+        </Card>
+      ) : null}
+
+      {!dispatched && missingBoxes.length > 0 ? (
+        <Card title="Boxes not loaded">
+          <Text style={s.missingHelper}>
+            {missingBoxes.length} staged box{missingBoxes.length === 1 ? '' : 'es'} for this delivery date{' '}
+            {missingBoxes.length === 1 ? 'has' : 'have'} not been loaded onto the truck yet. Dispatch is
+            blocked until every staged box is loaded.
+          </Text>
+          <View style={{ height: spacing.sm }} />
+          {missingBoxes.map((b) => (
+            <View key={b.boxLabel} style={s.missingRow}>
+              <MaterialCommunityIcons name="package-variant-closed" size={16} color="#dc2626" />
+              <View style={{ flex: 1 }}>
+                <Text style={s.missingBoxName} numberOfLines={1}>
+                  Box {b.boxNumber} · {b.customer || '—'}
+                </Text>
+                <Text style={s.missingBoxSub} numberOfLines={1}>
+                  {[b.orderPickList, b.deliveryPoint].filter(Boolean).join('  ·  ')}
+                </Text>
+              </View>
+              {b.stagingLocation ? (
+                <View style={s.missingLocationTag}>
+                  <MaterialCommunityIcons name="map-marker-outline" size={12} color="#92400e" />
+                  <Text style={s.missingLocationText} numberOfLines={1}>{b.stagingLocation}</Text>
+                </View>
+              ) : null}
+            </View>
+          ))}
         </Card>
       ) : null}
 
@@ -171,7 +203,12 @@ export function KarenDispatchScreen() {
             onPress={onConfirmPress}
             disabled={!canConfirm}
           />
-          {!sealNumberInput.trim() ? (
+          {missingBoxes.length > 0 ? (
+            <Text style={s.blockedHint}>
+              {missingBoxes.length} box{missingBoxes.length === 1 ? '' : 'es'} still need loading before you
+              can confirm dispatch.
+            </Text>
+          ) : !sealNumberInput.trim() ? (
             <Text style={s.blockedHint}>Enter the seal number before confirming.</Text>
           ) : null}
         </Card>
@@ -232,6 +269,31 @@ const s = StyleSheet.create({
 
   dispatchedBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   dispatchedTitle: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: '#16a34a' },
+
+  missingHelper: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: '#991b1b' },
+  missingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.xs + 2,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  missingBoxName: { fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: COLORS.text },
+  missingBoxSub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary, marginTop: 1 },
+  missingLocationTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fde68a',
+    borderRadius: borderRadius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    maxWidth: 130,
+  },
+  missingLocationText: { fontFamily: fontFamily.semiBold, fontSize: 10, color: '#92400e', flexShrink: 1 },
 
   sealInput: {
     borderWidth: 1,

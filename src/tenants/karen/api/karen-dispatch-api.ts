@@ -16,6 +16,17 @@ export type RawLoadedOrder = {
   boxes_loaded?: number;
 };
 
+/** A box staged in the dispatch coldstore (staged=1) that never got scanned
+ *  loaded onto the truck -- dispatch must not confirm while any exist. */
+export type RawMissingBox = {
+  box_label?: string;
+  box_number?: number;
+  order_pick_list?: string;
+  customer?: string;
+  delivery_point?: string;
+  staging_location?: string;
+};
+
 export type RawLoadedOrdersData = {
   delivery_date?: string;
   loading_sheet?: string | null;
@@ -27,6 +38,7 @@ export type RawLoadedOrdersData = {
   total_boxes?: number;
   total_orders?: number;
   orders?: RawLoadedOrder[];
+  missing_boxes?: RawMissingBox[];
 };
 
 export type RawLoadedOrdersResponse = {
@@ -39,9 +51,12 @@ export type RawRebuildData = {
   total_boxes?: number;
   seal_number?: string;
   dispatched?: boolean;
+  /** Present when the server refused to confirm because staged boxes were
+   *  never loaded (see createOrUpdateDispatch's missing_boxes check). */
+  missing_boxes?: RawMissingBox[];
 };
 export type RawRebuildResponse = {
-  message?: { status?: string; message?: string; data?: RawRebuildData } | string;
+  message?: { status?: string; message?: string; data?: RawRebuildData; missing_boxes?: RawMissingBox[] } | string;
 };
 
 export const karenDispatchApi = {

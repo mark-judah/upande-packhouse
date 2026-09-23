@@ -15,6 +15,7 @@ import {
   useKarenIssuingStore,
   type PackingItem,
 } from '@/src/tenants/karen/state/karen-issuing-store';
+import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
 export function KarenIssuingScreen() {
@@ -26,7 +27,7 @@ export function KarenIssuingScreen() {
     selectedItemGroup,
     selectedTeam,
     packingLoading,
-    selectedOrder,
+    selectedOpl,
     packingItems,
     submitting,
     lastOutcome,
@@ -39,11 +40,14 @@ export function KarenIssuingScreen() {
     reset,
   } = useKarenIssuingStore();
   const { showSuccess, showError } = useToast();
+  const canonicalTeams = useKarenTeamsStore((s) => s.teams);
+  const loadTeams = useKarenTeamsStore((s) => s.load);
 
   useEffect(() => {
     loadOrders();
+    loadTeams();
     return () => reset();
-  }, [loadOrders, reset]);
+  }, [loadOrders, loadTeams, reset]);
 
   // Issued buckets drop off the scan list; progress tracks against the total.
   const unissuedItems = useMemo(
@@ -66,8 +70,8 @@ export function KarenIssuingScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (selectedOrder && unissuedCount > 0) focusWhenReady(scanRef);
-    }, [selectedOrder, unissuedCount]),
+      if (selectedOpl && unissuedCount > 0) focusWhenReady(scanRef);
+    }, [selectedOpl, unissuedCount]),
   );
 
   // Item groups present across the ready orders, with how many orders each one
@@ -82,16 +86,17 @@ export function KarenIssuingScreen() {
       .map(([name, count]) => ({ name, count }));
   }, [availableOrders]);
 
-  // Teams present across the ready orders, with order counts.
+  // Canonical team list (Packing Teams doctype), with how many of today's
+  // ready orders each one covers -- a team with none today still shows up
+  // as a choice (count 0), rather than only ever offering whatever team
+  // strings happened to appear on already-loaded orders.
   const teamOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const o of availableOrders) {
       for (const t of o.teams) counts.set(t, (counts.get(t) ?? 0) + 1);
     }
-    return [...counts.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([name, count]) => ({ name, count }));
-  }, [availableOrders]);
+    return canonicalTeams.map((name) => ({ name, count: counts.get(name) ?? 0 }));
+  }, [canonicalTeams, availableOrders]);
 
   const filteredOrders = useMemo(
     () =>
@@ -103,14 +108,24 @@ export function KarenIssuingScreen() {
     [availableOrders, selectedItemGroup, selectedTeam],
   );
 
+  // Label shows customer + variety + stem length per OPL, per the packhouse
+  // spec — operators pick the specific pick list, not a merged sale order.
   const orderOptions = filteredOrders.map((o) => ({
-    label: o.name,
-    value: o.name,
-    sublabel: o.itemGroups.join(' · ') || undefined,
+    label:
+      [o.customer, o.varieties.join(', '), o.stemLengths.join(', ')]
+        .filter(Boolean)
+        .join(' · ') || o.name,
+    value: o.oplName,
+    sublabel: [o.name, o.qty ? `${o.qty} stems` : null].filter(Boolean).join(' · ') || undefined,
   }));
 
+  const selectedOplInfo = useMemo(
+    () => availableOrders.find((o) => o.oplName === selectedOpl) ?? null,
+    [availableOrders, selectedOpl],
+  );
+
   const onPickOrder = (next: string) => {
-    if (!next || next === selectedOrder) return;
+    if (!next || next === selectedOpl) return;
     selectOrder(next);
   };
 
@@ -126,7 +141,7 @@ export function KarenIssuingScreen() {
   };
 
   return (
-    <Screen title="Issue from Coldstore">
+    <Screen title="Issue from Coldstore" onRefresh={loadOrders}>
       <Card title="Sale order">
         <DateSelector
           value={selectedDate}
@@ -154,22 +169,22 @@ export function KarenIssuingScreen() {
           />
         ) : null}
         <Dropdown
-          label="Sale Order"
-          value={selectedOrder}
+          label="Pick List"
+          value={selectedOpl}
           options={orderOptions}
-          placeholder={ordersLoading ? 'Loading…' : 'Pick a sale order'}
+          placeholder={ordersLoading ? 'Loading…' : 'Pick a pick list'}
           iconName="clipboard-text-outline"
           onChange={onPickOrder}
           disabled={ordersLoading || filteredOrders.length === 0}
         />
         <Text style={s.helper}>
           {ordersLoading
-            ? 'Loading sale orders…'
+            ? 'Loading pick lists…'
             : availableOrders.length === 0
-              ? 'No orders are ready to be issued.'
+              ? 'No pick lists are ready to be issued.'
               : selectedItemGroup || selectedTeam
-                ? `${filteredOrders.length} of ${availableOrders.length} order${availableOrders.length === 1 ? '' : 's'}${[selectedItemGroup, selectedTeam].filter(Boolean).length ? ' · ' + [selectedItemGroup, selectedTeam].filter(Boolean).join(' · ') : ''}`
-                : `${availableOrders.length} order${availableOrders.length === 1 ? '' : 's'} ready`}
+                ? `${filteredOrders.length} of ${availableOrders.length} pick list${availableOrders.length === 1 ? '' : 's'}${[selectedItemGroup, selectedTeam].filter(Boolean).length ? ' · ' + [selectedItemGroup, selectedTeam].filter(Boolean).join(' · ') : ''}`
+                : `${availableOrders.length} pick list${availableOrders.length === 1 ? '' : 's'} ready`}
         </Text>
         {!ordersLoading && availableOrders.length === 0 ? (
           <>
@@ -179,12 +194,21 @@ export function KarenIssuingScreen() {
         ) : null}
       </Card>
 
-      {selectedOrder ? (
-        <Card title={`Packing list — ${selectedOrder}`}>
+      {selectedOpl ? (
+        <Card
+          title={`Packing list — ${selectedOplInfo?.customer || selectedOpl}`}
+        >
+          {selectedOplInfo ? (
+            <Text style={s.helper}>
+              {selectedOplInfo.name} · {selectedOplInfo.varieties.join(', ') || '—'}
+              {selectedOplInfo.stemLengths.length ? ` · ${selectedOplInfo.stemLengths.join(', ')}` : ''}
+              {selectedOplInfo.qty ? ` · ${selectedOplInfo.qty} stems` : ''}
+            </Text>
+          ) : null}
           {packingLoading ? (
             <Text style={s.helper}>Loading packing list…</Text>
           ) : packingItems.length === 0 ? (
-            <Text style={s.helper}>No buckets allocated to this order.</Text>
+            <Text style={s.helper}>No buckets allocated to this pick list.</Text>
           ) : (
             <>
               {/* Which team to hand this order's buckets to. */}
@@ -256,7 +280,7 @@ export function KarenIssuingScreen() {
         </Card>
       ) : null}
 
-      {selectedOrder ? (
+      {selectedOpl ? (
         <Card title="Scan bucket">
           <ScanField
             ref={scanRef}
@@ -290,13 +314,10 @@ function PackingRow({ item }: { item: PackingItem }) {
     <View style={[s.packRow, item.isIssued && s.packRowDone]}>
       <View style={s.packLeft}>
         <Text style={[s.packBucket, item.isIssued && s.packBucketDone]}>
-          {item.bucket || '—'}
+          {[item.shelf && `Shelf ${item.shelf}`, item.bucket].filter(Boolean).join(' · ') || '—'}
         </Text>
         <Text style={s.packMeta}>
           {[item.variety, item.stemLength].filter(Boolean).join(' · ') || '—'}
-        </Text>
-        <Text style={s.packMetaDim}>
-          {[item.shelf && `Shelf ${item.shelf}`, item.team].filter(Boolean).join(' · ')}
         </Text>
       </View>
       <View style={s.packRight}>
@@ -399,12 +420,6 @@ const s = StyleSheet.create({
     fontSize: fontSize.xs,
     color: COLORS.textSecondary,
     marginTop: 2,
-  },
-  packMetaDim: {
-    fontFamily: fontFamily.regular,
-    fontSize: 11,
-    color: COLORS.textMuted,
-    marginTop: 1,
   },
   packQty: {
     fontFamily: fontFamily.semiBold,

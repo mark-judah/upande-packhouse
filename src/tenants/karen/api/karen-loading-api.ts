@@ -7,9 +7,23 @@ import { api } from '@/src/core/api/client';
 // that truck's full plan (drop-off points -> customers -> box types).
 // Response: { message: { status, message, data: { ...RawLoadingData } } }
 // =====================================================================
+export type RawStagedBox = {
+  box_number?: number;
+  /** Where in the dispatch coldstore this box was scanned staged -- from
+   *  the location QR createStagingEntry accepts. Blank for older boxes
+   *  staged before that was captured. */
+  staging_location?: string;
+};
+
 export type RawSalesOrderInfo = {
   sales_order?: string;
+  order_pick_list?: string;
   order_name?: string;
+  /** Variety for a straight box (e.g. "Athena"), or the mix/bouquet product
+   *  name for a mixed box or mixed bunch (e.g. "Fireworks") -- same field,
+   *  meaning depends on `is_mixed`. */
+  variety?: string;
+  is_mixed?: boolean;
   truck_details?: string;
   consignee?: string;
   shipping_agent?: string;
@@ -18,6 +32,9 @@ export type RawSalesOrderInfo = {
   boxes_packed?: number;
   boxes_staged?: number;
   boxes_loaded?: number;
+  /** Boxes staged (in the dispatch coldstore) but not yet loaded, with
+   *  where to find each one. */
+  staged_boxes?: RawStagedBox[];
 };
 
 export type RawLoadingPlanItem = {

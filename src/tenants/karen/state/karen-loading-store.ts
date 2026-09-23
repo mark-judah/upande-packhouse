@@ -11,9 +11,23 @@ import { tomorrowISO } from '@/src/core/date';
 // ---------------------------------------------------------------------
 // Normalised view models (mirror of the Flutter KaitetLoadingData model)
 // ---------------------------------------------------------------------
+export type StagedBox = {
+  boxNumber: number;
+  /** Where in the dispatch coldstore this box was scanned staged. Empty for
+   *  boxes staged before that was captured. */
+  stagingLocation: string;
+};
+
 export type LoadingOrder = {
   salesOrder: string;
+  /** The specific OPL these box counts describe -- a Sales Order can have
+   *  more than one, each tracked separately (see sumOrderTotals below). */
+  orderPickList: string;
   orderName: string;
+  /** Variety for a straight box, or the mix/bouquet product name when
+   *  `isMixed` -- same underlying field, different meaning. */
+  variety: string;
+  isMixed: boolean;
   truckDetails: string;
   consignee: string;
   shippingAgent: string;
@@ -22,6 +36,8 @@ export type LoadingOrder = {
   boxesPacked: number;
   boxesStaged: number;
   boxesLoaded: number;
+  /** Boxes staged but not yet loaded, with where to find each one. */
+  stagedBoxes: StagedBox[];
 };
 
 export type LoadingPlanItem = {
@@ -113,6 +129,40 @@ export function itemsForCustomerAtDeliveryPoint(
   );
 }
 
+/** Sum boxesAllocated/boxesLoaded across several plan items WITHOUT double
+ *  counting an OPL that appears on more than one of them. A Loading Plan
+ *  can have several rows for the same (customer, delivery_point) -- one
+ *  per box type, or a delivery split across loading positions -- matched
+ *  to that stop's OPLs one-per-row (server-side), except the LAST row of
+ *  a stop, which absorbs any OPLs beyond the row count. Dedupe by
+ *  `orderPickList` (not `salesOrder` -- a Sales Order can have more than
+ *  one OPL, each tracked separately, e.g. one already loaded and one not
+ *  yet packed) so that overflow case never double-counts. Falls back to
+ *  the item's own totals only when it has no `orders` (the server's own
+ *  fallback for a customer/SO name mismatch). */
+export function sumOrderTotals(items: LoadingPlanItem[]): { allocated: number; loaded: number } {
+  const seen = new Map<string, LoadingOrder>();
+  let fallbackAllocated = 0;
+  let fallbackLoaded = 0;
+  for (const item of items) {
+    if (item.orders.length === 0) {
+      fallbackAllocated += item.boxesAllocated;
+      fallbackLoaded += item.boxesLoaded;
+      continue;
+    }
+    for (const o of item.orders) {
+      if (!seen.has(o.orderPickList)) seen.set(o.orderPickList, o);
+    }
+  }
+  let allocated = fallbackAllocated;
+  let loaded = fallbackLoaded;
+  for (const o of seen.values()) {
+    allocated += o.boxesAllocated;
+    loaded += o.boxesLoaded;
+  }
+  return { allocated, loaded };
+}
+
 /** Aggregated stats for a delivery point. */
 export function summaryForDeliveryPoint(
   data: LoadingData,
@@ -120,15 +170,12 @@ export function summaryForDeliveryPoint(
 ): DeliveryPointSummary {
   const items = data.planItems.filter((e) => e.deliveryPoint === deliveryPoint);
   let totalBoxes = 0;
-  let totalLoaded = 0;
-  let totalAllocated = 0;
   const customers = new Set<string>();
   for (const item of items) {
     totalBoxes += item.numberOfBoxes;
-    totalLoaded += item.boxesLoaded;
-    totalAllocated += item.boxesAllocated;
     customers.add(item.customer);
   }
+  const { allocated: totalAllocated, loaded: totalLoaded } = sumOrderTotals(items);
   return {
     deliveryPoint,
     customerCount: customers.size,
@@ -198,7 +245,10 @@ function normalise(d: RawLoadingData): LoadingData {
       numberOfBoxes: toNum(i.number_of_boxes),
       orders: (i.orders ?? []).map((o) => ({
         salesOrder: (o.sales_order ?? '').toString(),
+        orderPickList: (o.order_pick_list ?? '').toString(),
         orderName: (o.order_name ?? '').toString(),
+        variety: (o.variety ?? '').toString(),
+        isMixed: o.is_mixed === true,
         truckDetails: (o.truck_details ?? '').toString(),
         consignee: (o.consignee ?? '').toString(),
         shippingAgent: (o.shipping_agent ?? '').toString(),
@@ -207,6 +257,10 @@ function normalise(d: RawLoadingData): LoadingData {
         boxesPacked: toNum(o.boxes_packed),
         boxesStaged: toNum(o.boxes_staged),
         boxesLoaded: toNum(o.boxes_loaded),
+        stagedBoxes: (o.staged_boxes ?? []).map((b) => ({
+          boxNumber: toNum(b.box_number),
+          stagingLocation: (b.staging_location ?? '').toString(),
+        })),
       })),
       boxesAllocated: toNum(i.boxes_allocated),
       boxesPacked: toNum(i.boxes_packed),

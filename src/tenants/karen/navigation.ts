@@ -1,6 +1,7 @@
 import type { DrawerItem } from '@/src/core/tenant/types';
 
 export const karenDrawer: DrawerItem[] = [
+  { label: 'Home', route: 'home', icon: 'home-outline' },
   { label: 'Scheduler', route: 'scheduler', icon: 'list-outline' },
   { label: 'Issuing',  route: 'issuing',  icon: 'send-outline' },
   { label: 'Packing',  route: 'packing',  icon: 'cube-outline' },

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { karenDispatchApi } from '../api/karen-dispatch-api';
-import type { RawLoadedOrdersResponse, RawRebuildResponse } from '../api/karen-dispatch-api';
+import type { RawLoadedOrdersResponse, RawMissingBox, RawRebuildResponse } from '../api/karen-dispatch-api';
 import { mapAxiosError } from '@/src/core/api/client';
 import { tomorrowISO } from '@/src/core/date';
 
@@ -14,6 +14,26 @@ export type LoadedOrder = {
   boxesRequired: number;
   boxesLoaded: number;
 };
+
+export type MissingBox = {
+  boxLabel: string;
+  boxNumber: number;
+  orderPickList: string;
+  customer: string;
+  deliveryPoint: string;
+  stagingLocation: string;
+};
+
+function mapMissingBoxes(rows: RawMissingBox[] | undefined): MissingBox[] {
+  return (rows ?? []).map((b) => ({
+    boxLabel: (b.box_label ?? '').toString(),
+    boxNumber: Number(b.box_number ?? 0),
+    orderPickList: (b.order_pick_list ?? '').toString(),
+    customer: (b.customer ?? '').toString(),
+    deliveryPoint: (b.delivery_point ?? '').toString(),
+    stagingLocation: (b.staging_location ?? '').toString(),
+  }));
+}
 
 export type DispatchOutcome =
   | { kind: 'success'; message: string }
@@ -36,6 +56,9 @@ type State = {
   savedSealNumber: string;
   /** The operator's in-progress seal-number entry, before confirming. */
   sealNumberInput: string;
+  /** Boxes staged in the dispatch coldstore but never loaded -- dispatch is
+   *  blocked server-side while any exist for this date. */
+  missingBoxes: MissingBox[];
   lastOutcome: DispatchOutcome | null;
 
   loadOrders: () => Promise<void>;
@@ -73,6 +96,7 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
   dispatched: false,
   savedSealNumber: '',
   sealNumberInput: '',
+  missingBoxes: [],
   lastOutcome: null,
 
   setSealNumberInput: (v) => set({ sealNumberInput: v }),
@@ -102,6 +126,7 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
         deliveryDate: (data.delivery_date ?? '').toString(),
         dispatched: !!data.dispatched,
         savedSealNumber,
+        missingBoxes: mapMissingBoxes(data.missing_boxes),
         // Don't clobber an in-progress entry with an empty server value on a
         // background refresh -- only seed it once there's nothing typed yet.
         sealNumberInput: get().sealNumberInput || savedSealNumber,
@@ -126,15 +151,16 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
       );
       const msg = unwrap(raw);
       if (msg?.status === 'error') {
+        const missingBoxes = mapMissingBoxes(msg.missing_boxes);
         const out: DispatchOutcome = { kind: 'error', message: msg.message || 'Could not confirm dispatch.' };
-        set({ saving: false, lastOutcome: out });
+        set({ saving: false, lastOutcome: out, missingBoxes });
         return out;
       }
       const out: DispatchOutcome = {
         kind: 'success',
         message: msg?.message || 'Dispatch confirmed.',
       };
-      set({ saving: false, lastOutcome: out, dispatched: true });
+      set({ saving: false, lastOutcome: out, dispatched: true, missingBoxes: [] });
       return out;
     } catch (err) {
       const out: DispatchOutcome = {
@@ -147,7 +173,7 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
   },
 
   setDate: async (date) => {
-    set({ selectedDate: date, orders: [], totalBoxes: 0, totalRequired: 0, sealNumberInput: '', savedSealNumber: '', dispatched: false });
+    set({ selectedDate: date, orders: [], totalBoxes: 0, totalRequired: 0, sealNumberInput: '', savedSealNumber: '', dispatched: false, missingBoxes: [] });
     await get().loadOrders();
   },
 
@@ -163,6 +189,7 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
       dispatched: false,
       savedSealNumber: '',
       sealNumberInput: '',
+      missingBoxes: [],
       lastOutcome: null,
     }),
 }));

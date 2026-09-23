@@ -15,17 +15,21 @@ export type RawReadySaleOrderItem = {
   opl_name?: string;
 };
 
-/** One ready-order entry. The backend MAY return a bare order-name string
- *  (legacy shape) or an enriched object that also carries the OPL item
- *  group(s). To let operators filter orders by item group, the
- *  `getReadySaleOrderItems` method should return each order's OPL
- *  `custom_item_group`, e.g. `{ name: "SO-0042", custom_item_group: "Standard Roses" }`.
- *  When the field is absent the UI degrades gracefully (no group filter). */
+/** One ready-TO-ISSUE entry — one row PER ORDER PICK LIST (an OPL is the
+ *  issuing unit; a Sales Order can have several, e.g. split by team, and
+ *  they must stay separate rows, never merged into one "order"). The
+ *  backend MAY still return a bare order-name string (legacy shape) or an
+ *  enriched object; the UI degrades gracefully when a field is absent. */
 export type RawReadyOrder = {
+  opl_name?: string;
   name?: string;
   order?: string;
   sale_order?: string;
   custom_order_name?: string;
+  customer?: string;
+  varieties?: string[];
+  stem_lengths?: string[];
+  qty?: string | number;
   item_group?: string | string[];
   custom_item_group?: string | string[];
   team?: string | string[];
@@ -70,13 +74,14 @@ export const karenIssuingApi = {
     });
   },
 
-  /** For a given order name, get the packing-list rows (one row per bucket
-   *  allocated to that order's items). */
-  fetchPackingList(orderName: string): Promise<RawPackingListResponse> {
+  /** For a given Order Pick List, get its packing-list rows (one row per
+   *  bucket allocated to THAT OPL only — never other OPLs of the same
+   *  sale order). */
+  fetchPackingList(oplName: string): Promise<RawPackingListResponse> {
     return api<RawPackingListResponse>({
       method: 'POST',
       url: '/api/method/upande_packhouse.mobile.api.getReadySaleOrderItemsData',
-      data: { custom_order_name: orderName },
+      data: { opl_name: oplName },
     });
   },
 

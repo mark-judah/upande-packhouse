@@ -2,6 +2,7 @@ export type DrawerItem = {
   label: string;
   /** matches a route file under app/ */
   route:
+    | 'home'
     | 'scheduler'
     | 'issuing'
     | 'packing'

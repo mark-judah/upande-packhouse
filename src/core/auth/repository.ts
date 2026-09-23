@@ -1,6 +1,27 @@
 import { storage, StorageKeys } from '@/src/core/storage';
+import { api } from '@/src/core/api/client';
 import { loginRequest, probeBaseUrl } from './api';
 import { fetchCurrentUserRoles } from './roles-api';
+
+/** The stock /api/method/login response's `full_name` is computed as
+ *  `first_name + last_name` server-side (frappe/auth.py), which reads as an
+ *  empty string -- not null, so `?? email` below never catches it -- for
+ *  any User whose name was set via the `full_name` field directly rather
+ *  than first/last name (confirmed live: real accounts here). Read the real
+ *  field straight off the User doctype instead, same fix already applied in
+ *  upande-production's auth-api.ts. */
+async function fetchRealFullName(email: string): Promise<string | null> {
+  try {
+    const body = await api<{ message?: { full_name?: string }; data?: { full_name?: string } }>({
+      method: 'GET',
+      url: `/api/method/frappe.client.get_value?doctype=User&filters={"name":"${email}"}&fieldname=["full_name"]`,
+    });
+    const m = body?.message ?? body?.data;
+    return (m && m.full_name) || null;
+  } catch {
+    return null;
+  }
+}
 
 export type LoginOutcome =
   | { ok: true; fullName: string; instanceUrl: string; roles: string[] }
@@ -25,7 +46,7 @@ export const authRepository = {
     if (res.status === 200) {
       const cookie = extractSidCookie(res.setCookie);
       if (!cookie) return { ok: false, error: 'Login succeeded but no session cookie was returned' };
-      const fullName = res.body.full_name ?? email;
+      let fullName = res.body.full_name || email;
       await Promise.all([
         storage.set(StorageKeys.cookie, cookie),
         storage.set(StorageKeys.instanceUrl, fullUrl),
@@ -34,6 +55,20 @@ export const authRepository = {
         storage.set(StorageKeys.fullName, fullName),
         storage.set(StorageKeys.passwordBackup, password),
       ]);
+
+      // The login response's own full_name is often a blank string (see
+      // fetchRealFullName's comment) -- now that the cookie is stored, an
+      // authenticated follow-up can read the real field. Non-fatal: keeps
+      // the response's value (or email) if this fails or also comes back empty.
+      try {
+        const real = await fetchRealFullName(email);
+        if (real && real !== fullName) {
+          fullName = real;
+          await storage.set(StorageKeys.fullName, fullName);
+        }
+      } catch {
+        // ignore — greeting falls back to the login response's own value
+      }
 
       // Fetch roles in the background. Failure is non-fatal — login still succeeds.
       let roles: string[] = [];

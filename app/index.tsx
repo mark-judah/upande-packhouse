@@ -28,5 +28,5 @@ export default function Index() {
     );
   }
 
-  return <Redirect href={hasSession ? '/issuing' : '/login'} />;
+  return <Redirect href={hasSession ? '/home' : '/login'} />;
 }
