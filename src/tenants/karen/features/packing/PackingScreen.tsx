@@ -1,5 +1,8 @@
 import { audio } from '@/src/core/audio';
 import { tomorrowISO } from '@/src/core/date';
+import { getSavedBoxLabels, recordSavedBoxLabels, type SavedBoxLabels } from '@/src/core/pdf/boxLabelsHistory';
+import { previewPdf, writeBase64PdfToFile } from '@/src/core/pdf/pdfDownload';
+import { SavedBoxLabelsSheet } from '@/src/core/pdf/SavedBoxLabelsSheet';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
 import { focusWhenReady } from '@/src/core/scanning/focus';
 import { storage, StorageKeys } from '@/src/core/storage';
@@ -8,6 +11,8 @@ import { Button } from '@/src/core/ui/Button';
 import { Alert, Card } from '@/src/core/ui/Card';
 import { DateSelector } from '@/src/core/ui/DateSelector';
 import { Dropdown } from '@/src/core/ui/Dropdown';
+import { FAB } from '@/src/core/ui/FAB';
+import { Input } from '@/src/core/ui/Input';
 import { ItemGroupFilter } from '@/src/core/ui/ItemGroupFilter';
 import { Screen } from '@/src/core/ui/Screen';
 import { useToast } from '@/src/core/ui/Toast';
@@ -18,9 +23,22 @@ import {
 } from '@/src/tenants/karen/state/karen-packing-store';
 import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+/** Matches FAB's own FAB_SIZE + its bottom offset formula (insets.bottom +
+ *  8) -- used to stack the Saved Labels button directly above the Print
+ *  button rather than overlapping it. */
+const FAB_SIZE = 56;
+const FAB_STACK_GAP = 12;
+
+/** Box Label's own print format defaults to A4 (see box_label.json) --
+ *  matched here so the dialog opens on the size that already prints
+ *  correctly, with room to override for a different label stock. */
+const DEFAULT_BOX_LABEL_WIDTH_MM = '210';
+const DEFAULT_BOX_LABEL_HEIGHT_MM = '297';
 
 const COLOUR_HEX: Record<string, string> = {
   red: '#dc2626', white: '#f3f4f6', pink: '#ec4899', yellow: '#eab308',
@@ -45,6 +63,12 @@ export function KarenPackingScreen() {
   const [bypassOpen, setBypassOpen] = useState(false);
   const [bypassReason, setBypassReason] = useState<string | null>(null);
   const [bypassQty, setBypassQty] = useState('');
+  const [boxLabelsOpen, setBoxLabelsOpen] = useState(false);
+  const [labelWidthMm, setLabelWidthMm] = useState(DEFAULT_BOX_LABEL_WIDTH_MM);
+  const [labelHeightMm, setLabelHeightMm] = useState(DEFAULT_BOX_LABEL_HEIGHT_MM);
+  const [savedLabels, setSavedLabels] = useState<SavedBoxLabels[]>([]);
+  const [savedLabelsSheetOpen, setSavedLabelsSheetOpen] = useState(false);
+  const insets = useSafeAreaInsets();
   const { showSuccess, showError } = useToast();
 
   const {
@@ -71,6 +95,7 @@ export function KarenPackingScreen() {
     packingBypassReasons,
     packingBypassReasonsLoading,
     bypassSubmitting,
+    boxLabelsGenerating,
     loadPicklists,
     setDate,
     setItemGroup,
@@ -84,6 +109,7 @@ export function KarenPackingScreen() {
     submitUnderPackReason,
     loadPackingBypassReasons,
     submitBypass,
+    generateBoxLabels,
     reset,
   } = useKarenPackingStore();
 
@@ -380,6 +406,23 @@ export function KarenPackingScreen() {
     });
   }, [standardMax]);
 
+  // Which PDFs are already on record for this OPL — drives the Saved Labels
+  // button's visibility, so a re-print doesn't require regenerating one just
+  // to look at it again.
+  useEffect(() => {
+    if (!selectedOpl) {
+      setSavedLabels([]);
+      return;
+    }
+    let cancelled = false;
+    getSavedBoxLabels(selectedOpl).then((entries) => {
+      if (!cancelled) setSavedLabels(entries);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOpl]);
+
   // Per-box breakdown: how many stems (and which varieties) are in each box.
   const boxBreakdown = useMemo(() => {
     const count = Math.max(1, packingGuide?.plannedBoxes ?? 1);
@@ -428,12 +471,65 @@ export function KarenPackingScreen() {
     return out;
   }, [showTable, packingGuide, pickListItems]);
 
+  const onGenerateBoxLabels = async () => {
+    const width = parseFloat(labelWidthMm);
+    const height = parseFloat(labelHeightMm);
+    const outcome = await generateBoxLabels(
+      Number.isFinite(width) && width > 0 ? width : undefined,
+      Number.isFinite(height) && height > 0 ? height : undefined,
+    );
+    if (!outcome.success) {
+      showError(outcome.message);
+      return;
+    }
+    if (!selectedOpl) return;
+    try {
+      const path = await writeBase64PdfToFile(outcome.base64, outcome.filename);
+      setBoxLabelsOpen(false);
+      // The OS print/preview sheet renders the PDF for real on both
+      // platforms (react-native-webview's local-file PDF support is
+      // unreliable, especially on Android's system WebView) and already
+      // carries its own save/share/print destinations.
+      await previewPdf(path);
+      const entry: SavedBoxLabels = {
+        path,
+        filename: outcome.filename,
+        count: outcome.count,
+        savedAt: Date.now(),
+      };
+      await recordSavedBoxLabels(selectedOpl, entry);
+      setSavedLabels((prev) => [entry, ...prev]);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Could not open the PDF preview.');
+    }
+  };
+
+  const onSelectSavedEntry = async (entry: SavedBoxLabels) => {
+    setSavedLabelsSheetOpen(false);
+    try {
+      await previewPdf(entry.path);
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Could not open the PDF preview.');
+    }
+  };
+
   return (
+    <>
     <Screen
       title="Packing Entry"
       onRefresh={async () => {
         await Promise.all([loadPicklists(), loadUnderPackReasons(), loadPackingBypassReasons()]);
       }}
+      headerRight={
+        <Pressable
+          onPress={() => router.push('/debug-log')}
+          hitSlop={10}
+          style={s.debugBtn}
+          accessibilityLabel="View debug log"
+        >
+          <MaterialCommunityIcons name="bug-outline" size={22} color={COLORS.textMuted} />
+        </Pressable>
+      }
     >
       <Card title="Order">
         <DateSelector
@@ -821,6 +917,79 @@ export function KarenPackingScreen() {
       ) : null}
 
     </Screen>
+
+    <FAB
+      icon="print-outline"
+      onPress={() => setBoxLabelsOpen(true)}
+      visible={showTable && !!selectedOpl}
+    />
+
+    <FAB
+      icon="albums-outline"
+      onPress={() => setSavedLabelsSheetOpen(true)}
+      visible={showTable && !!selectedOpl && savedLabels.length > 0}
+      color={COLORS.surface}
+      style={{ bottom: insets.bottom + 8 + FAB_SIZE + FAB_STACK_GAP, borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.border }}
+    />
+
+    {selectedOpl ? (
+      <SavedBoxLabelsSheet
+        visible={savedLabelsSheetOpen}
+        oplName={selectedOpl}
+        entries={savedLabels}
+        onClose={() => setSavedLabelsSheetOpen(false)}
+        onSelect={onSelectSavedEntry}
+      />
+    ) : null}
+
+    <Modal
+      visible={boxLabelsOpen}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setBoxLabelsOpen(false)}
+    >
+      <View style={s.modalBackdrop}>
+        <View style={s.modalCard}>
+          <Text style={s.modalTitle}>Print Box Labels</Text>
+          <Text style={s.modalHint}>
+            Consolidates every box packed so far on this Order Pick List into one PDF.
+          </Text>
+          <View style={s.modalRow}>
+            <View style={s.modalInput}>
+              <Input
+                label="Width (mm)"
+                value={labelWidthMm}
+                onChangeText={setLabelWidthMm}
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={s.modalInput}>
+              <Input
+                label="Height (mm)"
+                value={labelHeightMm}
+                onChangeText={setLabelHeightMm}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+          <Button
+            label="Generate"
+            onPress={onGenerateBoxLabels}
+            loading={boxLabelsGenerating}
+            iconLeft="print-outline"
+            style={{ alignSelf: 'stretch', marginTop: spacing.sm }}
+          />
+          <Button
+            label="Cancel"
+            variant="ghost"
+            onPress={() => setBoxLabelsOpen(false)}
+            disabled={boxLabelsGenerating}
+            style={{ alignSelf: 'stretch' }}
+          />
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }
 
@@ -871,6 +1040,22 @@ function BoxBreakdown({
 }
 
 const s = StyleSheet.create({
+  debugBtn: { width: 32, alignItems: 'center', justifyContent: 'center', padding: 4 },
+  modalBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center', justifyContent: 'center', padding: spacing.lg,
+  },
+  modalCard: {
+    width: '100%', maxWidth: 360, backgroundColor: COLORS.surface,
+    borderRadius: borderRadius.lg, padding: spacing.lg, gap: spacing.xs,
+  },
+  modalTitle: { fontFamily: fontFamily.bold, fontSize: fontSize.lg, color: COLORS.text },
+  modalHint: {
+    fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textMuted,
+    marginBottom: spacing.sm,
+  },
+  modalRow: { flexDirection: 'row', gap: spacing.md },
+  modalInput: { flex: 1 },
   helper: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.xs,

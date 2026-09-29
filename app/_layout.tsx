@@ -99,6 +99,7 @@ export default function RootLayout() {
                 <Stack.Screen name="dispatch" />
                 <Stack.Screen name="configure-station" />
                 <Stack.Screen name="settings" />
+                <Stack.Screen name="debug-log" options={{ presentation: 'modal' }} />
                 <Stack.Screen
                   name="camera-scanner"
                   options={{ presentation: 'fullScreenModal' }}

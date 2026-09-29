@@ -11,6 +11,7 @@ import type {
   RawUnderPackReasonsResponse,
 } from '../api/karen-packing-api';
 import { mapAxiosError } from '@/src/core/api/client';
+import { recordLocal } from '@/src/core/debug/debugLogStore';
 import { tomorrowISO } from '@/src/core/date';
 
 // ---------------------------------------------------------------------
@@ -75,6 +76,22 @@ export type PackOutcome =
   | { kind: 'error'; message: string }
   | { kind: 'warning'; message: string };
 
+/** Shared by every submit* action below: records the rejection as the
+ *  form's outcome AND, unless it's just restating a network error already
+ *  captured (with its full payload/response) by the api client's own
+ *  interceptor, into the on-device debug log -- so a local precondition
+ *  rejection (no network call ever made) is just as inspectable as one. */
+function makeFail(set: (partial: Partial<State>) => void, context?: unknown) {
+  return (kind: 'error' | 'warning', message: string, opts?: { silent?: boolean }): PackOutcome => {
+    const out: PackOutcome = { kind, message };
+    set({ lastOutcome: out });
+    if (!opts?.silent) {
+      recordLocal({ status: kind === 'error' ? 'error' : 'info', title: message, context });
+    }
+    return out;
+  };
+}
+
 /** One reason an operator can pick when a box came in under its packrate. */
 export type UnderPackReason = { name: string; reason: string; description: string };
 
@@ -134,6 +151,8 @@ type State = {
   packingBypassReasonsLoading: boolean;
   bypassSubmitting: boolean;
 
+  boxLabelsGenerating: boolean;
+
   // actions
   loadPicklists: () => Promise<void>;
   setDate: (date: string) => Promise<void>;
@@ -152,8 +171,15 @@ type State = {
   /** Log `bunches` unscannable bunches against the currently selected line's
    *  box (same caps as submitManual) and record the bypass reason. */
   submitBypass: (reasonName: string, bunches: number) => Promise<PackOutcome>;
+  /** Consolidated Box Label PDF for every box packed on the selected OPL.
+   *  widthMm/heightMm omitted -> print format's own default (A4). */
+  generateBoxLabels: (widthMm?: number, heightMm?: number) => Promise<BoxLabelsOutcome>;
   reset: () => void;
 };
+
+export type BoxLabelsOutcome =
+  | { success: true; base64: string; filename: string; count: number }
+  | { success: false; message: string };
 
 // ---------------------------------------------------------------------
 // Helpers
@@ -468,6 +494,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
   packingBypassReasonsLoading: false,
   bypassSubmitting: false,
 
+  boxLabelsGenerating: false,
+
   loadPicklists: async () => {
     set({ picklistsLoading: true });
     try {
@@ -551,11 +579,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     const state = get();
     const guide = state.packingGuide;
 
-    const fail = (kind: 'error' | 'warning', message: string): PackOutcome => {
-      const out: PackOutcome = { kind, message };
-      set({ lastOutcome: out });
-      return out;
-    };
+    const fail = makeFail(set, { action: 'submitScan', raw, opl: state.selectedOpl, box: state.currentBoxId });
 
     // Reentrancy guard, checked synchronously before any await: a scanner
     // that keeps injecting keystrokes (or a double-tap) can fire a second
@@ -631,7 +655,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       ({ bunch, errorMessage: bunchErrorMessage } = extractBunch(res));
     } catch (err) {
       set({ submitting: false });
-      return fail('error', mapAxiosError(err).message || 'Bunch lookup failed.');
+      return fail('error', mapAxiosError(err).message || 'Bunch lookup failed.', { silent: true });
     }
 
     if (!bunch) {
@@ -715,7 +739,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       });
     } catch (err) {
       set({ submitting: false });
-      return fail('error', mapAxiosError(err).message || 'Packing failed.');
+      return fail('error', mapAxiosError(err).message || 'Packing failed.', { silent: true });
     }
 
     set({
@@ -731,11 +755,12 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
   submitManual: async (enteredQty) => {
     const state = get();
-    const fail = (kind: 'error' | 'warning', message: string): PackOutcome => {
-      const out: PackOutcome = { kind, message };
-      set({ lastOutcome: out });
-      return out;
-    };
+    const fail = makeFail(set, {
+      action: 'submitManual',
+      enteredQty,
+      opl: state.selectedOpl,
+      box: state.currentBoxId,
+    });
 
     // Same reentrancy guard as submitScan -- see its comment.
     if (state.submitting) {
@@ -824,7 +849,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       });
     } catch (err) {
       set({ submitting: false });
-      return fail('error', mapAxiosError(err).message || 'Packing failed.');
+      return fail('error', mapAxiosError(err).message || 'Packing failed.', { silent: true });
     }
 
     set({ submitting: false, lastOutcome: { kind: 'success', message: 'Packed successfully' } });
@@ -845,11 +870,12 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
   submitUnderPackReason: async (reasonName) => {
     const state = get();
-    const fail = (kind: 'error' | 'warning', message: string): PackOutcome => {
-      const out: PackOutcome = { kind, message };
-      set({ lastOutcome: out });
-      return out;
-    };
+    const fail = makeFail(set, {
+      action: 'submitUnderPackReason',
+      reasonName,
+      opl: state.selectedOpl,
+      box: state.currentBoxId,
+    });
 
     if (!state.selectedOpl) return fail('warning', 'Select an order first.');
     const reason = reasonName.trim();
@@ -867,7 +893,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       });
     } catch (err) {
       set({ reasonSubmitting: false });
-      return fail('error', mapAxiosError(err).message || 'Could not save reason.');
+      return fail('error', mapAxiosError(err).message || 'Could not save reason.', { silent: true });
     }
 
     // Closed on purpose, short of packrate -- must never accept another
@@ -894,11 +920,13 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
   submitBypass: async (reasonName, bunches) => {
     const state = get();
-    const fail = (kind: 'error' | 'warning', message: string): PackOutcome => {
-      const out: PackOutcome = { kind, message };
-      set({ lastOutcome: out });
-      return out;
-    };
+    const fail = makeFail(set, {
+      action: 'submitBypass',
+      reasonName,
+      bunches,
+      opl: state.selectedOpl,
+      box: state.currentBoxId,
+    });
 
     if (state.bypassSubmitting) {
       return fail('warning', 'Still submitting the previous bypass — please wait.');
@@ -982,7 +1010,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       });
     } catch (err) {
       set({ bypassSubmitting: false });
-      return fail('error', mapAxiosError(err).message || 'Packing failed.');
+      return fail('error', mapAxiosError(err).message || 'Packing failed.', { silent: true });
     }
 
     // The box tally is already updated at this point -- a failure logging
@@ -1002,6 +1030,37 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     set({ bypassSubmitting: false, lastOutcome: { kind: 'success', message: logMessage } });
     await reloadGuide(state.selectedOpl, set, state.selectedItemKey);
     return { kind: 'success', message: logMessage };
+  },
+
+  generateBoxLabels: async (widthMm, heightMm) => {
+    const oplName = get().selectedOpl;
+    if (!oplName) {
+      const message = 'Select an order before generating box labels.';
+      recordLocal({ status: 'info', title: message, context: { action: 'generateBoxLabels', widthMm, heightMm } });
+      return { success: false, message };
+    }
+    set({ boxLabelsGenerating: true });
+    try {
+      const raw = await karenPackingApi.generateBoxLabelsPdf({
+        order_pick_list: oplName,
+        page_width_mm: widthMm,
+        page_height_mm: heightMm,
+      });
+      const msg = raw?.message;
+      if (!msg?.pdf_base64) {
+        return { success: false, message: 'The server did not return a PDF.' };
+      }
+      return {
+        success: true,
+        base64: msg.pdf_base64,
+        filename: msg.filename || `${oplName}-box-labels.pdf`,
+        count: msg.count ?? 0,
+      };
+    } catch (err) {
+      return { success: false, message: mapAxiosError(err).message || 'Could not generate box labels.' };
+    } finally {
+      set({ boxLabelsGenerating: false });
+    }
   },
 
   reset: () =>
@@ -1028,6 +1087,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       lastOutcome: null,
       reasonSubmitting: false,
       bypassSubmitting: false,
+      boxLabelsGenerating: false,
     }),
 }));
 

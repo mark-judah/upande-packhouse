@@ -66,7 +66,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             ]}
           >
             <Ionicons name={iconName} size={18} color={tint} />
-            <Text style={styles.text} numberOfLines={4}>{state.message}</Text>
+            <Text style={styles.text} numberOfLines={state.kind === 'error' ? 8 : 4}>{state.message}</Text>
           </Animated.View>
         </SafeAreaView>
       ) : null}

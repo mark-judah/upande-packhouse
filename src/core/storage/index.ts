@@ -16,6 +16,7 @@ export const StorageKeys = {
   // biometric prompt. On a rooted device this is readable — accept that
   // trade-off or migrate to expo-secure-store with a native rebuild.
   passwordBackup: 'password_backup',
+  boxLabelsHistory: 'box_labels_history',
 } as const;
 
 export const storage = {

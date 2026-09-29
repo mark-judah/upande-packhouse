@@ -21,7 +21,7 @@ function fullUrl(config: LoggableConfig): string {
   return base.replace(/\/+$/, '') + '/' + url.replace(/^\/+/, '');
 }
 
-function safeBody(body: unknown): unknown {
+export function safeBody(body: unknown): unknown {
   if (typeof body === 'string') {
     try {
       return JSON.parse(body);

@@ -1,6 +1,7 @@
 import axios, { isAxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
 import { storage, StorageKeys } from '@/src/core/storage';
-import { attachStartTime, elapsed, logError, logRequest, logResponse } from './log';
+import { recordNetwork } from '@/src/core/debug/debugLogStore';
+import { attachStartTime, elapsed, logError, logRequest, logResponse, safeBody } from './log';
 
 let client: AxiosInstance | null = null;
 
@@ -21,14 +22,35 @@ function buildClient(): AxiosInstance {
   });
   instance.interceptors.response.use(
     (response) => {
-      logResponse(response, elapsed(response.config));
+      const duration = elapsed(response.config);
+      logResponse(response, duration);
+      recordNetwork({
+        status: 'success',
+        method: response.config.method,
+        url: response.config.url,
+        httpStatus: response.status,
+        durationMs: duration,
+        payload: safeBody(response.config.data),
+        response: safeBody(response.data),
+      });
       return response;
     },
     (error) => {
       if (isAxiosError(error)) {
-        logError(error, elapsed(error.config));
+        const duration = elapsed(error.config);
+        logError(error, duration);
+        recordNetwork({
+          status: 'error',
+          method: error.config?.method,
+          url: error.config?.url,
+          httpStatus: error.response?.status,
+          durationMs: duration,
+          payload: safeBody(error.config?.data),
+          response: error.response?.data !== undefined ? safeBody(error.response.data) : error.message,
+        });
       } else {
         console.log('[API] ✗ non-axios error:', error);
+        recordNetwork({ status: 'error', response: error instanceof Error ? error.message : String(error) });
       }
       return Promise.reject(error);
     },
@@ -56,6 +78,39 @@ export class HttpError extends Error {
   }
 }
 
+/** `_server_messages` is a JSON-encoded array of JSON-encoded message objects
+ *  -- Frappe's wrapper around every `frappe.throw()`/`msgprint(raise_exception=1)`.
+ *  This is where the actual human-written message lives (e.g. "Please contact
+ *  your IT administrator..."); `exc_type` is just the exception's class name
+ *  ("ValidationError") and was the only thing ever surfacing to the user,
+ *  which is why a real backend message only ever showed up in console logs. */
+function extractServerMessages(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw) return [];
+  try {
+    const arr = JSON.parse(raw) as unknown[];
+    const out: string[] = [];
+    for (const item of arr) {
+      if (typeof item !== 'string') continue;
+      try {
+        const parsed = JSON.parse(item) as { message?: string };
+        if (parsed?.message) out.push(parsed.message);
+      } catch {
+        out.push(item);
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Frappe messages can carry basic HTML (`<br>`, `<b>`, ...) meant for the
+ *  desk's HTML-rendering msgprint dialog; a plain RN Text can't render that,
+ *  so it's flattened to plain text instead of showing literal tags. */
+function stripHtml(s: string): string {
+  return s.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim();
+}
+
 export function mapAxiosError(err: unknown): HttpError {
   if (isAxiosError(err)) {
     const status = err.response?.status ?? 0;
@@ -63,7 +118,9 @@ export function mapAxiosError(err: unknown): HttpError {
     let message = err.message;
     if (body && typeof body === 'object') {
       const exc = body as { exc_type?: string; _server_messages?: string; message?: string };
-      if (exc.message) message = exc.message;
+      const serverMessages = extractServerMessages(exc._server_messages);
+      if (serverMessages.length) message = stripHtml(serverMessages.join('\n'));
+      else if (exc.message) message = exc.message;
       else if (exc.exc_type) message = exc.exc_type;
     }
     return new HttpError(status, message, body);
