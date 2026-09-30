@@ -41,3 +41,13 @@ app-example
 # generated native folders
 /ios
 /android
+
+# release artifacts
+*.keystore
+*.apk
+*.aab
+
+# signing material — never commit these
+SECRETS-TO-UPLOAD.txt
+RELEASE_NOTES.md
+version.json

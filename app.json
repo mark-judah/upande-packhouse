@@ -21,6 +21,7 @@
     },
     "android": {
       "package": "com.upande.packhouse",
+      "versionCode": 5000,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/upande_logo.png"
@@ -38,6 +39,8 @@
       "favicon": "./assets/upande_logo.png"
     },
     "plugins": [
+      "./plugins/withReleaseSigning",
+      "./plugins/withBuildTuning",
       "expo-router",
       [
         "expo-camera",
@@ -79,7 +82,10 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/81077d75-b922-4416-8e29-f0291f15e8a0"
+      "url": "https://u.expo.dev/81077d75-b922-4416-8e29-f0291f15e8a0",
+      "requestHeaders": {
+        "expo-channel-name": "preview"
+      }
     }
   }
 }

@@ -245,7 +245,7 @@ export function KarenIssuingScreen() {
                     nestedScrollEnabled
                   >
                     {unissuedItems.map((item) => (
-                      <PackingRow key={`${item.bucket}-${item.saleOrderItem}`} item={item} />
+                      <PackingRow key={`${item.oplName}-${item.bucket}`} item={item} />
                     ))}
                   </ScrollView>
                 </>
@@ -269,7 +269,7 @@ export function KarenIssuingScreen() {
                       nestedScrollEnabled
                     >
                       {issuedItems.map((item) => (
-                        <PackingRow key={`issued-${item.bucket}-${item.saleOrderItem}`} item={item} />
+                        <PackingRow key={`issued-${item.oplName}-${item.bucket}`} item={item} />
                       ))}
                     </ScrollView>
                   ) : null}

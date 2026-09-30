@@ -23,6 +23,14 @@ export type PackingItem = {
   mixed: number;
   downgradeTo: string | null;
   isIssued: boolean;
+  /** Sale order lines this bucket feeds on the OPL; each is issued on its own. */
+  lines: PackingLine[];
+};
+
+export type PackingLine = {
+  saleOrderItem: string;
+  qty: number;
+  isIssued: boolean;
 };
 
 export type IssueOutcome =
@@ -148,19 +156,61 @@ function extractPackingList(raw: RawPackingListResponse): PackingItem[] {
       rows = Array.isArray(m) ? m : (m.packing_list ?? []);
     }
   }
-  return rows.map((r) => ({
-    variety:       (r.variety ?? '').toString(),
-    bucket:        (r.bucket ?? '').toString(),
-    stemLength:    (r.stem_length ?? '').toString(),
-    shelf:         (r.shelf ?? '').toString(),
-    saleOrderItem: (r.custom_sale_order_item ?? '').toString(),
-    oplName:       (r.opl_name ?? '').toString(),
-    qty:           (r.qty ?? '').toString(),
-    team:          (r.team ?? 'Unassigned').toString(),
-    mixed:         typeof r.mixed === 'number' ? r.mixed : 0,
-    downgradeTo:   r.downgrade_to ? r.downgrade_to.toString() : null,
-    isIssued:      r.is_issued === true || r.is_issued === 1,
-  }));
+  // The OPL holds one Pick List Item PER BOX (and per sale order line), so a
+  // single bucket arrives as several rows. Show it once per OPL; the lines
+  // stay inside it because the server still issues each line separately.
+  const merged = new Map<string, PackingItem>();
+  for (const r of rows) {
+    const bucket = (r.bucket ?? '').toString();
+    const oplName = (r.opl_name ?? '').toString();
+    const saleOrderItem = (r.custom_sale_order_item ?? '').toString();
+    const qty = Number(r.qty) || 0;
+    const isIssued = r.is_issued === true || r.is_issued === 1;
+    const variety = (r.variety ?? '').toString();
+    const stemLength = (r.stem_length ?? '').toString();
+    const key = `${oplName}|${bucket.toLowerCase()}`;
+
+    let item = merged.get(key);
+    if (!item) {
+      item = {
+        variety,
+        bucket,
+        stemLength,
+        shelf:         (r.shelf ?? '').toString(),
+        saleOrderItem,
+        oplName,
+        qty:           '0',
+        team:          (r.team ?? 'Unassigned').toString(),
+        mixed:         typeof r.mixed === 'number' ? r.mixed : 0,
+        downgradeTo:   r.downgrade_to ? r.downgrade_to.toString() : null,
+        isIssued:      true,
+        lines:         [],
+      };
+      merged.set(key, item);
+    } else {
+      item.variety = joinDistinct(item.variety, variety);
+      item.stemLength = joinDistinct(item.stemLength, stemLength);
+      if (typeof r.mixed === 'number' && r.mixed) item.mixed = r.mixed;
+      if (!item.downgradeTo && r.downgrade_to) item.downgradeTo = r.downgrade_to.toString();
+    }
+
+    item.qty = String((Number(item.qty) || 0) + qty);
+    item.isIssued = item.isIssued && isIssued;
+    const line = item.lines.find((l) => l.saleOrderItem === saleOrderItem);
+    if (line) {
+      line.qty += qty;
+      line.isIssued = line.isIssued && isIssued;
+    } else {
+      item.lines.push({ saleOrderItem, qty, isIssued });
+    }
+  }
+  return [...merged.values()];
+}
+
+function joinDistinct(list: string, value: string): string {
+  if (!value) return list;
+  const parts = list ? list.split(', ') : [];
+  return parts.includes(value) ? list : [...parts, value].join(', ');
 }
 
 function extractMessage(raw: RawIssueResponse): string | undefined {
@@ -308,7 +358,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
       set({ lastOutcome: out });
       return out;
     }
-    if (!match.saleOrderItem) {
+    if (match.lines.some((l) => !l.saleOrderItem)) {
       const out: IssueOutcome = {
         kind: 'error',
         bucket: bucketId,
@@ -317,7 +367,8 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
       set({ lastOutcome: out });
       return out;
     }
-    if (match.isIssued) {
+    const pending = match.lines.filter((l) => !l.isIssued);
+    if (match.isIssued || pending.length === 0) {
       const out: IssueOutcome = {
         kind: 'error',
         bucket: bucketId,
@@ -328,32 +379,42 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
     }
 
     set({ submitting: true });
-    try {
-      const res = await karenIssuingApi.issueBucket({
-        bucket: bucketId,
-        sale_order_item: match.saleOrderItem,
-        opl_name: match.oplName,
-      });
-      // Optimistically mark the matched row as issued so the operator sees
-      // immediate feedback without waiting for a re-fetch.
-      const updated = state.packingItems.map((it) =>
-        it.bucket.toLowerCase() === bucketId.toLowerCase()
-          ? { ...it, isIssued: true }
-          : it,
-      );
-      const out: IssueOutcome = {
-        kind: 'success',
-        bucket: bucketId,
-        message: extractMessage(res),
-      };
-      set({ submitting: false, packingItems: updated, lastOutcome: out });
-      return out;
-    } catch (err) {
-      const message = mapAxiosError(err).message || 'Issue failed.';
-      const out: IssueOutcome = { kind: 'error', bucket: bucketId, message };
-      set({ submitting: false, lastOutcome: out });
-      return out;
+    // One scan hands over the whole bucket: issue each of its outstanding
+    // lines in turn, stopping at the first the server rejects.
+    const issued = new Set<string>();
+    const messages: string[] = [];
+    let failure: string | null = null;
+    for (const line of pending) {
+      try {
+        const res = await karenIssuingApi.issueBucket({
+          bucket: match.bucket,
+          sale_order_item: line.saleOrderItem,
+          opl_name: match.oplName,
+        });
+        issued.add(line.saleOrderItem);
+        const m = extractMessage(res);
+        if (m) messages.push(m);
+      } catch (err) {
+        failure = mapAxiosError(err).message || 'Issue failed.';
+        break;
+      }
     }
+
+    // Optimistically mark the issued lines so the operator sees immediate
+    // feedback without waiting for a re-fetch.
+    const updated = get().packingItems.map((it) => {
+      if (it !== match && !(it.oplName === match.oplName && it.bucket === match.bucket)) return it;
+      const lines = it.lines.map((l) =>
+        issued.has(l.saleOrderItem) ? { ...l, isIssued: true } : l,
+      );
+      return { ...it, lines, isIssued: lines.every((l) => l.isIssued) };
+    });
+
+    const out: IssueOutcome = failure
+      ? { kind: 'error', bucket: bucketId, message: failure }
+      : { kind: 'success', bucket: bucketId, message: [...new Set(messages)].join('\n') || undefined };
+    set({ submitting: false, packingItems: updated, lastOutcome: out });
+    return out;
   },
 
   reset: () =>

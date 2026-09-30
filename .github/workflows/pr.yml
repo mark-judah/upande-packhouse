@@ -1,0 +1,135 @@
+name: PR Checks
+
+# Every pull request into the release branch is validated here: the code has to
+# lint, the Expo dependency tree has to be coherent, the Android project has to
+# actually compile, and the commits have to say what version they produce.
+on:
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Lint, typecheck, tests & dependency check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm run test:ci
+
+      # Advisory for now: a few packages trail the SDK's patch line. Drop
+      # continue-on-error once `npx expo install --fix` has been applied.
+      - name: Check Expo dependency versions
+        run: npx expo install --check
+        continue-on-error: true
+
+      - name: Expo doctor
+        run: npx expo-doctor
+        continue-on-error: true
+
+  version:
+    name: Version preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The version script walks history back to the last v* tag, so a shallow
+      # clone would make it read the wrong starting point.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Compute next version
+        id: next
+        run: node scripts/version.mjs --json | tee version.json
+
+      - name: Summarise the release this PR would produce
+        run: |
+          set -euo pipefail
+          {
+            echo "### Version impact"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Current | \`$(jq -r .current version.json)\` |"
+            echo "| Next | \`$(jq -r .version version.json)\` |"
+            echo "| versionCode | \`$(jq -r .versionCode version.json)\` |"
+            echo "| Runtime | \`$(jq -r .runtimeVersion version.json)\` |"
+            echo
+            if [ "$(jq -r .release version.json)" = "ota" ]; then
+              echo "Merging this PR into \`${{ github.base_ref }}\` publishes an **EAS Update** to branch \`preview\` (no APK)."
+            else
+              echo "Merging this PR into \`${{ github.base_ref }}\` builds and publishes a signed **APK** (new runtime)."
+            fi
+            echo "Version advances one odometer step per merge (patch rolls over at 100, minor at 50)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Debug APK
+    runs-on: ubuntu-latest
+    # Same reasoning as the release job: a Gradle hang should fail, not linger.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        # The action installs the long-removed `tools` package by default, which
+        # now fails sdkmanager outright. Gradle fetches the platform and build
+        # tools it needs on its own.
+        with:
+          packages: platform-tools
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prebuild Android project
+        run: npx expo prebuild --platform android --clean
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Debug-signed: this is a reviewer preview, not something we ship. It
+      # proves the native project still assembles before the merge lands.
+      - name: Assemble debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upande_packhouse_pr${{ github.event.pull_request.number }}_debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
