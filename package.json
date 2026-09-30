@@ -9,7 +9,14 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "jest --watchAll"
+    "test": "jest --watchAll",
+    "test:ci": "jest --ci",
+    "typecheck": "tsc --noEmit",
+    "prebuild": "expo prebuild --platform android --clean",
+    "build:apk": "npm run prebuild && cd android && ./gradlew assembleRelease",
+    "version:next": "node scripts/version.mjs",
+    "version:apply": "node scripts/version.mjs --apply",
+    "version:notes": "node scripts/version.mjs --notes"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",

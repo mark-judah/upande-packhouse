@@ -1,0 +1,354 @@
+name: Release
+
+# Merging into the release branch cuts a release by advancing the version one
+# odometer step, then shipping it one of two ways:
+#
+#   1.2.x  (same runtime)  -> `eas update --branch preview`: JS-only, reaches
+#                              every installed 1.2 APK on its next launch.
+#   1.x.0  (new runtime)   -> prebuild + Gradle: a signed APK attached to the
+#                              GitHub Release, since native code may have moved.
+#
+# Either way the bump is committed, tagged and given a GitHub Release.
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Skip ahead to the next round number instead of the usual +1 patch
+        required: false
+        type: choice
+        default: auto
+        options: [auto, patch, minor, major]
+      message:
+        description: EAS Update message for a patch release (defaults to the latest commit / PR title)
+        required: false
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish update or APK
+    runs-on: ubuntu-latest
+    # A hung Gradle build must not hold the queue.
+    #
+    # `concurrency.cancel-in-progress` is deliberately false above — cancelling a
+    # half-published release is worse than waiting for it — but that means one
+    # stuck run blocks every release behind it, and with no timeout GitHub waits
+    # six hours before giving up. That happened: a build that had run out of JVM
+    # Metaspace sat on `Assemble release APK` for 40 minutes while the next
+    # merge's release run stayed `pending`, so main advanced twice and the
+    # version never moved, because the tag step never ran.
+    #
+    # A normal run is about 14 minutes, and less now that the build carries two
+    # architectures instead of four. 45 leaves generous headroom and still fails
+    # the same day.
+    timeout-minutes: 45
+    # The version bump commit is pushed back to this same branch; without this
+    # guard it would trigger an endless release loop.
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Planned before it is applied: the plan compares the new version's
+      # runtime (major.minor) against the one currently in app.json, and that
+      # is what decides between an OTA update and an APK.
+      - name: Plan and apply the version bump
+        id: version
+        run: |
+          set -euo pipefail
+          bump="${{ github.event.inputs.bump || 'auto' }}"
+          [ "$bump" = "auto" ] && bump=patch
+          node scripts/version.mjs --json --bump "$bump" > version.json
+          cat version.json
+          node scripts/version.mjs --apply --bump "$bump"
+          {
+            echo "version=$(jq -r .version version.json)"
+            echo "tag=$(jq -r .tag version.json)"
+            echo "version_code=$(jq -r .versionCode version.json)"
+            echo "runtime=$(jq -r .runtimeVersion version.json)"
+            echo "release=$(jq -r .release version.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        run: node scripts/version.mjs --keep-version --notes > RELEASE_NOTES.md
+
+      # ── 1.2.x: over-the-air update ──────────────────────────────────────────
+      #
+      # Published before the bump is committed, so a failed publish leaves no
+      # tag behind and the next run retries the same version.
+
+      - name: Require an Expo token
+        if: steps.version.outputs.release == 'ota'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::EXPO_TOKEN secret is not set; cannot run eas update. Create one at expo.dev -> Account settings -> Access tokens." >&2
+            exit 1
+          fi
+
+      - uses: expo/expo-github-action@v8
+        if: steps.version.outputs.release == 'ota'
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Publish EAS Update to the preview branch
+        if: steps.version.outputs.release == 'ota'
+        env:
+          INPUT_MESSAGE: ${{ github.event.inputs.message }}
+        run: |
+          set -euo pipefail
+          msg="$INPUT_MESSAGE"
+          if [ -z "$msg" ]; then
+            # A merged PR's commit subject is "Merge pull request #n from …";
+            # GitHub puts the PR title on the first body line, which says more.
+            msg=$(git log -1 --format=%s)
+            if [[ "$msg" == Merge\ pull\ request* ]]; then
+              title=$(git log -1 --format=%b | sed '/^[[:space:]]*$/d' | head -1)
+              [ -n "$title" ] && msg="$title"
+            fi
+          fi
+          echo "Publishing ${{ steps.version.outputs.version }} (runtime ${{ steps.version.outputs.runtime }}): $msg"
+          eas update --branch preview --message "$msg" --platform android --non-interactive
+
+      # ── 1.x.0: native build ─────────────────────────────────────────────────
+
+      - uses: actions/setup-java@v4
+        if: steps.version.outputs.release == 'apk'
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        if: steps.version.outputs.release == 'apk'
+        # The action installs the long-removed `tools` package by default, which
+        # now fails sdkmanager outright. Gradle fetches the platform and build
+        # tools it needs on its own.
+        with:
+          packages: platform-tools
+
+      # Signing is optional. With all four secrets present the APK is signed with
+      # the upload key; without them the build still runs and Gradle falls back
+      # to the debug key, which installs fine for sideloading but cannot go to
+      # Play. Adding the secrets later upgrades releases automatically — but see
+      # the warning below about the key change.
+      - name: Detect signing configuration
+        if: steps.version.outputs.release == 'apk'
+        id: signing
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE" ] && [ -n "$STORE_PASSWORD" ] &&
+             [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Upload keystore configured — the APK will be release-signed."
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No signing secrets set. The APK will be signed with Android's \
+          public debug key: installable by sideload, but not publishable to Play, and anyone \
+          can build an 'upgrade' for it. Run ./scripts/upload-secrets.sh to sign properly."
+          fi
+
+      - name: Prebuild Android project
+        if: steps.version.outputs.release == 'apk'
+        run: npx expo prebuild --platform android --clean
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.version.outputs.release == 'apk'
+
+      - name: Decode upload keystore
+        if: steps.version.outputs.release == 'apk' && (steps.signing.outputs.signed == 'true')
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+
+      - name: Assemble release APK
+        if: steps.version.outputs.release == 'apk'
+        working-directory: android
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # The -P properties are what switch the signing plugin from the debug
+          # fallback to the upload key; omitting them entirely is the fallback.
+          if [ "$SIGNED" = "true" ]; then
+            ./gradlew assembleRelease --no-daemon \
+              -PUPANDE_STORE_FILE="$RUNNER_TEMP/release.keystore" \
+              -PUPANDE_STORE_PASSWORD="$STORE_PASSWORD" \
+              -PUPANDE_KEY_ALIAS="$KEY_ALIAS" \
+              -PUPANDE_KEY_PASSWORD="$KEY_PASSWORD"
+          else
+            ./gradlew assembleRelease --no-daemon
+          fi
+
+      - name: Check the signing certificate
+        if: steps.version.outputs.release == 'apk'
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+          EXPECTED_SHA256: ${{ secrets.ANDROID_KEY_SHA256 }}
+        run: |
+          set -euo pipefail
+          apk=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort | tail -1)
+          certs=$("$apksigner" verify --print-certs "$apk")
+          echo "$certs"
+
+          # Unsigned mode is a deliberate choice, so a debug certificate is the
+          # expected outcome rather than a failure. Only verify the key when we
+          # asked for one.
+          if [ "$SIGNED" != "true" ]; then
+            echo "::warning::This APK is debug-signed (no upload key configured)."
+            exit 0
+          fi
+
+          # `verify --print-certs` alone proves only that the APK is signed by
+          # *something*. The signing plugin falls back to the debug key when its
+          # -P properties are missing, so without a comparison a build that
+          # silently lost its key would sail through.
+          if grep -qi 'CN=Android Debug' <<<"$certs"; then
+            echo "::error::APK is signed with the Android debug key, not the upload key." >&2
+            exit 1
+          fi
+
+          if [ -n "${EXPECTED_SHA256:-}" ]; then
+            # apksigner prefixes each line with the signature scheme
+            # ("V2 Signer: certificate SHA-256 digest: ab12…"), so the digest is
+            # whatever follows the LAST colon — not a fixed field number.
+            actual=$(grep -i 'certificate SHA-256 digest' <<<"$certs" | head -1 |
+              sed 's/.*[Dd]igest:[[:space:]]*//' | tr -d ' :' | tr 'A-Z' 'a-z')
+            expected=$(tr 'A-Z' 'a-z' <<<"$EXPECTED_SHA256" | tr -d ' :')
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::Signing certificate $actual does not match the expected upload key." >&2
+              exit 1
+            fi
+            echo "Signing certificate matches the expected upload key."
+          else
+            echo "::warning::ANDROID_KEY_SHA256 is not set — only the debug-key check ran." >&2
+          fi
+
+      - name: Name the artifact after the release
+        if: steps.version.outputs.release == 'apk'
+        id: apk
+        run: |
+          set -euo pipefail
+          src=$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)
+          dest="upande_packhouse_v${{ steps.version.outputs.version }}.apk"
+          mv "$src" "$dest"
+          echo "path=$dest" >> "$GITHUB_OUTPUT"
+          echo "name=${dest%.apk}" >> "$GITHUB_OUTPUT"
+
+      - name: Always keep the APK, even if publishing fails
+        if: steps.version.outputs.release == 'apk'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.name }}
+          path: ${{ steps.apk.outputs.path }}
+          retention-days: 90
+
+      - name: Remove the generated native project before committing
+        run: rm -rf android version.json
+
+      - name: Commit and tag the version bump
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # `expo prebuild` rewrites the android/ios scripts once a native
+          # directory exists. Throw that away and re-apply only the version, so
+          # the release commit carries the bump and nothing else.
+          git checkout -- package.json
+          # `npm version` rather than `npm pkg set version`: the latter leaves
+          # package-lock.json's own root version behind, which then shows up as
+          # unrelated noise in the next PR that touches dependencies.
+          npm version "${{ steps.version.outputs.version }}" \
+            --no-git-tag-version --allow-same-version
+          git add app.json package.json package-lock.json
+          git commit -m "chore(release): ${{ steps.version.outputs.version }} [skip ci]"
+          git tag -a "${{ steps.version.outputs.tag }}" \
+            -m "Upande Packhouse ${{ steps.version.outputs.version }}"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      # Whoever downloads the APK is the one who has to trust it, so the signing
+      # status belongs in the release body, not just in the build log.
+      - name: Note debug signing in the release body
+        if: steps.version.outputs.release == 'apk' && steps.signing.outputs.signed != 'true'
+        run: |
+          {
+            echo
+            echo "---"
+            echo
+            echo "> **Debug-signed build.** This APK is signed with Android's public debug"
+            echo "> key, not a private upload key. Sideload it (you may need to allow"
+            echo "> \"Install unknown apps\"); it cannot be published to Google Play, and"
+            echo "> it will not install over a build signed with a different key."
+          } >> RELEASE_NOTES.md
+
+      - name: Publish GitHub Release (APK)
+        if: steps.version.outputs.release == 'apk'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Upande Packhouse ${{ steps.version.outputs.version }}
+          body_path: RELEASE_NOTES.md
+          files: ${{ steps.apk.outputs.path }}
+          fail_on_unmatched_files: true
+
+      - name: Publish GitHub Release (OTA)
+        if: steps.version.outputs.release == 'ota'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Upande Packhouse ${{ steps.version.outputs.version }} (OTA)
+          body_path: RELEASE_NOTES.md
+
+      - name: Job summary
+        run: |
+          {
+            echo "### Released \`${{ steps.version.outputs.tag }}\`"
+            echo
+            echo "- Runtime \`${{ steps.version.outputs.runtime }}\`, versionCode \`${{ steps.version.outputs.version_code }}\`"
+            if [ "${{ steps.version.outputs.release }}" = "ota" ]; then
+              echo "- Shipped as an EAS Update on branch \`preview\` (no APK)"
+            else
+              echo "- APK: \`${{ steps.apk.outputs.path }}\`"
+              if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then
+                echo "- Signing: upload key"
+              else
+                echo "- Signing: **debug key** (no signing secrets configured)"
+              fi
+            fi
+            echo "- https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.tag }}"
+          } >> "$GITHUB_STEP_SUMMARY"
