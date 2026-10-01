@@ -16,7 +16,8 @@
     "build:apk": "npm run prebuild && cd android && ./gradlew assembleRelease",
     "version:next": "node scripts/version.mjs",
     "version:apply": "node scripts/version.mjs --apply",
-    "version:notes": "node scripts/version.mjs --notes"
+    "version:notes": "node scripts/version.mjs --notes",
+    "ota:build": "node scripts/publish-ota.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",

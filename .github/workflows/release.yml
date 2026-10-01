@@ -3,7 +3,7 @@ name: Release
 # Merging into the release branch cuts a release by advancing the version one
 # odometer step, then shipping it one of two ways:
 #
-#   1.2.x  (same runtime)  -> `eas update --branch preview`: JS-only, reaches
+#   1.2.x  (same runtime)  -> JS bundle on GitHub Pages (gh-pages): reaches
 #                              every installed 1.2 APK on its next launch.
 #   1.x.0  (new runtime)   -> prebuild + Gradle: a signed APK attached to the
 #                              GitHub Release, since native code may have moved.
@@ -24,10 +24,6 @@ on:
         type: choice
         default: auto
         options: [auto, patch, minor, major]
-      message:
-        description: EAS Update message for a patch release (defaults to the latest commit / PR title)
-        required: false
-        type: string
 
 concurrency:
   group: release
@@ -95,43 +91,33 @@ jobs:
 
       # ── 1.2.x: over-the-air update ──────────────────────────────────────────
       #
+      # Same scheme as the Upande Sensors app, with no Expo account involved:
+      # `npm run ota:build` exports the JS bundle and writes
+      # ota/android/<runtime>/manifest.json, which is pushed to the `gh-pages`
+      # branch and served by GitHub Pages. Phones do not read Pages directly for
+      # the manifest — expo-updates needs an `expo-protocol-version` response
+      # header Pages cannot send — they ask `updates.url`, the Frappe endpoint
+      # upande_packhouse.api.ota.manifest, which proxies it with the header.
+      # Bundle and assets are fetched from Pages as-is.
+      #
       # Published before the bump is committed, so a failed publish leaves no
       # tag behind and the next run retries the same version.
 
-      - name: Require an Expo token
+      - name: Build the JS update
         if: steps.version.outputs.release == 'ota'
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          if [ -z "$EXPO_TOKEN" ]; then
-            echo "::error::EXPO_TOKEN secret is not set; cannot run eas update. Create one at expo.dev -> Account settings -> Access tokens." >&2
-            exit 1
-          fi
+        run: npm run ota:build
 
-      - uses: expo/expo-github-action@v8
+      - name: Publish the JS update to GitHub Pages
         if: steps.version.outputs.release == 'ota'
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
-
-      - name: Publish EAS Update to the preview branch
-        if: steps.version.outputs.release == 'ota'
-        env:
-          INPUT_MESSAGE: ${{ github.event.inputs.message }}
-        run: |
-          set -euo pipefail
-          msg="$INPUT_MESSAGE"
-          if [ -z "$msg" ]; then
-            # A merged PR's commit subject is "Merge pull request #n from …";
-            # GitHub puts the PR title on the first body line, which says more.
-            msg=$(git log -1 --format=%s)
-            if [[ "$msg" == Merge\ pull\ request* ]]; then
-              title=$(git log -1 --format=%b | sed '/^[[:space:]]*$/d' | head -1)
-              [ -n "$title" ] && msg="$title"
-            fi
-          fi
-          echo "Publishing ${{ steps.version.outputs.version }} (runtime ${{ steps.version.outputs.runtime }}): $msg"
-          eas update --branch preview --message "$msg" --platform android --non-interactive
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./ota
+          destination_dir: ota
+          # Other runtimes' bundles must survive: devices still on 1.0 keep
+          # asking for /ota/android/1.0/ long after 1.1 exists.
+          keep_files: true
+          commit_message: 'ota: ${{ steps.version.outputs.version }} (runtime ${{ steps.version.outputs.runtime }})'
 
       # ── 1.x.0: native build ─────────────────────────────────────────────────
 
@@ -276,7 +262,7 @@ jobs:
           retention-days: 90
 
       - name: Remove the generated native project before committing
-        run: rm -rf android version.json
+        run: rm -rf android version.json ota .ota-export
 
       - name: Commit and tag the version bump
         env:
@@ -341,7 +327,7 @@ jobs:
             echo
             echo "- Runtime \`${{ steps.version.outputs.runtime }}\`, versionCode \`${{ steps.version.outputs.version_code }}\`"
             if [ "${{ steps.version.outputs.release }}" = "ota" ]; then
-              echo "- Shipped as an EAS Update on branch \`preview\` (no APK)"
+              echo "- Shipped as a JS update on GitHub Pages: https://mark-judah.github.io/upande-packhouse/ota/android/${{ steps.version.outputs.runtime }}/manifest.json (no APK)"
             else
               echo "- APK: \`${{ steps.apk.outputs.path }}\`"
               if [ "${{ steps.signing.outputs.signed }}" = "true" ]; then

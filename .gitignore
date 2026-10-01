@@ -51,3 +51,7 @@ app-example
 SECRETS-TO-UPLOAD.txt
 RELEASE_NOTES.md
 version.json
+
+# Built by scripts/publish-ota.mjs; published to the Pages branch, not committed here.
+ota/
+.ota-export/

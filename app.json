@@ -77,14 +77,15 @@
       "router": {},
       "eas": {
         "projectId": "81077d75-b922-4416-8e29-f0291f15e8a0"
-      }
+      },
+      "otaBaseUrl": "https://mark-judah.github.io/upande-packhouse/ota"
     },
     "runtimeVersion": "1.0",
     "updates": {
-      "url": "https://u.expo.dev/81077d75-b922-4416-8e29-f0291f15e8a0",
-      "requestHeaders": {
-        "expo-channel-name": "preview"
-      }
+      "enabled": true,
+      "url": "https://kaitet-group.upande.com/api/method/upande_packhouse.api.ota.manifest",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     }
   }
 }

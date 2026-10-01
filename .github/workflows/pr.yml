@@ -82,7 +82,7 @@ jobs:
             echo "| Runtime | \`$(jq -r .runtimeVersion version.json)\` |"
             echo
             if [ "$(jq -r .release version.json)" = "ota" ]; then
-              echo "Merging this PR into \`${{ github.base_ref }}\` publishes an **EAS Update** to branch \`preview\` (no APK)."
+              echo "Merging this PR into \`${{ github.base_ref }}\` publishes a **JS update** to GitHub Pages (no APK)."
             else
               echo "Merging this PR into \`${{ github.base_ref }}\` builds and publishes a signed **APK** (new runtime)."
             fi
