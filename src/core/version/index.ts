@@ -5,6 +5,11 @@ import { storage, StorageKeys } from '@/src/core/storage';
 
 export const APP_VERSION: string = Constants.expoConfig?.version ?? '1.0.0';
 
+/** Version of the installed APK (the native build), which OTA updates never change. */
+export const INSTALLED_APK_VERSION: string = Constants.nativeAppVersion ?? APP_VERSION;
+/** Android versionCode of the installed APK. */
+export const INSTALLED_APK_BUILD: string | null = Constants.nativeBuildVersion ?? null;
+
 const ENDPOINT = '/api/method/upande_packhouse.mobile.api.reportAppVersion';
 
 function todayISO(): string {

@@ -1,6 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { audio } from '@/src/core/audio';
@@ -55,20 +54,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       {state ? (
-        <SafeAreaView pointerEvents="none" style={styles.wrap} edges={['top']}>
+        // Centred on screen, clear of the title bar; taps pass through.
+        <View pointerEvents="none" style={styles.wrap}>
           <Animated.View
             style={[
               styles.toast,
               {
                 opacity: anim,
-                transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-12, 0] }) }],
+                transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) }],
               },
             ]}
           >
             <Ionicons name={iconName} size={18} color={tint} />
             <Text style={styles.text} numberOfLines={state.kind === 'error' ? 8 : 4}>{state.message}</Text>
           </Animated.View>
-        </SafeAreaView>
+        </View>
       ) : null}
     </ToastContext.Provider>
   );
@@ -81,23 +81,27 @@ export function useToast() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { position: 'absolute', top: 0, left: 0, right: 0, alignItems: 'center', zIndex: 9999 },
+  wrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+  },
   toast: {
-    marginTop: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.full,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.lg,
     backgroundColor: COLORS.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
+    elevation: 6,
     maxWidth: '90%',
   },
   text: { fontFamily: fontFamily.medium, fontSize: fontSize.sm, color: COLORS.text, flexShrink: 1 },
