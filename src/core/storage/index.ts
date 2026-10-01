@@ -17,6 +17,11 @@ export const StorageKeys = {
   // trade-off or migrate to expo-secure-store with a native rebuild.
   passwordBackup: 'password_backup',
   boxLabelsHistory: 'box_labels_history',
+  // Instances this device has signed in to, newest first, for the login
+  // screen's picker. Survives sign-out and "Forget this device".
+  knownInstances: 'known_instances',
+  // Last GitHub Releases check for a newer APK (see src/core/updates).
+  apkUpdateCheck: 'apk_update_check',
 } as const;
 
 export const storage = {

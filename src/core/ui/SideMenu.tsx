@@ -28,6 +28,7 @@ const ROUTE_ICONS: Record<DrawerItem['route'], IconName> = {
   issuing: 'send-outline',
   packing: 'cube-outline',
   'bunch-handover': 'swap-horizontal-outline',
+  precooling: 'snow-outline',
   staging: 'layers-outline',
   loading: 'car-outline',
   'bucket-logistics': 'navigate-outline',

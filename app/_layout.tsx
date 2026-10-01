@@ -15,6 +15,7 @@ import { useAuthStore } from '@/src/core/auth/store';
 import { useNetworkStore } from '@/src/core/network/store';
 import { reportVersionIfDue } from '@/src/core/version';
 import { getDrawerFor } from '@/src/composition/drawer-resolver';
+import { UpdateProvider } from '@/src/core/updates/UpdateProvider';
 
 // Hold the native splash until fonts + auth hydrated.
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -77,42 +78,44 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <TenantProvider>
-          <TenantScopedDrawer>
-            <ToastProvider>
-              <StatusBar style="dark" />
-              <Stack
-                screenOptions={{
-                  headerShown: false,
-                  animation: 'slide_from_right',
-                  gestureEnabled: true,
-                }}
-              >
-                <Stack.Screen name="index" />
-                <Stack.Screen name="login" />
-                <Stack.Screen name="biometric-lock" options={{ animation: 'fade' }} />
-                <Stack.Screen name="home" />
-                <Stack.Screen name="issuing" />
-                <Stack.Screen name="packing" />
-                <Stack.Screen name="loading" />
-                <Stack.Screen name="bucket-logistics" />
-                <Stack.Screen name="dispatch" />
-                <Stack.Screen name="configure-station" />
-                <Stack.Screen name="settings" />
-                <Stack.Screen name="debug-log" options={{ presentation: 'modal' }} />
-                <Stack.Screen
-                  name="camera-scanner"
-                  options={{ presentation: 'fullScreenModal' }}
-                />
-                <Stack.Screen
-                  name="camera-capture"
-                  options={{ presentation: 'fullScreenModal' }}
-                />
-              </Stack>
-              <OfflineBanner />
-            </ToastProvider>
-          </TenantScopedDrawer>
-        </TenantProvider>
+        <UpdateProvider>
+          <TenantProvider>
+            <TenantScopedDrawer>
+              <ToastProvider>
+                <StatusBar style="dark" />
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    animation: 'slide_from_right',
+                    gestureEnabled: true,
+                  }}
+                >
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="login" />
+                  <Stack.Screen name="biometric-lock" options={{ animation: 'fade' }} />
+                  <Stack.Screen name="home" />
+                  <Stack.Screen name="issuing" />
+                  <Stack.Screen name="packing" />
+                  <Stack.Screen name="loading" />
+                  <Stack.Screen name="bucket-logistics" />
+                  <Stack.Screen name="dispatch" />
+                  <Stack.Screen name="configure-station" />
+                  <Stack.Screen name="settings" />
+                  <Stack.Screen name="debug-log" options={{ presentation: 'modal' }} />
+                  <Stack.Screen
+                    name="camera-scanner"
+                    options={{ presentation: 'fullScreenModal' }}
+                  />
+                  <Stack.Screen
+                    name="camera-capture"
+                    options={{ presentation: 'fullScreenModal' }}
+                  />
+                </Stack>
+                <OfflineBanner />
+              </ToastProvider>
+            </TenantScopedDrawer>
+          </TenantProvider>
+        </UpdateProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -7,6 +7,7 @@ export type DrawerItem = {
     | 'issuing'
     | 'packing'
     | 'bunch-handover'
+    | 'precooling'
     | 'staging'
     | 'loading'
     | 'bucket-logistics'

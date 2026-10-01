@@ -21,7 +21,7 @@ type State = {
 };
 
 /** Pull the box label from a scan: `{box_label:"…"}` or a bare string. */
-function extractBoxLabel(raw: string): string {
+export function extractBoxLabel(raw: string): string {
   const text = raw.replace(/[\r\n]+/g, '').trim();
   if (!text) return '';
   if (!text.startsWith('{')) return text;
@@ -49,7 +49,7 @@ function extractLocation(raw: string): string {
 }
 
 /** Read `status` + `message`, tolerating a top-level or `message`-wrapped shape. */
-function resolve(raw: RawStagingResponse): { status?: string; message?: string } {
+export function resolveStagingResponse(raw: RawStagingResponse): { status?: string; message?: string } {
   if (typeof raw?.status === 'string') {
     const m = raw.message;
     return { status: raw.status, message: typeof m === 'string' ? m : undefined };
@@ -95,7 +95,7 @@ export const useKarenStagingStore = create<State>((set, get) => ({
     let result: { status?: string; message?: string };
     try {
       const res = await karenStagingApi.createStagingEntry(boxLabel, location);
-      result = resolve(res);
+      result = resolveStagingResponse(res);
     } catch (err) {
       set({ submitting: false });
       return fail('error', mapAxiosError(err).message || 'Failed to create staging entry.');

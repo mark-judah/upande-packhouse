@@ -2,6 +2,7 @@ import { storage, StorageKeys } from '@/src/core/storage';
 import { api } from '@/src/core/api/client';
 import { loginRequest, probeBaseUrl } from './api';
 import { fetchCurrentUserRoles } from './roles-api';
+import { knownInstances } from './known-instances';
 
 /** The stock /api/method/login response's `full_name` is computed as
  *  `first_name + last_name` server-side (frappe/auth.py), which reads as an
@@ -54,6 +55,7 @@ export const authRepository = {
         storage.set(StorageKeys.emailBackup, email),
         storage.set(StorageKeys.fullName, fullName),
         storage.set(StorageKeys.passwordBackup, password),
+        knownInstances.remember(fullUrl, email).catch(() => {}),
       ]);
 
       // The login response's own full_name is often a blank string (see
@@ -90,7 +92,11 @@ export const authRepository = {
   },
 
   async logout(): Promise<void> {
-    await storage.clearExcept([StorageKeys.emailBackup, StorageKeys.instanceUrlBackup]);
+    await storage.clearExcept([
+      StorageKeys.emailBackup,
+      StorageKeys.instanceUrlBackup,
+      StorageKeys.knownInstances,
+    ]);
   },
 
   async loadBackupCredentials(): Promise<{ email: string | null; url: string | null }> {

@@ -13,6 +13,7 @@ export function DateSelector({
   maxDate = todayISO(),
   resetTo,
   resetLabel = 'Today',
+  compact = false,
 }: {
   value: string;
   onChange: (iso: string) => void;
@@ -22,25 +23,44 @@ export function DateSelector({
   /** Date the quick-reset button jumps to (default today). */
   resetTo?: string;
   resetLabel?: string;
+  /** One short full-width row: arrows at the ends, the label as a small
+   *  caption over the date between them. For cards where the stepper is
+   *  secondary. */
+  compact?: boolean;
 }) {
   const reset = resetTo ?? todayISO();
   const atMax = maxDate != null && value >= maxDate;
 
   return (
-    <View style={s.wrap}>
-      <Text style={s.label}>{label}</Text>
+    <View style={compact ? s.wrapCompact : s.wrap}>
+      {compact ? null : <Text style={s.label}>{label}</Text>}
       <View style={s.row}>
-        <Pressable style={s.btn} onPress={() => onChange(shiftISO(value, -1))} hitSlop={6}>
+        <Pressable
+          style={[s.btn, compact && s.btnCompact]}
+          onPress={() => onChange(shiftISO(value, -1))}
+          hitSlop={6}
+        >
           <MaterialCommunityIcons name="chevron-left" size={22} color={COLORS.text} />
         </Pressable>
 
-        <View style={s.center}>
-          <Text style={s.dateText}>{formatDayLabel(value)}</Text>
-          <Text style={s.dateSub}>{value}</Text>
-        </View>
+        {compact ? (
+          <View style={s.center}>
+            <Text style={s.labelInline} numberOfLines={1}>
+              {label}
+            </Text>
+            <Text style={s.dateTextCompact} numberOfLines={1}>
+              {formatDayLabel(value)}
+            </Text>
+          </View>
+        ) : (
+          <View style={s.center}>
+            <Text style={s.dateText}>{formatDayLabel(value)}</Text>
+            <Text style={s.dateSub}>{value}</Text>
+          </View>
+        )}
 
         <Pressable
-          style={[s.btn, atMax && s.btnDisabled]}
+          style={[s.btn, compact && s.btnCompact, atMax && s.btnDisabled]}
           disabled={atMax}
           onPress={() => onChange(shiftISO(value, 1))}
           hitSlop={6}
@@ -53,7 +73,11 @@ export function DateSelector({
         </Pressable>
 
         {value !== reset ? (
-          <Pressable style={s.todayBtn} onPress={() => onChange(reset)} hitSlop={6}>
+          <Pressable
+            style={[s.todayBtn, compact && s.btnCompactHeight]}
+            onPress={() => onChange(reset)}
+            hitSlop={6}
+          >
             <Text style={s.todayText}>{resetLabel}</Text>
           </Pressable>
         ) : null}
@@ -64,6 +88,23 @@ export function DateSelector({
 
 const s = StyleSheet.create({
   wrap: { marginBottom: spacing.md },
+  wrapCompact: { marginBottom: spacing.xs },
+  labelInline: {
+    fontFamily: fontFamily.semiBold,
+    fontSize: 9,
+    lineHeight: 11,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  dateTextCompact: {
+    fontFamily: fontFamily.semiBold,
+    fontSize: fontSize.sm,
+    lineHeight: 18,
+    color: COLORS.text,
+  },
+  btnCompact: { width: 32, height: 32 },
+  btnCompactHeight: { height: 32 },
   label: {
     fontFamily: fontFamily.semiBold,
     fontSize: fontSize.sm,
