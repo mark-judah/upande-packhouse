@@ -84,6 +84,33 @@ function hashOf(path) {
   return createHash('sha256').update(readFileSync(path)).digest('base64url');
 }
 
+/**
+ * The public app config, as `Constants.expoConfig` reads it. On an OTA launch
+ * expo-constants takes that from the manifest's `extra.expoClient`; without
+ * it the app keeps reporting the config embedded in the APK, so an update
+ * shows the APK's version instead of its own. Never fatal: a publish without
+ * it still delivers the bundle.
+ */
+function publicExpoConfig() {
+  try {
+    const out = execFileSync('npx', ['expo', 'config', '--json', '--type', 'public'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    const config = JSON.parse(out.slice(out.indexOf('{')));
+    if (config.version !== version) {
+      console.warn(`expo config reports version ${config.version}, app.json ${version}; using app.json.`);
+      config.version = version;
+    }
+    return config;
+  } catch (err) {
+    console.warn(`Could not read the public expo config; the update will show the APK's version. ${err.message}`);
+    return null;
+  }
+}
+const expoClient = publicExpoConfig();
+
 const metadata = JSON.parse(readFileSync(join(EXPORT_DIR, 'metadata.json'), 'utf8'));
 const android = metadata.fileMetadata?.android;
 if (!android) {
@@ -141,6 +168,8 @@ const manifest = {
   }),
   metadata: {},
   extra: {
+    // What `Constants.expoConfig` becomes once this update is running.
+    ...(expoClient ? { expoClient } : {}),
     // Carried so the app can show which release a bundle came from; the protocol
     // itself only cares about `id` and `runtimeVersion`.
     appVersion: version,
