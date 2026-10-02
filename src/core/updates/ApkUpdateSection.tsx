@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Linking, StyleSheet, Text, View } from 'react-native';
 import * as Updates from 'expo-updates';
 import { Button } from '@/src/core/ui/Button';
+import { useToast } from '@/src/core/ui/Toast';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { formatBytes, RELEASES_PAGE_URL } from './releases';
 import { openInBrowser, openUnknownAppSourcesSettings } from './install-apk';
@@ -17,17 +18,18 @@ function bundleLabel(): string {
 }
 
 /**
- * The "Download latest APK" part of Settings → App. One button, three jobs in
- * the order they happen: check, then download, then report progress.
- *
- * Sits under the OTA "Check for updates" button, which is unchanged: OTA
- * covers JS patches, this covers a new native build.
+ * The one "Check for updates" button in Settings → App. A new APK is checked
+ * first, on GitHub Releases: it carries a new runtime, so it supersedes any OTA
+ * bundle. Only when the APK is current does it ask expo-updates for a JS patch
+ * on the installed runtime. With an APK available the same button downloads it.
  */
 export function ApkUpdateSection() {
   const { check, checking, checkError, downloading, progress, installError, refresh, install } =
     useApkUpdate();
   const apk = check?.apk ?? null;
   const available = !!check?.available;
+  const { showSuccess, showError } = useToast();
+  const [otaChecking, setOtaChecking] = useState(false);
   const [server, setServer] = useState<ServerVersions | null>(null);
   const [serverFailed, setServerFailed] = useState(false);
 
@@ -50,23 +52,54 @@ export function ApkUpdateSection() {
       if (progress?.fraction == null) return `Downloading… ${written}`;
       return `Downloading ${Math.round(progress.fraction * 100)}% · ${written} of ${formatBytes(progress.total)}`;
     }
-    if (checking) return 'Checking GitHub…';
+    if (checking || otaChecking) return 'Checking for updates…';
     if (available && apk) {
       const size = formatBytes(apk.sizeBytes);
       return `Download v${apk.version}${size ? ` (${size})` : ''}`;
     }
-    return 'Check for new APK';
-  }, [downloading, progress, checking, available, apk]);
+    return 'Check for updates';
+  }, [downloading, progress, checking, otaChecking, available, apk]);
 
-  const onPress = useCallback(async () => {
-    if (downloading) return;
-    if (!available) {
-      await refresh();
+  /** A JS patch for the runtime this APK already has, through `updates.url`. */
+  const checkOta = useCallback(async () => {
+    if (__DEV__) {
+      showSuccess('This APK is up to date. OTA updates are off in development.');
       return;
     }
-    // Failures surface through `installError` below.
-    await install();
-  }, [downloading, available, refresh, install]);
+    setOtaChecking(true);
+    try {
+      const result = await Updates.checkForUpdateAsync();
+      const fetched = result.isAvailable ? await Updates.fetchUpdateAsync() : null;
+      if (!fetched?.isNew) {
+        showSuccess("You're on the latest version.");
+        return;
+      }
+      Alert.alert('Update ready', 'Reload now to apply it?', [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Reload', onPress: () => Updates.reloadAsync() },
+      ]);
+    } catch (err) {
+      // expo-updates wraps the real reason as "Call to function … has been rejected. → Caused by: …".
+      const message = err instanceof Error ? err.message : '';
+      const cause = message.split('Caused by:').pop()?.trim();
+      showError(cause ? `Could not check for updates: ${cause}` : 'Could not check for updates.');
+    } finally {
+      setOtaChecking(false);
+    }
+  }, [showSuccess, showError]);
+
+  const onPress = useCallback(async () => {
+    if (downloading || checking || otaChecking) return;
+    if (available) {
+      // Failures surface through `installError` below.
+      await install();
+      return;
+    }
+    const result = await refresh();
+    // A newer APK turns this button into its download; the status line says so.
+    if (result?.available) return;
+    await checkOta();
+  }, [downloading, checking, otaChecking, available, install, refresh, checkOta]);
 
   const onInstallErrorHelp = useCallback(() => {
     if (!installError) return;
@@ -118,9 +151,9 @@ export function ApkUpdateSection() {
         label={label}
         variant={available || downloading ? 'primary' : 'outline'}
         onPress={onPress}
-        loading={checking}
+        loading={checking || otaChecking}
         disabled={downloading}
-        iconLeft="download-outline"
+        iconLeft={available ? 'download-outline' : 'cloud-download-outline'}
       />
     </View>
   );
