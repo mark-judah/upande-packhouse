@@ -1,9 +1,9 @@
 {
-  "id": "ca1228c4-4f05-45f6-a836-3a8a0d732a2b",
-  "createdAt": "2026-10-02T04:57:46.570Z",
+  "id": "f01e45ff-6fdd-463b-8166-fce744b401af",
+  "createdAt": "2026-10-02T07:00:22.887Z",
   "runtimeVersion": "1.2",
   "launchAsset": {
-    "hash": "BEWQm_bnBBB6aZjzlJF0kn9KzRn94z8v5imJJw2EsTE",
+    "hash": "87yWvecUInLGGJERgX2Ok31NXb0-3QMVfqQ1_RErsGU",
     "key": "bundle",
     "contentType": "application/javascript",
     "fileExtension": ".hbc",
@@ -608,7 +608,105 @@
   ],
   "metadata": {},
   "extra": {
-    "appVersion": "1.2.1",
-    "publishedAt": "2026-10-02T04:57:46.593Z"
+    "expoClient": {
+      "name": "Upande Packhouse",
+      "slug": "upande-packhouse",
+      "owner": "markjk",
+      "version": "1.2.2",
+      "orientation": "portrait",
+      "icon": "./assets/upande_logo.png",
+      "scheme": "upandepackhouse",
+      "userInterfaceStyle": "light",
+      "newArchEnabled": true,
+      "ios": {
+        "supportsTablet": true,
+        "bundleIdentifier": "com.upande.packhouse",
+        "infoPlist": {
+          "NSCameraUsageDescription": "We use the camera to scan barcodes.",
+          "NSAppTransportSecurity": {
+            "NSAllowsLocalNetworking": true
+          }
+        }
+      },
+      "android": {
+        "package": "com.upande.packhouse",
+        "versionCode": 5202,
+        "adaptiveIcon": {
+          "backgroundColor": "#FFFFFF",
+          "foregroundImage": "./assets/upande_logo.png"
+        },
+        "edgeToEdgeEnabled": true,
+        "predictiveBackGestureEnabled": false,
+        "permissions": [
+          "android.permission.CAMERA",
+          "android.permission.RECORD_AUDIO",
+          "android.permission.MODIFY_AUDIO_SETTINGS",
+          "android.permission.REQUEST_INSTALL_PACKAGES"
+        ]
+      },
+      "web": {
+        "output": "static",
+        "favicon": "./assets/upande_logo.png"
+      },
+      "plugins": [
+        "./plugins/withReleaseSigning",
+        "./plugins/withBuildTuning",
+        "expo-router",
+        [
+          "expo-camera",
+          {
+            "cameraPermission": "We use the camera to scan barcodes."
+          }
+        ],
+        "expo-audio",
+        [
+          "expo-build-properties",
+          {
+            "android": {
+              "usesCleartextTraffic": true
+            }
+          }
+        ],
+        [
+          "expo-splash-screen",
+          {
+            "image": "./assets/upande_logo.png",
+            "imageWidth": 200,
+            "resizeMode": "contain",
+            "backgroundColor": "#FFFFFF"
+          }
+        ],
+        "expo-asset"
+      ],
+      "experiments": {
+        "typedRoutes": true,
+        "reactCompiler": true
+      },
+      "extra": {
+        "router": {},
+        "eas": {
+          "projectId": "81077d75-b922-4416-8e29-f0291f15e8a0"
+        },
+        "otaBaseUrl": "https://mark-judah.github.io/upande-packhouse/ota"
+      },
+      "runtimeVersion": "1.2",
+      "updates": {
+        "enabled": true,
+        "url": "https://kaitet-group.upande.com/api/method/upande_packhouse.api.ota.manifest",
+        "checkAutomatically": "ON_LOAD",
+        "fallbackToCacheTimeout": 0
+      },
+      "sdkVersion": "54.0.0",
+      "platforms": [
+        "ios",
+        "android",
+        "web"
+      ],
+      "androidStatusBar": {
+        "backgroundColor": "#FFFFFF"
+      }
+    },
+    "appVersion": "1.2.2",
+    "publishedAt": "2026-10-02T07:00:22.911Z"
   }
 }
