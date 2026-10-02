@@ -55,7 +55,6 @@ export const authRepository = {
         storage.set(StorageKeys.emailBackup, email),
         storage.set(StorageKeys.fullName, fullName),
         storage.set(StorageKeys.passwordBackup, password),
-        knownInstances.remember(fullUrl, email).catch(() => {}),
       ]);
 
       // The login response's own full_name is often a blank string (see
@@ -71,6 +70,10 @@ export const authRepository = {
       } catch {
         // ignore — greeting falls back to the login response's own value
       }
+      // After the real name is known, so the login screen can greet by name.
+      await knownInstances
+        .remember(fullUrl, email, fullName && fullName !== email ? fullName : null)
+        .catch(() => {});
 
       // Fetch roles in the background. Failure is non-fatal — login still succeeds.
       let roles: string[] = [];

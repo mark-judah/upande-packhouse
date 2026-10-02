@@ -6,13 +6,16 @@ import { storage, StorageKeys } from '@/src/core/storage';
  *
  * Only a successful login adds one: a typo never becomes a suggestion. Each
  * entry remembers the last email used there, so switching instance also
- * switches the account field.
+ * switches the account field, and that user's full name, which the login
+ * screen shows in place of the email.
  */
 
 export type KnownInstance = {
   /** Full base URL as the login stored it, e.g. `https://kaitet-group.upande.com`. */
   url: string;
   email: string | null;
+  /** Missing on entries saved before names were kept, until the next sign-in. */
+  fullName?: string | null;
   lastUsedAt: number;
 };
 
@@ -69,11 +72,11 @@ export const knownInstances = {
     return seeded;
   },
 
-  async remember(url: string, email: string | null): Promise<void> {
+  async remember(url: string, email: string | null, fullName: string | null = null): Promise<void> {
     const key = instanceKey(url);
     if (!key) return;
     const rest = (await read()).filter((i) => instanceKey(i.url) !== key);
-    await write([{ url, email, lastUsedAt: Date.now() }, ...rest]);
+    await write([{ url, email, fullName, lastUsedAt: Date.now() }, ...rest]);
   },
 
   async forget(url: string): Promise<KnownInstance[]> {

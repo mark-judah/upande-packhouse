@@ -65,6 +65,9 @@ export default function Login() {
   const [bioBusy, setBioBusy] = useState(false);
   const [usePassword, setUsePassword] = useState(false);
   const bioAvailable = !!bioUrl && instanceKey(bioUrl) === instanceKey(url);
+  // Who signs in here, by name; the email until that instance has a saved name.
+  const accountName =
+    instances.find((i) => instanceKey(i.url) === instanceKey(url))?.fullName || email;
   const biometricOnly = bioAvailable && !usePassword && !instanceOpen;
 
   useEffect(() => {
@@ -231,9 +234,9 @@ export default function Login() {
                         <Text style={s.instanceHost} numberOfLines={1}>
                           {instanceLabel(inst.url)}
                         </Text>
-                        {inst.email ? (
+                        {inst.fullName || inst.email ? (
                           <Text style={s.instanceEmail} numberOfLines={1}>
-                            {inst.email}
+                            {inst.fullName || inst.email}
                           </Text>
                         ) : null}
                       </View>
@@ -292,7 +295,7 @@ export default function Login() {
                 <Ionicons name="finger-print" size={34} color={COLORS.text} />
               </View>
               <Text style={s.bioLabel}>{bioBusy ? 'Waiting…' : 'Sign in with biometrics'}</Text>
-              {email ? <Text style={s.bioEmail}>{email}</Text> : null}
+              {accountName ? <Text style={s.bioEmail}>{accountName}</Text> : null}
             </Pressable>
             <Pressable
               onPress={() => {
