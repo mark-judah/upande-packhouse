@@ -3,7 +3,7 @@
     "name": "Upande Packhouse",
     "slug": "upande-packhouse",
     "owner": "markjk",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/upande_logo.png",
     "scheme": "upandepackhouse",
@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "com.upande.packhouse",
-      "versionCode": 5101,
+      "versionCode": 5200,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/upande_logo.png"
@@ -80,7 +80,7 @@
       },
       "otaBaseUrl": "https://mark-judah.github.io/upande-packhouse/ota"
     },
-    "runtimeVersion": "1.1",
+    "runtimeVersion": "1.2",
     "updates": {
       "enabled": true,
       "url": "https://kaitet-group.upande.com/api/method/upande_packhouse.api.ota.manifest",
