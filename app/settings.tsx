@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
-import * as Updates from 'expo-updates';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card } from '@/src/core/ui/Card';
 import { Button } from '@/src/core/ui/Button';
@@ -23,7 +22,6 @@ export default function SettingsScreen() {
 
   const [moduleReady, setModuleReady] = useState(false);
   const [hardwareReady, setHardwareReady] = useState(false);
-  const [updatesChecking, setUpdatesChecking] = useState(false);
 
   useEffect(() => {
     setModuleReady(Biometric.isModuleAvailable());
@@ -56,34 +54,6 @@ export default function SettingsScreen() {
       showSuccess(biometricEnabled ? 'Biometric unlock disabled.' : 'Biometric unlock enabled.');
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Could not update setting.');
-    }
-  };
-
-  const onCheckUpdates = async () => {
-    if (__DEV__) {
-      showError('OTA updates are unavailable in development.');
-      return;
-    }
-    setUpdatesChecking(true);
-    try {
-      const result = await Updates.checkForUpdateAsync();
-      if (!result.isAvailable) {
-        showSuccess("You're on the latest version.");
-        return;
-      }
-      const fetched = await Updates.fetchUpdateAsync();
-      if (fetched.isNew) {
-        Alert.alert('Update ready', 'Reload now to apply it?', [
-          { text: 'Later', style: 'cancel' },
-          { text: 'Reload', onPress: () => Updates.reloadAsync() },
-        ]);
-      } else {
-        showSuccess("You're on the latest version.");
-      }
-    } catch (err) {
-      showError(err instanceof Error ? err.message : 'Could not check for updates.');
-    } finally {
-      setUpdatesChecking(false);
     }
   };
 
@@ -153,15 +123,6 @@ export default function SettingsScreen() {
       </Card>
 
       <Card title="App">
-        <Button
-          label={updatesChecking ? 'Checking…' : 'Check for updates'}
-          variant="outline"
-          onPress={onCheckUpdates}
-          loading={updatesChecking}
-          iconLeft="cloud-download-outline"
-        />
-        {/* OTA above (unchanged) covers JS patches; a new native build ships
-            as an APK on GitHub Releases and is downloaded here. */}
         <ApkUpdateSection />
       </Card>
 
