@@ -158,13 +158,24 @@ const manifest = {
   createdAt: new Date().toISOString(),
   runtimeVersion,
   launchAsset: {
-    ...assetEntry(android.bundle, 'bundle'),
+    // Keyed by the bundle's own file name, which `expo export` makes unique per
+    // build (index-<hash>). expo-updates reuses any asset whose key it already
+    // has on disk, so a fixed key like 'bundle' means a phone downloads the code
+    // once and then runs that same code under every later update's version.
+    ...assetEntry(android.bundle, android.bundle.split(/[\\/]/).pop().replace(/\.[^.]+$/, '')),
     contentType: 'application/javascript',
   },
   assets: (android.assets || []).map((asset) => {
     const relPath = join('assets', asset.path.replace(/^assets[\\/]/, ''));
     const onDisk = existsSync(join(runtimeDir, relPath)) ? relPath : asset.path;
-    return { ...assetEntry(onDisk, asset.path), fileExtension: `.${asset.ext}` };
+    // The key is the bare content hash -- `expo export` names each asset file by
+    // it -- never the `assets/<hash>` path. expo-updates stores an asset as
+    // <key><fileExtension> and rejects the WHOLE update when either contains a
+    // path separator ("... is not a valid filename"), silently, on the phone.
+    // The bare hash is also the key the APK's embedded copy carries, so a phone
+    // reuses the fonts and images it already has and downloads only the bundle.
+    const key = asset.path.split(/[\\/]/).pop();
+    return { ...assetEntry(onDisk, key), fileExtension: `.${asset.ext}` };
   }),
   metadata: {},
   extra: {
@@ -176,6 +187,16 @@ const manifest = {
     publishedAt: new Date().toISOString(),
   },
 };
+
+// Refuse to publish what every phone would reject: expo-updates writes each
+// asset to disk as <key><fileExtension>, so neither may hold a path separator.
+const badAsset = [manifest.launchAsset, ...manifest.assets].find((a) =>
+  /[\\/]/.test(`${a.key}${a.fileExtension}`),
+);
+if (badAsset) {
+  console.error(`Asset key "${badAsset.key}${badAsset.fileExtension}" contains a path separator; expo-updates would reject this update.`);
+  process.exit(1);
+}
 
 writeFileSync(join(runtimeDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 rmSync(EXPORT_DIR, { recursive: true, force: true });
