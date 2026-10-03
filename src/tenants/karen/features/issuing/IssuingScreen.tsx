@@ -16,6 +16,7 @@ import {
   type PackingItem,
 } from '@/src/tenants/karen/state/karen-issuing-store';
 import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
+import { ReplacePicker } from './ReplacePicker';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
 export function KarenIssuingScreen() {
@@ -37,6 +38,10 @@ export function KarenIssuingScreen() {
     setTeam,
     selectOrder,
     submitScan,
+    replace,
+    openReplace,
+    closeReplace,
+    confirmReplace,
     reset,
   } = useKarenIssuingStore();
   const { showSuccess, showError } = useToast();
@@ -236,7 +241,8 @@ export function KarenIssuingScreen() {
               ) : (
                 <>
                   <Text style={s.helper}>
-                    {unissuedCount} still to issue. Scan a bucket QR from the list.
+                    {unissuedCount} still to issue. Scan a bucket QR from the list, or Replace one
+                    that cannot be found.
                   </Text>
                   <View style={{ height: spacing.sm }} />
                   <ScrollView
@@ -245,7 +251,11 @@ export function KarenIssuingScreen() {
                     nestedScrollEnabled
                   >
                     {unissuedItems.map((item) => (
-                      <PackingRow key={`${item.oplName}-${item.bucket}`} item={item} />
+                      <PackingRow
+                        key={`${item.oplName}-${item.bucket}`}
+                        item={item}
+                        onReplace={() => openReplace(item)}
+                      />
                     ))}
                   </ScrollView>
                 </>
@@ -305,11 +315,20 @@ export function KarenIssuingScreen() {
           {lastOutcome.message ? <Row label="Server" value={lastOutcome.message} /> : null}
         </Card>
       ) : null}
+      <ReplacePicker
+        sheet={replace}
+        onClose={closeReplace}
+        onPick={async (c, why) => {
+          const res = await confirmReplace(c.bucket, why);
+          if (res.ok) showSuccess(res.message);
+          else showError(res.message);
+        }}
+      />
     </Screen>
   );
 }
 
-function PackingRow({ item }: { item: PackingItem }) {
+function PackingRow({ item, onReplace }: { item: PackingItem; onReplace?: () => void }) {
   return (
     <View style={[s.packRow, item.isIssued && s.packRowDone]}>
       <View style={s.packLeft}>
@@ -330,6 +349,11 @@ function PackingRow({ item }: { item: PackingItem }) {
           <View style={s.tagMixed}>
             <Text style={s.tagMixedText}>MIXED</Text>
           </View>
+        ) : null}
+        {!item.isIssued && onReplace ? (
+          <Pressable onPress={onReplace} hitSlop={6} accessibilityRole="button">
+            <Text style={s.replaceLink}>Replace</Text>
+          </Pressable>
         ) : null}
       </View>
     </View>
@@ -427,6 +451,12 @@ const s = StyleSheet.create({
     color: COLORS.text,
   },
 
+  replaceLink: {
+    fontFamily: fontFamily.semiBold,
+    fontSize: fontSize.xs,
+    color: COLORS.primary,
+    textDecorationLine: 'underline',
+  },
   tagDone: {
     paddingHorizontal: 6,
     paddingVertical: 2,

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { karenDashboardApi } from '../api/karen-dashboard-api';
 import { mapAxiosError } from '@/src/core/api/client';
-import { todayISO } from '@/src/core/date';
+import { tomorrowISO } from '@/src/core/date';
 
 export type DashboardOrder = {
   salesOrder: string;
@@ -80,7 +80,8 @@ export const useKarenDashboardStore = create<DashboardState>((set, get) => ({
   data: null,
   loading: false,
   error: null,
-  selectedDate: todayISO(),
+  // Opens on tomorrow's orders: the packhouse packs today what delivers tomorrow.
+  selectedDate: tomorrowISO(),
 
   load: async () => {
     if (get().loading) return;

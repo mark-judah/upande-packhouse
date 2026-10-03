@@ -14,7 +14,7 @@ import {
 } from '@/src/tenants/karen/state/karen-dashboard-store';
 import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
 import { useNetworkStore } from '@/src/core/network/store';
-import { formatDayLabel, todayISO } from '@/src/core/date';
+import { formatDayLabel, tomorrowISO } from '@/src/core/date';
 
 /**
  * Packhouse home dashboard — deliberately styled identically to
@@ -159,8 +159,8 @@ export function PackhouseDashboard() {
           onChange={setDate}
           label="Delivery date"
           maxDate={null}
-          resetTo={todayISO()}
-          resetLabel="Today"
+          resetTo={tomorrowISO()}
+          resetLabel="Tomorrow"
         />
       </Card>
 

@@ -33,6 +33,29 @@ export type PackingLine = {
   isIssued: boolean;
 };
 
+/** Why an allocated bucket is replaced (Bucket Replacement.reason). */
+export type ReplaceReason = 'Missing' | 'Damaged' | 'Wrong variety' | 'Other';
+export const REPLACE_REASONS: ReplaceReason[] = ['Missing', 'Damaged', 'Wrong variety', 'Other'];
+
+export type ReplacementCandidate = {
+  bucket: string;
+  shelf: string | null;
+  stemLength: string | null;
+  availableQty: number | null;
+  harvestDate: string | null;
+};
+
+/** The Replace sheet for one packing-list bucket. */
+export type ReplaceSheet = {
+  item: PackingItem;
+  loading: boolean;
+  candidates: ReplacementCandidate[];
+  neededQty: number | null;
+  /** Why nothing can be offered, when that is the answer. */
+  message: string | null;
+  submitting: boolean;
+};
+
 export type IssueOutcome =
   | { kind: 'success'; bucket: string; message?: string }
   | { kind: 'error';   bucket: string | null; message: string };
@@ -67,6 +90,7 @@ type State = {
 
   submitting: boolean;
   lastOutcome: IssueOutcome | null;
+  replace: ReplaceSheet | null;
 
   loadOrders: () => Promise<void>;
   setDate: (date: string) => Promise<void>;
@@ -75,6 +99,14 @@ type State = {
   selectOrder: (oplName: string) => Promise<void>;
   /** Parse a scanned bucket QR, find the matching packing line, submit. */
   submitScan: (raw: string) => Promise<IssueOutcome>;
+  /** Open the Replace sheet for a bucket that cannot be found. */
+  openReplace: (item: PackingItem) => Promise<void>;
+  closeReplace: () => void;
+  /** Swap the bucket for `newBucket`; the packing list reloads to show it. */
+  confirmReplace: (
+    newBucket: string,
+    reason: ReplaceReason,
+  ) => Promise<{ ok: boolean; message: string }>;
   reset: () => void;
 };
 
@@ -258,6 +290,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
 
   submitting: false,
   lastOutcome: null,
+  replace: null,
 
   loadOrders: async () => {
     set({ ordersLoading: true });
@@ -417,6 +450,81 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
     return out;
   },
 
+  openReplace: async (item) => {
+    const opl = get().selectedOpl;
+    if (!opl) return;
+    const pendingLine = item.lines.find((l) => !l.isIssued)?.saleOrderItem;
+    set({
+      replace: { item, loading: true, candidates: [], neededQty: null, message: null, submitting: false },
+    });
+    try {
+      const res = await karenIssuingApi.fetchReplacementOptions({
+        opl_name: opl,
+        bucket: item.bucket,
+        sale_order_item: pendingLine || undefined,
+      });
+      if (get().replace?.item !== item) return; // closed or moved on meanwhile
+      set({
+        replace: {
+          item,
+          loading: false,
+          neededQty: typeof res.needed_qty === 'number' ? res.needed_qty : null,
+          message: res.found ? null : res.message || 'No bucket can replace this one.',
+          submitting: false,
+          candidates: (res.candidates ?? []).map((c) => ({
+            bucket: c.new_bucket,
+            shelf: c.shelf ?? null,
+            stemLength: c.stem_length ?? null,
+            availableQty: typeof c.available_qty === 'number' ? c.available_qty : null,
+            harvestDate: c.harvest_date ?? null,
+          })),
+        },
+      });
+    } catch (err) {
+      if (get().replace?.item !== item) return;
+      set({
+        replace: {
+          item,
+          loading: false,
+          candidates: [],
+          neededQty: null,
+          message: mapAxiosError(err).message || 'Could not load replacements.',
+          submitting: false,
+        },
+      });
+    }
+  },
+
+  closeReplace: () => set({ replace: null }),
+
+  confirmReplace: async (newBucket, reason) => {
+    const sheet = get().replace;
+    const opl = get().selectedOpl;
+    if (!sheet || !opl) return { ok: false, message: 'Nothing to replace.' };
+    set({ replace: { ...sheet, submitting: true } });
+    try {
+      const res = await karenIssuingApi.replaceBucket({
+        opl_name: opl,
+        bucket: sheet.item.bucket,
+        new_bucket_id: newBucket,
+        reason,
+        sale_order_item: sheet.item.lines.find((l) => !l.isIssued)?.saleOrderItem || undefined,
+      });
+      if (!res.success) {
+        set({ replace: { ...sheet, submitting: false } });
+        return { ok: false, message: res.message || 'The replacement failed.' };
+      }
+      set({ replace: null });
+      // The OPL now lists the replacement; scanning it issues it as usual.
+      await get().selectOrder(opl);
+      const where = res.shelf ? ` from shelf ${res.shelf}` : '';
+      return { ok: true, message: `${sheet.item.bucket} replaced. Fetch ${newBucket}${where} and scan it.` };
+    } catch (err) {
+      set({ replace: { ...sheet, submitting: false } });
+      return { ok: false, message: mapAxiosError(err).message || 'The replacement failed.' };
+    }
+  },
+
   reset: () =>
     set({
       ordersLoading: false,
@@ -429,5 +537,6 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
       packingItems: [],
       submitting: false,
       lastOutcome: null,
+      replace: null,
     }),
 }));
