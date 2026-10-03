@@ -311,6 +311,7 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: ${{ steps.apk.outputs.path }}
           fail_on_unmatched_files: true
+          make_latest: true
 
       - name: Publish GitHub Release (OTA)
         if: steps.version.outputs.release == 'ota'
@@ -319,6 +320,9 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Upande Packhouse ${{ steps.version.outputs.version }} (OTA)
           body_path: RELEASE_NOTES.md
+          # An OTA release has no APK: keep "latest" on the newest APK release,
+          # so GitHub's latest release is always one that can be installed.
+          make_latest: false
 
       - name: Job summary
         run: |
