@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { AppState } from 'react-native';
+import * as Updates from 'expo-updates';
 import {
   autoCheckForApk,
   checkForApk,
@@ -28,13 +29,27 @@ import {
  * App-wide state for the APK channel: is a newer native build on GitHub, and
  * the download/install of it.
  *
- * OTA (EAS Update) is deliberately not handled here — it keeps working exactly
- * as before through expo-updates and the Settings "Check for updates" button.
+ * It also applies JS updates (OTA) when the app is opened: checked on launch
+ * and, once downloaded, restarted into straight away -- in the first seconds
+ * after opening, while nothing is in progress. A download that only finishes
+ * after that is kept for the next opening rather than restarting the app
+ * under someone mid-task. Without this, expo-updates' own ON_LOAD check
+ * applied an update only on the NEXT cold start, so a fix took two openings
+ * to reach a phone. The Settings "Check for updates" button still works too.
  *
  * The download is started by the user, never automatically: an APK is tens of
  * MB, and phones here are often on metered data. The check itself runs silently
  * once a day so the Settings screen already knows the answer when opened.
  */
+
+/** A bundle downloaded within this long of opening is applied by an immediate
+ *  restart. Later than that the user is working, so it waits for the next
+ *  opening instead -- the app never restarts under someone mid-task. */
+const OTA_OPEN_WINDOW_MS = 20 * 1000;
+const LAUNCHED_AT = Date.now();
+
+/** Still in the first moments after opening, when a restart interrupts nothing. */
+const justOpened = () => Date.now() - LAUNCHED_AT < OTA_OPEN_WINDOW_MS;
 
 type UpdateState = {
   check: ApkCheck | null;
@@ -65,6 +80,49 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
   /** A finished download waiting for the app to return to the foreground —
    *  Android 10+ will not open the installer from the background. */
   const pending = useRef<string | null>(null);
+
+  /* ── OTA: the JS bundle inside the same runtime, applied on opening ───── */
+
+  const otaApplied = useRef(false);
+
+  /** Restart into a downloaded bundle -- only right after opening. Once per
+   *  process: the native ON_LOAD download and the check below can both
+   *  report the same bundle. */
+  const applyOtaOnOpen = useCallback(async () => {
+    if (otaApplied.current || !justOpened()) return;
+    otaApplied.current = true;
+    try {
+      await Updates.reloadAsync();
+    } catch {
+      // A failed reload leaves the bundle installed for the next opening.
+      otaApplied.current = false;
+    }
+  }, []);
+
+  // On opening: ask the update server for a newer bundle and apply it. Every
+  // failure is swallowed -- this runs unattended, and the next opening simply
+  // tries again.
+  useEffect(() => {
+    if (__DEV__ || !Updates.isEnabled) return;
+    (async () => {
+      try {
+        const found = await Updates.checkForUpdateAsync();
+        if (!found.isAvailable) return;
+        await Updates.fetchUpdateAsync();
+        await applyOtaOnOpen();
+      } catch {
+        // Nothing to tell the user; the next opening retries.
+      }
+    })();
+  }, [applyOtaOnOpen]);
+
+  // expo-updates' own ON_LOAD download lands here; apply it now (if still
+  // just opened) rather than on the next cold start.
+  const { isUpdatePending } = Updates.useUpdates();
+  useEffect(() => {
+    if (__DEV__ || !Updates.isEnabled || !isUpdatePending) return;
+    applyOtaOnOpen();
+  }, [isUpdatePending, applyOtaOnOpen]);
 
   useEffect(() => {
     let cancelled = false;
