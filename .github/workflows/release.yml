@@ -24,6 +24,11 @@ on:
         type: choice
         default: auto
         options: [auto, patch, minor, major]
+      set_version:
+        description: Set this exact version instead (e.g. 1.0.0 to start a new release line); bump is ignored
+        required: false
+        type: string
+        default: ''
 
 concurrency:
   group: release
@@ -75,9 +80,12 @@ jobs:
           set -euo pipefail
           bump="${{ github.event.inputs.bump || 'auto' }}"
           [ "$bump" = "auto" ] && bump=patch
-          node scripts/version.mjs --json --bump "$bump" > version.json
+          set_version="${{ github.event.inputs.set_version }}"
+          to=(--bump "$bump")
+          [ -n "$set_version" ] && to=(--set "$set_version")
+          node scripts/version.mjs --json "${to[@]}" > version.json
           cat version.json
-          node scripts/version.mjs --apply --bump "$bump"
+          node scripts/version.mjs --apply "${to[@]}"
           {
             echo "version=$(jq -r .version version.json)"
             echo "tag=$(jq -r .tag version.json)"

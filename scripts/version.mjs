@@ -99,6 +99,20 @@ function parse(commit) {
 const PATCH_LIMIT = 100;
 const MINOR_LIMIT = 50;
 
+/**
+ * Release line 2: numbering restarted at 1.0.0 (the old line's releases are
+ * the `legacy-v*` tags, kept as pre-releases). Its build numbers and runtimes
+ * sit apart from line 1's, which reused the same x.y.z:
+ *
+ * - versionCode + 100000, so a line-2 APK installs OVER any line-1 build and
+ *   keeps the phone's data -- Android refuses a lower versionCode.
+ * - runtime major + 100 ("101.0" for 1.0.x), so a line-2 JS update is never
+ *   handed to a phone still running a line-1 APK of the same x.y, whose native
+ *   code is different.
+ */
+const VERSION_CODE_BASE = 100000;
+const RUNTIME_MAJOR_BASE = 100;
+
 function parseVersion(version) {
   const parts = version.split('.').map((n) => parseInt(n, 10));
   if (parts.length !== 3 || parts.some((n) => !Number.isInteger(n) || n < 0)) {
@@ -156,12 +170,12 @@ function nextVersion(current, bump = 'patch') {
  */
 function runtimeVersionFor(version) {
   const { major, minor } = parseVersion(version);
-  return `${major}.${minor}`;
+  return `${RUNTIME_MAJOR_BASE + major}.${minor}`;
 }
 
 function versionCodeFor(version) {
   const { major, minor, patch } = parseVersion(version);
-  return (major * MINOR_LIMIT + minor) * PATCH_LIMIT + patch;
+  return VERSION_CODE_BASE + (major * MINOR_LIMIT + minor) * PATCH_LIMIT + patch;
 }
 
 const SECTIONS = [
@@ -219,7 +233,13 @@ const tag = lastTag();
 const commits = commitsSince(tag).map(parse);
 // Always one step per merge; --bump only exists to skip to a round number.
 const bump = flagValue('bump') ?? 'patch';
-const version = hasFlag('keep-version') ? currentVersion : nextVersion(currentVersion, bump);
+// --set X.Y.Z puts the version somewhere specific, e.g. 1.0.0 to start a new
+// release line; otherwise one odometer step.
+const setTo = flagValue('set');
+if (setTo) parseVersion(setTo);
+const version = hasFlag('keep-version')
+  ? currentVersion
+  : setTo || nextVersion(currentVersion, bump);
 const versionCode = versionCodeFor(version);
 
 if (hasFlag('apply')) {
