@@ -8,6 +8,9 @@ import { useToast } from '@/src/core/ui/Toast';
 import { useAuthStore } from '@/src/core/auth/store';
 import * as Biometric from '@/src/core/biometric';
 import { ApkUpdateSection } from '@/src/core/updates/ApkUpdateSection';
+import { useApkUpdate } from '@/src/core/updates/UpdateProvider';
+import { compareVersions } from '@/src/core/updates/releases';
+import { APP_VERSION } from '@/src/core/version';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
 export default function SettingsScreen() {
@@ -22,6 +25,12 @@ export default function SettingsScreen() {
 
   const [moduleReady, setModuleReady] = useState(false);
   const [hardwareReady, setHardwareReady] = useState(false);
+  // The newest version known: the newest GitHub release of any kind, or this
+  // app once a JS update has put it past that -- so Latest bumps with every
+  // update and never trails Installed.
+  const newestRelease = useApkUpdate().check?.latestVersion ?? null;
+  const latest =
+    newestRelease && compareVersions(newestRelease, APP_VERSION) > 0 ? newestRelease : APP_VERSION;
 
   useEffect(() => {
     setModuleReady(Biometric.isModuleAvailable());
@@ -123,6 +132,9 @@ export default function SettingsScreen() {
       </Card>
 
       <Card title="App">
+        <InfoRow label="Installed" value={`v${APP_VERSION}`} />
+        <InfoRow label="Latest" value={`v${latest}`} />
+        <View style={{ height: spacing.sm }} />
         <ApkUpdateSection />
       </Card>
 
@@ -138,6 +150,17 @@ export default function SettingsScreen() {
         />
       </Card>
     </Screen>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={s.infoRow}>
+      <Text style={s.rowLabel}>{label}</Text>
+      <Text style={s.infoValue} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
   );
 }
 
@@ -165,6 +188,11 @@ const s = StyleSheet.create({
   userEmail: { fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textSecondary, marginTop: 2 },
   userMeta: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 2 },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  infoRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    gap: spacing.md, paddingVertical: 4,
+  },
+  infoValue: { flexShrink: 1, fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textSecondary },
   rowLabel: { fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },
   rowHint: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 2 },
   toggle: {
