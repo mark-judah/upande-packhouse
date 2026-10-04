@@ -14,7 +14,7 @@ let attempted = false;
 function nativeRegistered(): boolean {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const core = require('expo-modules-core');
+    const core = require('expo');
     if (core && typeof core.requireOptionalNativeModule === 'function') {
       const native = core.requireOptionalNativeModule('ExpoLocalAuthentication');
       if (native) return true;

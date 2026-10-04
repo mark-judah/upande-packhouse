@@ -231,8 +231,15 @@ const pkg = JSON.parse(readFileSync(PKG_JSON, 'utf8'));
 const currentVersion = appConfig.expo.version;
 const tag = lastTag();
 const commits = commitsSince(tag).map(parse);
+// The Expo SDK the installed APKs of this runtime were built with. A JS bundle
+// from another SDK crashes on them, so a new SDK can never go out over the air:
+// a patch bump is promoted to a minor one (new runtime, new APK).
+const expoSdk = Number(String(pkg.dependencies?.expo ?? '').replace(/^[^\d]*/, '').split('.')[0]);
+const runtimeSdk = appConfig.expo.extra?.runtimeSdk;
+const sdkChanged = Number.isFinite(expoSdk) && runtimeSdk != null && runtimeSdk !== expoSdk;
 // Always one step per merge; --bump only exists to skip to a round number.
-const bump = flagValue('bump') ?? 'patch';
+const requestedBump = flagValue('bump') ?? 'patch';
+const bump = sdkChanged && requestedBump === 'patch' ? 'minor' : requestedBump;
 // --set X.Y.Z puts the version somewhere specific, e.g. 1.0.0 to start a new
 // release line; otherwise one odometer step.
 const setTo = flagValue('set');
@@ -248,6 +255,18 @@ if (hasFlag('apply')) {
   // expo-updates refuses a bundle whose runtime does not match the installed
   // build, so this is what keeps a 1.1.x update off a 1.0.x APK.
   appConfig.expo.runtimeVersion = runtimeVersionFor(version);
+  if (Number.isFinite(expoSdk)) {
+    appConfig.expo.extra = { ...appConfig.expo.extra, runtimeSdk: expoSdk };
+  }
+  // The update URL is the published manifest itself (GitHub Pages), one folder
+  // per runtime, so it moves with the runtime.
+  const updates = appConfig.expo.updates;
+  if (updates?.url?.includes('/ota/android/')) {
+    updates.url = updates.url.replace(
+      /\/ota\/android\/[^/]+\/manifest\.json$/,
+      `/ota/android/${appConfig.expo.runtimeVersion}/manifest.json`,
+    );
+  }
   writeFileSync(APP_JSON, `${JSON.stringify(appConfig, null, 2)}\n`);
 
   pkg.version = version;

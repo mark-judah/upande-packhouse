@@ -218,7 +218,7 @@ export function SideMenu({
 
 const s = StyleSheet.create({
   overlay: { flex: 1 },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: COLORS.overlay },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: COLORS.overlay },
   drawer: {
     position: 'absolute',
     top: 0,

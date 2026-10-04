@@ -84,7 +84,7 @@ export function FAB({
     >
       <Animated.View
         pointerEvents="none"
-        style={[StyleSheet.absoluteFillObject, s.surfaceLayer, { opacity: surfaceOpacity }]}
+        style={[StyleSheet.absoluteFill, s.surfaceLayer, { opacity: surfaceOpacity }]}
       />
       <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={s.touch}>
         <Ionicons name={icon} size={26} color={iconColor} />

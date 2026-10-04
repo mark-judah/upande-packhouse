@@ -8,7 +8,6 @@
     "icon": "./assets/upande_logo.png",
     "scheme": "upandepackhouse",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.upande.packhouse",
@@ -26,7 +25,6 @@
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/upande_logo.png"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.CAMERA",
@@ -67,7 +65,12 @@
           "backgroundColor": "#FFFFFF"
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "expo-font",
+      "expo-image",
+      "expo-sharing",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -78,12 +81,13 @@
       "eas": {
         "projectId": "81077d75-b922-4416-8e29-f0291f15e8a0"
       },
-      "otaBaseUrl": "https://mark-judah.github.io/upande-packhouse/ota"
+      "otaBaseUrl": "https://mark-judah.github.io/upande-packhouse/ota",
+      "runtimeSdk": 54
     },
     "runtimeVersion": "101.0",
     "updates": {
       "enabled": true,
-      "url": "https://kaitet-group.upande.com/api/method/upande_packhouse.api.ota.manifest",
+      "url": "https://mark-judah.github.io/upande-packhouse/ota/android/101.0/manifest.json",
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0
     }

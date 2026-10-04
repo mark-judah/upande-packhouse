@@ -1,0 +1,20 @@
+diff --git a/node_modules/expo-updates/android/src/main/java/expo/modules/updates/manifest/UpdateFactory.kt b/node_modules/expo-updates/android/src/main/java/expo/modules/updates/manifest/UpdateFactory.kt
+index eed5a92..34dd6c8 100644
+--- a/node_modules/expo-updates/android/src/main/java/expo/modules/updates/manifest/UpdateFactory.kt
++++ b/node_modules/expo-updates/android/src/main/java/expo/modules/updates/manifest/UpdateFactory.kt
+@@ -16,7 +16,14 @@ object UpdateFactory {
+       // TODO(wschurman): remove error in a few major releases after SDK 51 when it's unlikely classic updates
+       // may erroneously be served
+       null -> {
+-        throw Exception("Legacy manifests are no longer supported")
++        // Upande: the manifest is served as a static file from GitHub Pages, which
++        // cannot send the expo-protocol-version header. A body with a launchAsset is a
++        // modern (protocol 1) manifest, so read it as one instead of refusing it.
++        if (manifestJson.has("launchAsset")) {
++          ExpoUpdatesUpdate.fromExpoUpdatesManifest(ExpoUpdatesManifest(manifestJson), extensions, configuration)
++        } else {
++          throw Exception("Legacy manifests are no longer supported")
++        }
+       }
+       0, 1 -> {
+         ExpoUpdatesUpdate.fromExpoUpdatesManifest(ExpoUpdatesManifest(manifestJson), extensions, configuration)
