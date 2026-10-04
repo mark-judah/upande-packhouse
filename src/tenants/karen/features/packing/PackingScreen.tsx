@@ -22,7 +22,9 @@ import {
   type PickListLine,
 } from '@/src/tenants/karen/state/karen-packing-store';
 import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useKarenPackingQualityStore } from '@/src/tenants/karen/state/karen-packing-quality-store';
+import { QualityIssueSheet } from './QualityIssueSheet';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -64,6 +66,8 @@ export function KarenPackingScreen() {
   const [bypassReason, setBypassReason] = useState<string | null>(null);
   const [bypassQty, setBypassQty] = useState('');
   const [boxLabelsOpen, setBoxLabelsOpen] = useState(false);
+  // Shown inside the Print Box Labels modal: a toast would sit behind it.
+  const [boxLabelsError, setBoxLabelsError] = useState<string | null>(null);
   const [labelWidthMm, setLabelWidthMm] = useState(DEFAULT_BOX_LABEL_WIDTH_MM);
   const [labelHeightMm, setLabelHeightMm] = useState(DEFAULT_BOX_LABEL_HEIGHT_MM);
   const [savedLabels, setSavedLabels] = useState<SavedBoxLabels[]>([]);
@@ -112,6 +116,8 @@ export function KarenPackingScreen() {
     generateBoxLabels,
     reset,
   } = useKarenPackingStore();
+
+  const openQualityIssue = useKarenPackingQualityStore((s) => s.openFor);
 
   const canonicalTeams = useKarenTeamsStore((s) => s.teams);
   const loadTeams = useKarenTeamsStore((s) => s.load);
@@ -474,12 +480,13 @@ export function KarenPackingScreen() {
   const onGenerateBoxLabels = async () => {
     const width = parseFloat(labelWidthMm);
     const height = parseFloat(labelHeightMm);
+    setBoxLabelsError(null);
     const outcome = await generateBoxLabels(
       Number.isFinite(width) && width > 0 ? width : undefined,
       Number.isFinite(height) && height > 0 ? height : undefined,
     );
     if (!outcome.success) {
-      showError(outcome.message);
+      setBoxLabelsError(outcome.message);
       return;
     }
     if (!selectedOpl) return;
@@ -765,6 +772,22 @@ export function KarenPackingScreen() {
         </Card>
       ) : null}
 
+      {showTable && packingGuide && selectedOpl ? (
+        <Card title="Quality issue">
+          <Text style={s.helper}>
+            Wrong stem length, disease or pests on a bucket of this order? Reject the bad stems and replace
+            them — from the sales farm first, else from a remote farm on the next truck (ASAP).
+          </Text>
+          <View style={{ height: spacing.sm }} />
+          <Button
+            label="Report quality issue"
+            iconLeft="alert-circle-outline"
+            variant="outline"
+            onPress={() => openQualityIssue(selectedOpl, selectedItemKey ? selectedItemKey.split('|')[0] : null)}
+          />
+        </Card>
+      ) : null}
+
       {showTable && packingGuide && !boxClosed ? (
         <Card title="Packing issue">
           <Pressable
@@ -920,7 +943,10 @@ export function KarenPackingScreen() {
 
     <FAB
       icon="print-outline"
-      onPress={() => setBoxLabelsOpen(true)}
+      onPress={() => {
+        setBoxLabelsError(null);
+        setBoxLabelsOpen(true);
+      }}
       visible={showTable && !!selectedOpl}
     />
 
@@ -930,6 +956,15 @@ export function KarenPackingScreen() {
       visible={showTable && !!selectedOpl && savedLabels.length > 0}
       color={COLORS.surface}
       style={{ bottom: insets.bottom + 8 + FAB_SIZE + FAB_STACK_GAP, borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.border }}
+    />
+
+    <QualityIssueSheet
+      currentItemCode={selectedItemKey ? selectedItemKey.split('|')[0] : null}
+      onDone={(message) => {
+        showSuccess(message);
+        // The line now holds the replacement (or waits for it): reload the order.
+        if (selectedOpl) selectOpl(selectedOpl);
+      }}
     />
 
     {selectedOpl ? (
@@ -972,6 +1007,12 @@ export function KarenPackingScreen() {
               />
             </View>
           </View>
+          {boxLabelsError ? (
+            <View style={s.modalError}>
+              <Ionicons name="alert-circle-outline" size={16} color={COLORS.danger} />
+              <Text style={s.modalErrorText}>{boxLabelsError}</Text>
+            </View>
+          ) : null}
           <Button
             label="Generate"
             onPress={onGenerateBoxLabels}
@@ -1055,6 +1096,16 @@ const s = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   modalRow: { flexDirection: 'row', gap: spacing.md },
+  modalError: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: 8,
+    backgroundColor: '#FEF3F2',
+  },
+  modalErrorText: { flex: 1, fontFamily: fontFamily.medium, fontSize: fontSize.sm, color: COLORS.danger },
   modalInput: { flex: 1 },
   helper: {
     fontFamily: fontFamily.regular,
