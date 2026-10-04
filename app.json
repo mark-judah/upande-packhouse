@@ -3,7 +3,7 @@
     "name": "Upande Packhouse",
     "slug": "upande-packhouse",
     "owner": "markjk",
-    "version": "1.0.1",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/upande_logo.png",
     "scheme": "upandepackhouse",
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.upande.packhouse",
-      "versionCode": 105001,
+      "versionCode": 105100,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/upande_logo.png"
@@ -82,12 +82,12 @@
         "projectId": "81077d75-b922-4416-8e29-f0291f15e8a0"
       },
       "otaBaseUrl": "https://mark-judah.github.io/upande-packhouse/ota",
-      "runtimeSdk": 54
+      "runtimeSdk": 57
     },
-    "runtimeVersion": "101.0",
+    "runtimeVersion": "101.1",
     "updates": {
       "enabled": true,
-      "url": "https://mark-judah.github.io/upande-packhouse/ota/android/101.0/manifest.json",
+      "url": "https://mark-judah.github.io/upande-packhouse/ota/android/101.1/manifest.json",
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0
     }
