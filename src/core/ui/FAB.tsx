@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -38,7 +38,7 @@ export function FAB({
   expandedTopY,
 }: FABProps) {
   const insets = useSafeAreaInsets();
-  const progress = useRef(new Animated.Value(expanded ? 1 : 0)).current;
+  const progress = useState(() => new Animated.Value(expanded ? 1 : 0))[0];
 
   useEffect(() => {
     Animated.timing(progress, {

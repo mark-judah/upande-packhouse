@@ -32,16 +32,18 @@ export function ReplacePicker({
   /** `line`: the line (team) it was issued to, for the confirmation. */
   onMarkIssued: (line: string) => void;
 }) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [reason, setReason] = useState<ReplaceReason>('Missing');
   const candidates = sheet?.candidates ?? [];
   // Default to the best match each time the sheet opens for a bucket.
   const firstId = candidates[0]?.bucket ?? null;
   const item = sheet?.item;
-  useEffect(() => {
-    setSelected(firstId);
-    setReason('Missing');
-  }, [item, firstId]);
+  const [pick, setPick] = useState<{ item: object | undefined; firstId: string | null; bucket: string | null } | null>(
+    null,
+  );
+  const [reasonPick, setReasonPick] = useState<{ item: object | undefined; reason: ReplaceReason } | null>(null);
+  const selected = pick && pick.item === item && pick.firstId === firstId ? pick.bucket : firstId;
+  const setSelected = (bucket: string | null) => setPick({ item, firstId, bucket });
+  const reason: ReplaceReason = reasonPick && reasonPick.item === item ? reasonPick.reason : 'Missing';
+  const setReason = (r: ReplaceReason) => setReasonPick({ item, reason: r });
 
   // "Issued offline": look up once per bucket where it was issued.
   const issueKey = item && reason === 'Issued offline' ? item : null;

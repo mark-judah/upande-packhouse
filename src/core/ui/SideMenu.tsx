@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Animated,
   Modal,
@@ -49,27 +49,21 @@ export function SideMenu({
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
   const drawerWidth = Math.min(Math.max(screenWidth * 0.8, 240), 320);
-  const slide = useRef(new Animated.Value(-drawerWidth)).current;
+  const slide = useState(() => new Animated.Value(-drawerWidth))[0];
 
-  const [fullName, setFullName] = useState(storeFullName ?? '');
-  const [email, setEmail] = useState(storeEmail ?? '');
+  // Fallback for legacy paths that mount SideMenu before the auth store hydrates.
+  const [stored, setStored] = useState<{ fullName: string; email: string }>({ fullName: '', email: '' });
+  const fullName = storeFullName || stored.fullName;
+  const email = storeEmail || stored.email;
 
   useEffect(() => {
     if (!visible) return;
     // Fallback to AsyncStorage when auth store hasn't been populated yet
     // (legacy paths that mounted SideMenu before hydrate finished).
-    if (!storeFullName || !storeEmail) {
-      Promise.all([
-        storage.get(StorageKeys.fullName),
-        storage.get(StorageKeys.emailBackup),
-      ]).then(([n, e]) => {
-        if (n) setFullName(n);
-        if (e) setEmail(e);
-      });
-    } else {
-      setFullName(storeFullName);
-      setEmail(storeEmail);
-    }
+    if (storeFullName && storeEmail) return;
+    Promise.all([storage.get(StorageKeys.fullName), storage.get(StorageKeys.emailBackup)]).then(
+      ([n, e]) => setStored({ fullName: n || '', email: e || '' }),
+    );
   }, [visible, storeFullName, storeEmail]);
 
   useEffect(() => {

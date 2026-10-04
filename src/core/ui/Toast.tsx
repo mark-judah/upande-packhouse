@@ -18,7 +18,7 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ToastState>(null);
-  const anim = useRef(new Animated.Value(0)).current;
+  const anim = useState(() => new Animated.Value(0))[0];
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const present = useCallback((next: ToastState) => {
