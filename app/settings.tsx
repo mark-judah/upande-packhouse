@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
+import * as Updates from 'expo-updates';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card } from '@/src/core/ui/Card';
 import { Button } from '@/src/core/ui/Button';
@@ -10,12 +11,15 @@ import * as Biometric from '@/src/core/biometric';
 import { ApkUpdateSection } from '@/src/core/updates/ApkUpdateSection';
 import { useApkUpdate } from '@/src/core/updates/UpdateProvider';
 import { compareVersions } from '@/src/core/updates/releases';
-import { APP_VERSION } from '@/src/core/version';
+import { APP_VERSION, getServerVersions } from '@/src/core/version';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
+import { displayName, needsRealName } from '@/src/core/auth/roles-api';
 
 export default function SettingsScreen() {
   const fullName = useAuthStore((s) => s.fullName);
   const email = useAuthStore((s) => s.email);
+  // Name on top, the email under it: Settings is where the email is shown.
+  const name = needsRealName(fullName) ? '' : displayName(fullName);
   const instanceUrl = useAuthStore((s) => s.instanceUrl);
   const biometricEnabled = useAuthStore((s) => s.biometricEnabled);
   const setBiometricEnabled = useAuthStore((s) => s.setBiometricEnabled);
@@ -25,6 +29,7 @@ export default function SettingsScreen() {
 
   const [moduleReady, setModuleReady] = useState(false);
   const [hardwareReady, setHardwareReady] = useState(false);
+  const [siteApps, setSiteApps] = useState<{ label: string; version: string }[] | null>(null);
   // The newest version known: the newest GitHub release of any kind, or this
   // app once a JS update has put it past that -- so Latest bumps with every
   // update and never trails Installed.
@@ -35,8 +40,15 @@ export default function SettingsScreen() {
   useEffect(() => {
     setModuleReady(Biometric.isModuleAvailable());
     Biometric.isAvailable().then(setHardwareReady);
+    getServerVersions().then(setSiteApps);
   }, []);
 
+  const otaId = (Updates.updateId ?? '').slice(0, 8);
+  const otaChannel = (Updates.channel as string | undefined) ?? '';
+  const otaDate = Updates.createdAt ? Updates.createdAt.toISOString().slice(0, 10) : '';
+  const codeLine = Updates.isEmbeddedLaunch
+    ? 'embedded build'
+    : `OTA ${otaId || '—'}${otaDate ? ' · ' + otaDate : ''}${otaChannel ? ' · ' + otaChannel : ''}`;
 
   const onToggleBiometric = async () => {
     if (!biometricEnabled) {
@@ -104,11 +116,11 @@ export default function SettingsScreen() {
         <View style={s.avatarRow}>
           <View style={s.avatar}>
             <Text style={s.avatarInitials}>
-              {(fullName || email || '?').slice(0, 1).toUpperCase()}
+              {(name || '?').slice(0, 1).toUpperCase()}
             </Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={s.userName}>{fullName || email || 'Signed in'}</Text>
+            <Text style={s.userName}>{name || 'Signed in'}</Text>
             {email ? <Text style={s.userEmail}>{email}</Text> : null}
             {instanceUrl ? <Text style={s.userMeta}>{instanceUrl}</Text> : null}
           </View>
@@ -131,10 +143,20 @@ export default function SettingsScreen() {
         </View>
       </Card>
 
-      <Card title="App">
+      <Card title="App & Server">
+        {/* Server first (site, Frappe, ERPNext, the app's own backend), then this app. */}
+        <InfoRow label="Site" value={instanceUrl ? instanceUrl.replace(/^https?:\/\//, '') : '—'} />
+        {siteApps === null ? (
+          <InfoRow label="Apps" value="Loading…" />
+        ) : siteApps.length === 0 ? (
+          <InfoRow label="Apps" value="Not available" />
+        ) : (
+          siteApps.map((a) => <InfoRow key={a.label} label={a.label} value={`v${a.version}`} />)
+        )}
         <InfoRow label="Installed" value={`v${APP_VERSION}`} />
         <InfoRow label="Latest" value={`v${latest}`} />
-        <View style={{ height: spacing.sm }} />
+        <InfoRow label="Code" value={codeLine} />
+        <View style={{ height: spacing.md }} />
         <ApkUpdateSection />
       </Card>
 
@@ -156,7 +178,7 @@ export default function SettingsScreen() {
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={s.infoRow}>
-      <Text style={s.rowLabel}>{label}</Text>
+      <Text style={[s.rowLabel, s.infoLabel]}>{label}</Text>
       <Text style={s.infoValue} numberOfLines={1}>
         {value}
       </Text>
@@ -186,12 +208,13 @@ const s = StyleSheet.create({
   avatarInitials: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: COLORS.textOnPrimary },
   userName: { fontFamily: fontFamily.semiBold, fontSize: fontSize.md, color: COLORS.text },
   userEmail: { fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textSecondary, marginTop: 2 },
-  userMeta: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 2 },
+  userMeta: { fontFamily: fontFamily.bold, fontSize: fontSize.xs, color: COLORS.text, marginTop: 2 },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   infoRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     gap: spacing.md, paddingVertical: 4,
   },
+  infoLabel: { flexShrink: 1 },
   infoValue: { flexShrink: 1, fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textSecondary },
   rowLabel: { fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },
   rowHint: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 2 },

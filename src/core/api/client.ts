@@ -111,10 +111,21 @@ function stripHtml(s: string): string {
   return s.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim();
 }
 
+/** While the site is being deployed or migrated Frappe answers every request with
+ *  503 `{"exc_type": "SessionStopped"}`. Nothing is wrong with the request, so say
+ *  that, instead of showing the bare exception name. */
+const SERVER_UPDATING = "The server is being updated. Please try again in a few minutes.";
+
+function isServerUpdating(status: number, body: unknown): boolean {
+  const exc = body && typeof body === 'object' ? (body as { exc_type?: string }).exc_type : undefined;
+  return exc === 'SessionStopped' || status === 503;
+}
+
 export function mapAxiosError(err: unknown): HttpError {
   if (isAxiosError(err)) {
     const status = err.response?.status ?? 0;
     const body = err.response?.data;
+    if (isServerUpdating(status, body)) return new HttpError(status, SERVER_UPDATING, body);
     let message = err.message;
     if (body && typeof body === 'object') {
       const exc = body as { exc_type?: string; _server_messages?: string; message?: string };
