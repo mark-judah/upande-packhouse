@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Animated, Easing, type DimensionValue, type ViewStyle } from 'react-native';
 import { borderRadius as radii, COLORS } from '@/src/core/theme';
 
@@ -15,7 +15,7 @@ export function Skeleton({
   radius?: number;
   style?: ViewStyle;
 }) {
-  const pulse = useRef(new Animated.Value(0.5)).current;
+  const pulse = useState(() => new Animated.Value(0.5))[0];
 
   useEffect(() => {
     const loop = Animated.loop(

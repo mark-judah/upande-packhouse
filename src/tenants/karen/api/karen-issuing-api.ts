@@ -13,6 +13,9 @@ export type RawReadySaleOrderItem = {
   team?: string;
   is_issued?: boolean | number;
   opl_name?: string;
+  /** Replaced from a remote farm at issuing and not here yet. */
+  waiting_transfer?: number;
+  transfer_farm?: string | null;
 };
 
 /** One ready-TO-ISSUE entry — one row PER ORDER PICK LIST (an OPL is the
@@ -72,6 +75,9 @@ export type RawReplacementCandidate = {
   stem_length?: string | null;
   available_qty?: number;
   harvest_date?: string | null;
+  /** Set when the bucket is at a remote farm (nothing matched at the sales farm). */
+  farm?: string | null;
+  remote?: boolean;
 };
 
 export type RawReplacementOptions = {
@@ -79,6 +85,19 @@ export type RawReplacementOptions = {
   message?: string;
   needed_qty?: number;
   candidates?: RawReplacementCandidate[];
+  /** 'remote': nothing at the sales farm; these come from remote farms by truck. */
+  source?: 'local' | 'remote';
+  /** Same-day order: a remote bucket may not arrive in time. */
+  warning?: string | null;
+};
+
+/** Replace reason "Issued offline": the OPLs the bucket was already issued on. */
+export type RawIssuedOfflineInfo = {
+  success?: boolean;
+  message?: string;
+  line?: string;
+  same_line?: boolean;
+  issued_to?: { opl: string; order_name?: string | null; team?: string; same_line?: boolean }[];
 };
 
 export type RawReplaceResult = {
@@ -86,6 +105,8 @@ export type RawReplaceResult = {
   message?: string;
   new_bucket?: string;
   shelf?: string;
+  /** Requested from this remote farm: it comes by truck, then is issued. */
+  remote_farm?: string | null;
 };
 
 const OFFLINE_ISSUE = '/api/method/upande_packhouse.api.offline_issue';
@@ -120,6 +141,36 @@ export const karenIssuingApi = {
       url: `${OFFLINE_ISSUE}.replace_for_issuing`,
       data: payload,
       // A swap can wait on stock locks and retry server-side.
+      timeout: 120000,
+    });
+    return res.message ?? {};
+  },
+
+  /** Which line(s) the bucket was already issued to, and whether one is this OPL's own. */
+  async fetchIssuedOfflineInfo(payload: {
+    opl_name: string;
+    bucket: string;
+    sale_order_item?: string;
+  }): Promise<RawIssuedOfflineInfo> {
+    const res = await api<{ message?: RawIssuedOfflineInfo }>({
+      method: 'GET',
+      url: `${OFFLINE_ISSUE}.issued_offline_info`,
+      params: payload,
+    });
+    return res.message ?? {};
+  },
+
+  /** Issued offline to this OPL's own line: mark it issued here, nothing replaced. */
+  async markIssuedOffline(payload: {
+    opl_name: string;
+    bucket: string;
+    sale_order_item?: string;
+  }): Promise<RawReplaceResult> {
+    const res = await api<{ message?: RawReplaceResult }>({
+      method: 'POST',
+      url: `${OFFLINE_ISSUE}.mark_issued_offline`,
+      data: payload,
+      // Issuing posts stock entries; allow it time.
       timeout: 120000,
     });
     return res.message ?? {};

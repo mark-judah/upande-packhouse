@@ -22,7 +22,9 @@ import {
   type PickListLine,
 } from '@/src/tenants/karen/state/karen-packing-store';
 import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useKarenPackingQualityStore } from '@/src/tenants/karen/state/karen-packing-quality-store';
+import { QualityIssueSheet } from './QualityIssueSheet';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -64,9 +66,12 @@ export function KarenPackingScreen() {
   const [bypassReason, setBypassReason] = useState<string | null>(null);
   const [bypassQty, setBypassQty] = useState('');
   const [boxLabelsOpen, setBoxLabelsOpen] = useState(false);
+  // Shown inside the Print Box Labels modal: a toast would sit behind it.
+  const [boxLabelsError, setBoxLabelsError] = useState<string | null>(null);
   const [labelWidthMm, setLabelWidthMm] = useState(DEFAULT_BOX_LABEL_WIDTH_MM);
   const [labelHeightMm, setLabelHeightMm] = useState(DEFAULT_BOX_LABEL_HEIGHT_MM);
-  const [savedLabels, setSavedLabels] = useState<SavedBoxLabels[]>([]);
+  // Saved label PDFs, for the OPL they were read for.
+  const [savedFor, setSavedFor] = useState<{ opl: string; entries: SavedBoxLabels[] } | null>(null);
   const [savedLabelsSheetOpen, setSavedLabelsSheetOpen] = useState(false);
   const insets = useSafeAreaInsets();
   const { showSuccess, showError } = useToast();
@@ -113,6 +118,10 @@ export function KarenPackingScreen() {
     reset,
   } = useKarenPackingStore();
 
+  const openQualityIssue = useKarenPackingQualityStore((s) => s.openFor);
+
+  const savedLabels = savedFor && savedFor.opl === selectedOpl ? savedFor.entries : [];
+
   const canonicalTeams = useKarenTeamsStore((s) => s.teams);
   const loadTeams = useKarenTeamsStore((s) => s.load);
 
@@ -137,14 +146,14 @@ export function KarenPackingScreen() {
   // mechanism the rest of the app already uses successfully for every other
   // authenticated request) and handing the Image component a self-contained
   // data: URI sidesteps the native loader's header handling entirely.
-  const [bouquetImageUri, setBouquetImageUri] = useState<string | null>(null);
-  const [bouquetImageFailed, setBouquetImageFailed] = useState(false);
+  const [bouquet, setBouquet] = useState<{ spec: string; uri: string | null; failed: boolean } | null>(null);
+  const bouquetCurrent = bouquet && bouquet.spec === packingGuide?.specImage ? bouquet : null;
+  const bouquetImageUri = bouquetCurrent?.uri ?? null;
+  const bouquetImageFailed = !!bouquetCurrent?.failed;
 
   useEffect(() => {
     let cancelled = false;
     const specImage = packingGuide?.specImage;
-    setBouquetImageUri(null);
-    setBouquetImageFailed(false);
     if (!specImage) return;
 
     (async () => {
@@ -167,9 +176,9 @@ export function KarenPackingScreen() {
           reader.onload = () => resolve(String(reader.result));
           reader.readAsDataURL(blob);
         });
-        if (!cancelled) setBouquetImageUri(dataUri);
+        if (!cancelled) setBouquet({ spec: specImage, uri: dataUri, failed: false });
       } catch {
-        if (!cancelled) setBouquetImageFailed(true);
+        if (!cancelled) setBouquet({ spec: specImage, uri: null, failed: true });
       }
     })();
 
@@ -308,7 +317,7 @@ export function KarenPackingScreen() {
   };
 
   const onPackManual = async () => {
-    const qty = parseInt(manualQty.trim(), 10);
+    const qty = parseInt(manualQtyShown.trim(), 10);
     const outcome = await submitManual(Number.isFinite(qty) ? qty : 0);
     announce(outcome);
     if (outcome.kind === 'success') {
@@ -395,28 +404,23 @@ export function KarenPackingScreen() {
     return Math.min(orderRemaining, boxRemaining);
   }, [standardLine, packedBunchesTally, packingGuide, varietyStemsInBox, currentBoxId, closedBoxes]);
 
-  // Re-clamp a value the operator already typed if the ceiling drops under it
+  // A value the operator already typed is capped if the ceiling drops under it
   // (switching to a box with less room left, or a tally refresh) — the field
-  // must never sit above what's actually still packable.
-  useEffect(() => {
-    setManualQty((q) => {
-      if (!q) return q;
-      const n = parseInt(q, 10);
-      return Number.isFinite(n) && n > standardMax ? String(Math.max(0, standardMax)) : q;
-    });
-  }, [standardMax]);
+  // never shows more than what's actually still packable.
+  const manualQtyShown = (() => {
+    if (!manualQty) return manualQty;
+    const n = parseInt(manualQty, 10);
+    return Number.isFinite(n) && n > standardMax ? String(Math.max(0, standardMax)) : manualQty;
+  })();
 
   // Which PDFs are already on record for this OPL — drives the Saved Labels
   // button's visibility, so a re-print doesn't require regenerating one just
   // to look at it again.
   useEffect(() => {
-    if (!selectedOpl) {
-      setSavedLabels([]);
-      return;
-    }
+    if (!selectedOpl) return;
     let cancelled = false;
     getSavedBoxLabels(selectedOpl).then((entries) => {
-      if (!cancelled) setSavedLabels(entries);
+      if (!cancelled) setSavedFor({ opl: selectedOpl, entries });
     });
     return () => {
       cancelled = true;
@@ -474,12 +478,13 @@ export function KarenPackingScreen() {
   const onGenerateBoxLabels = async () => {
     const width = parseFloat(labelWidthMm);
     const height = parseFloat(labelHeightMm);
+    setBoxLabelsError(null);
     const outcome = await generateBoxLabels(
       Number.isFinite(width) && width > 0 ? width : undefined,
       Number.isFinite(height) && height > 0 ? height : undefined,
     );
     if (!outcome.success) {
-      showError(outcome.message);
+      setBoxLabelsError(outcome.message);
       return;
     }
     if (!selectedOpl) return;
@@ -498,7 +503,8 @@ export function KarenPackingScreen() {
         savedAt: Date.now(),
       };
       await recordSavedBoxLabels(selectedOpl, entry);
-      setSavedLabels((prev) => [entry, ...prev]);
+      const opl = selectedOpl;
+      setSavedFor((prev) => ({ opl, entries: [entry, ...(prev && prev.opl === opl ? prev.entries : [])] }));
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Could not open the PDF preview.');
     }
@@ -737,7 +743,7 @@ export function KarenPackingScreen() {
           </Text>
           <View style={{ height: spacing.sm }} />
           <TextInput
-            value={manualQty}
+            value={manualQtyShown}
             onChangeText={(t) => {
               // Whole numbers only, clamped to what's actually still packable —
               // typing past the max (or a decimal/letter) can never produce an
@@ -760,7 +766,23 @@ export function KarenPackingScreen() {
           <Button
             label={submitting ? 'Packing…' : 'Pack'}
             onPress={onPackManual}
-            disabled={submitting || standardMax === 0 || !manualQty || parseInt(manualQty, 10) <= 0}
+            disabled={submitting || standardMax === 0 || !manualQtyShown || parseInt(manualQtyShown, 10) <= 0}
+          />
+        </Card>
+      ) : null}
+
+      {showTable && packingGuide && selectedOpl ? (
+        <Card title="Quality issue">
+          <Text style={s.helper}>
+            Wrong stem length, disease or pests on a bucket of this order? Reject the bad stems and replace
+            them — from the sales farm first, else from a remote farm on the next truck (ASAP).
+          </Text>
+          <View style={{ height: spacing.sm }} />
+          <Button
+            label="Report quality issue"
+            iconLeft="alert-circle-outline"
+            variant="outline"
+            onPress={() => openQualityIssue(selectedOpl, selectedItemKey ? selectedItemKey.split('|')[0] : null)}
           />
         </Card>
       ) : null}
@@ -920,7 +942,10 @@ export function KarenPackingScreen() {
 
     <FAB
       icon="print-outline"
-      onPress={() => setBoxLabelsOpen(true)}
+      onPress={() => {
+        setBoxLabelsError(null);
+        setBoxLabelsOpen(true);
+      }}
       visible={showTable && !!selectedOpl}
     />
 
@@ -930,6 +955,15 @@ export function KarenPackingScreen() {
       visible={showTable && !!selectedOpl && savedLabels.length > 0}
       color={COLORS.surface}
       style={{ bottom: insets.bottom + 8 + FAB_SIZE + FAB_STACK_GAP, borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.border }}
+    />
+
+    <QualityIssueSheet
+      currentItemCode={selectedItemKey ? selectedItemKey.split('|')[0] : null}
+      onDone={(message) => {
+        showSuccess(message);
+        // The line now holds the replacement (or waits for it): reload the order.
+        if (selectedOpl) selectOpl(selectedOpl);
+      }}
     />
 
     {selectedOpl ? (
@@ -972,6 +1006,12 @@ export function KarenPackingScreen() {
               />
             </View>
           </View>
+          {boxLabelsError ? (
+            <View style={s.modalError}>
+              <Ionicons name="alert-circle-outline" size={16} color={COLORS.danger} />
+              <Text style={s.modalErrorText}>{boxLabelsError}</Text>
+            </View>
+          ) : null}
           <Button
             label="Generate"
             onPress={onGenerateBoxLabels}
@@ -1055,6 +1095,16 @@ const s = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   modalRow: { flexDirection: 'row', gap: spacing.md },
+  modalError: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: 8,
+    backgroundColor: '#FEF3F2',
+  },
+  modalErrorText: { flex: 1, fontFamily: fontFamily.medium, fontSize: fontSize.sm, color: COLORS.danger },
   modalInput: { flex: 1 },
   helper: {
     fontFamily: fontFamily.regular,

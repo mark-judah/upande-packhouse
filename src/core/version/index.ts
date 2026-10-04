@@ -20,6 +20,32 @@ export const INSTALLED_APK_VERSION: string = Constants.nativeAppVersion ?? APP_V
 /** Android versionCode of the installed APK. */
 export const INSTALLED_APK_BUILD: string | null = Constants.nativeBuildVersion ?? null;
 
+type SiteApp = { title?: string; version?: string };
+
+/** Apps on the connected site worth showing, in display order. */
+const SHOWN_APPS: [string, string][] = [
+  ['frappe', 'Frappe'],
+  ['erpnext', 'ERPNext'],
+  ['upande_packhouse', 'Upande Packhouse'],
+];
+
+/** Versions of the site's apps, or [] when the site won't say. Never throws. */
+export async function getServerVersions(): Promise<{ label: string; version: string }[]> {
+  try {
+    const res = await api<{ message?: Record<string, SiteApp> }>({
+      method: 'GET',
+      url: '/api/method/frappe.utils.change_log.get_versions',
+    });
+    const apps = res?.message ?? {};
+    return SHOWN_APPS.filter(([key]) => apps[key]).map(([key, label]) => ({
+      label,
+      version: apps[key].version || '—',
+    }));
+  } catch {
+    return [];
+  }
+}
+
 const ENDPOINT = '/api/method/upande_packhouse.mobile.api.reportAppVersion';
 
 function todayISO(): string {

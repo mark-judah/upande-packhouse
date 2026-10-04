@@ -9,6 +9,7 @@ import { Poppins_600SemiBold, Poppins_700Bold } from '@expo-google-fonts/poppins
 import 'react-native-reanimated';
 import { TenantProvider, useTenant } from '@/src/core/tenant/tenant-context';
 import { ToastProvider } from '@/src/core/ui/Toast';
+import { DialogHost } from '@/src/core/ui/DialogHost';
 import { OfflineBanner } from '@/src/core/ui/OfflineBanner';
 import { DrawerItemsProvider } from '@/src/core/ui/drawer-items-context';
 import { useAuthStore } from '@/src/core/auth/store';
@@ -112,6 +113,8 @@ export default function RootLayout() {
                   />
                 </Stack>
                 <OfflineBanner />
+                {/* App-styled confirms / notices (showDialog), above every screen. */}
+                <DialogHost />
               </ToastProvider>
             </TenantScopedDrawer>
           </TenantProvider>

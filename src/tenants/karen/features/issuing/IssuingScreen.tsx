@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card, Alert } from '@/src/core/ui/Card';
 import { Button } from '@/src/core/ui/Button';
@@ -11,13 +12,14 @@ import { ItemGroupFilter } from '@/src/core/ui/ItemGroupFilter';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
 import { focusWhenReady } from '@/src/core/scanning/focus';
 import { useToast } from '@/src/core/ui/Toast';
+import { showDialog } from '@/src/core/ui/DialogHost';
 import {
   useKarenIssuingStore,
   type PackingItem,
 } from '@/src/tenants/karen/state/karen-issuing-store';
 import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
 import { ReplacePicker } from './ReplacePicker';
-import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
+import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
 export function KarenIssuingScreen() {
   const scanRef = useRef<ScanFieldHandle>(null);
@@ -42,6 +44,8 @@ export function KarenIssuingScreen() {
     openReplace,
     closeReplace,
     confirmReplace,
+    issuedOfflineInfo,
+    markIssuedOffline,
     reset,
   } = useKarenIssuingStore();
   const { showSuccess, showError } = useToast();
@@ -240,11 +244,6 @@ export function KarenIssuingScreen() {
                 <Text style={s.helper}>All buckets issued for this order.</Text>
               ) : (
                 <>
-                  <Text style={s.helper}>
-                    {unissuedCount} still to issue. Scan a bucket QR from the list, or Replace one
-                    that cannot be found.
-                  </Text>
-                  <View style={{ height: spacing.sm }} />
                   <ScrollView
                     style={s.packingScroll}
                     showsVerticalScrollIndicator={false}
@@ -318,10 +317,49 @@ export function KarenIssuingScreen() {
       <ReplacePicker
         sheet={replace}
         onClose={closeReplace}
-        onPick={async (c, why) => {
-          const res = await confirmReplace(c.bucket, why);
-          if (res.ok) showSuccess(res.message);
-          else showError(res.message);
+        onPick={(c, why) => {
+          const old = replace?.item.bucket ?? '';
+          // A replacement cannot be undone here, so it is confirmed first.
+          showDialog(
+            'Replace this bucket?',
+            c.farm
+              ? `Are you sure you want to replace ${old.toUpperCase()} with ${c.bucket.toUpperCase()} from ${c.farm}? It comes on the next truck and is issued once it arrives. Reason: ${why.toLowerCase()}.`
+              : `Are you sure you want to replace ${old.toUpperCase()} with ${c.bucket.toUpperCase()}${
+                  c.shelf ? ` (shelf ${c.shelf.toUpperCase()})` : ''
+                }? Reason: ${why.toLowerCase()}.`,
+            [
+              { text: 'No', style: 'cancel' },
+              {
+                text: 'Yes',
+                onPress: async () => {
+                  const res = await confirmReplace(c.bucket, why);
+                  if (res.ok) showSuccess(res.message);
+                  else showError(res.message);
+                },
+              },
+            ],
+            { name: 'help-circle-outline', tone: 'warn' },
+          );
+        }}
+        onCheckIssued={issuedOfflineInfo}
+        onMarkIssued={(line) => {
+          const bucket = (replace?.item.bucket ?? '').toUpperCase();
+          showDialog(
+            'Mark as issued?',
+            `Are you sure ${bucket} was issued offline to ${line || 'this line'}? It is marked issued for this order and nothing is replaced.`,
+            [
+              { text: 'No', style: 'cancel' },
+              {
+                text: 'Yes',
+                onPress: async () => {
+                  const res = await markIssuedOffline();
+                  if (res.ok) showSuccess(res.message);
+                  else showError(res.message);
+                },
+              },
+            ],
+            { name: 'help-circle-outline', tone: 'warn' },
+          );
         }}
       />
     </Screen>
@@ -329,30 +367,55 @@ export function KarenIssuingScreen() {
 }
 
 function PackingRow({ item, onReplace }: { item: PackingItem; onReplace?: () => void }) {
+  const done = item.isIssued;
+  const stems = Math.round(Number(item.qty) || 0);
+  const stem = (item.stemLength || '').trim();
+  const meta = [item.variety, stem ? (/^\d+(\.\d+)?$/.test(stem) ? `${stem}cm` : stem) : '']
+    .filter(Boolean)
+    .join(' · ');
   return (
-    <View style={[s.packRow, item.isIssued && s.packRowDone]}>
-      <View style={s.packLeft}>
-        <Text style={[s.packBucket, item.isIssued && s.packBucketDone]}>
-          {[item.shelf && `Shelf ${item.shelf}`, item.bucket].filter(Boolean).join(' · ') || '—'}
-        </Text>
-        <Text style={s.packMeta}>
-          {[item.variety, item.stemLength].filter(Boolean).join(' · ') || '—'}
-        </Text>
+    <View style={[s.packRow, done && s.packRowDone]}>
+      {/* Shelf on the left (what they look for in the cold room), the bucket and
+          its stems on the right; each id with its small word label under it. */}
+      <View style={s.idRow}>
+        <View style={s.idCol}>
+          <Text style={[s.idValue, done && s.packBucketDone]} numberOfLines={1}>
+            {(item.shelf || 'none').toUpperCase()}
+          </Text>
+          <Text style={s.idWord}>SHELF</Text>
+        </View>
+        <View style={[s.idCol, s.idColRight]}>
+          <Text style={[s.idValue, done && s.packBucketDone]} numberOfLines={1}>
+            {(item.bucket || '—').toUpperCase()} ({stems})
+          </Text>
+          <Text style={s.idWord}>BUCKET</Text>
+        </View>
       </View>
-      <View style={s.packRight}>
-        <Text style={s.packQty}>{item.qty}</Text>
-        {item.isIssued ? (
+      {/* Variety and stem length, with the tags and Info on the same line. */}
+      <View style={s.metaRow}>
+        <Text style={s.packMeta} numberOfLines={1}>
+          {meta || '—'}
+        </Text>
+        {done ? (
           <View style={s.tagDone}>
             <Text style={s.tagDoneText}>ISSUED</Text>
+          </View>
+        ) : item.waitingTransfer ? (
+          // Replaced from a remote farm: on its way, issued once it is shelved here.
+          <View style={s.tagMixed}>
+            <Text style={s.tagMixedText} numberOfLines={1}>
+              WAITING · {item.waitingTransfer.toUpperCase()}
+            </Text>
           </View>
         ) : item.mixed ? (
           <View style={s.tagMixed}>
             <Text style={s.tagMixedText}>MIXED</Text>
           </View>
         ) : null}
-        {!item.isIssued && onReplace ? (
-          <Pressable onPress={onReplace} hitSlop={6} accessibilityRole="button">
-            <Text style={s.replaceLink}>Replace</Text>
+        {!done && onReplace ? (
+          <Pressable onPress={onReplace} hitSlop={8} style={s.infoBtn} accessibilityRole="button">
+            <Ionicons name="information-circle-outline" size={14} color={COLORS.text} />
+            <Text style={s.infoLink}>Info</Text>
           </Pressable>
         ) : null}
       </View>
@@ -421,42 +484,40 @@ const s = StyleSheet.create({
   issuedToggle: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.primary },
 
   packRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
     paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
+    gap: 4,
   },
   packRowDone: { opacity: 0.55 },
-  packLeft: { flex: 1 },
-  packRight: { alignItems: 'flex-end', gap: 4 },
-
-  packBucket: {
-    fontFamily: fontFamily.bold,
-    fontSize: fontSize.sm,
-    color: COLORS.text,
-    letterSpacing: 0.5,
-  },
+  idRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  idCol: { flexShrink: 1, minWidth: 0 },
+  idColRight: { marginLeft: 'auto', alignItems: 'flex-end' },
+  // Shelf and bucket ids: same size, upper case, each over a small word label.
+  idValue: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: COLORS.text },
+  idWord: { fontFamily: fontFamily.medium, fontSize: 9, color: COLORS.textMuted, letterSpacing: 0.4 },
   packBucketDone: { textDecorationLine: 'line-through' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   packMeta: {
+    flex: 1,
+    minWidth: 0,
     fontFamily: fontFamily.medium,
-    fontSize: fontSize.xs,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  packQty: {
-    fontFamily: fontFamily.semiBold,
     fontSize: fontSize.sm,
-    color: COLORS.text,
+    color: COLORS.textSecondary,
   },
 
-  replaceLink: {
-    fontFamily: fontFamily.semiBold,
-    fontSize: fontSize.xs,
-    color: COLORS.primary,
-    textDecorationLine: 'underline',
+  infoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: borderRadius.sm,
+    minHeight: 24,
   },
+  infoLink: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.text },
   tagDone: {
     paddingHorizontal: 6,
     paddingVertical: 2,

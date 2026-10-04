@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Linking, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { Linking, StyleSheet, Text, View } from 'react-native';
 import * as Updates from 'expo-updates';
 import { Button } from '@/src/core/ui/Button';
 import { useToast } from '@/src/core/ui/Toast';
@@ -7,15 +7,8 @@ import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { formatBytes, RELEASES_PAGE_URL } from './releases';
 import { openInBrowser, openUnknownAppSourcesSettings } from './install-apk';
 import { useApkUpdate } from './UpdateProvider';
-import { APP_VERSION, INSTALLED_APK_BUILD, INSTALLED_APK_VERSION } from '@/src/core/version';
-import { fetchServerVersions, type ServerVersions } from '@/src/core/version/server';
-
-/** The JS bundle running now: the one built into the APK, or an OTA update's short id and date. */
-function bundleLabel(): string {
-  if (Updates.isEmbeddedLaunch || !Updates.updateId) return 'built in';
-  const when = Updates.createdAt ? Updates.createdAt.toISOString().slice(0, 16).replace('T', ' ') : '';
-  return `OTA ${Updates.updateId.slice(0, 8)}${when ? ` · ${when}` : ''}`;
-}
+import { showDialog } from '@/src/core/ui/DialogHost';
+import { useNetworkStore } from '@/src/core/network/store';
 
 /**
  * The one "Check for updates" button in Settings → App. A new APK is checked
@@ -30,21 +23,7 @@ export function ApkUpdateSection() {
   const available = !!check?.available;
   const { showSuccess, showError } = useToast();
   const [otaChecking, setOtaChecking] = useState(false);
-  const [server, setServer] = useState<ServerVersions | null>(null);
-  const [serverFailed, setServerFailed] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    fetchServerVersions()
-      .then((v) => live && setServer(v))
-      .catch(() => live && setServerFailed(true));
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  const serverValue = (v: string | null | undefined) =>
-    serverFailed ? 'unavailable' : server ? (v ? `v${v}` : 'not installed') : '…';
+  const online = useNetworkStore((st) => st.online);
 
   const label = useMemo(() => {
     if (downloading) {
@@ -61,7 +40,7 @@ export function ApkUpdateSection() {
   }, [downloading, progress, checking, otaChecking, available, apk]);
 
   /** A JS patch for the runtime this APK already has, through `updates.url`. */
-  const checkOta = useCallback(async () => {
+  const checkOta = useCallback(async (apkChecked: boolean) => {
     if (__DEV__) {
       showSuccess('This APK is up to date. OTA updates are off in development.');
       return;
@@ -71,18 +50,24 @@ export function ApkUpdateSection() {
       const result = await Updates.checkForUpdateAsync();
       const fetched = result.isAvailable ? await Updates.fetchUpdateAsync() : null;
       if (!fetched?.isNew) {
-        showSuccess("You're on the latest version.");
+        // Without the APK check there may still be a newer APK; don't claim otherwise.
+        showSuccess(apkChecked ? "You're on the latest version." : 'No JS update available.');
         return;
       }
-      Alert.alert('Update ready', 'Reload now to apply it?', [
-        { text: 'Later', style: 'cancel' },
-        { text: 'Reload', onPress: () => Updates.reloadAsync() },
-      ]);
+      showDialog(
+        'Update ready',
+        'Reload now to apply it?',
+        [
+          { text: 'Later', style: 'cancel' },
+          { text: 'Reload', onPress: () => Updates.reloadAsync() },
+        ],
+        { name: 'cloud-download-outline', tone: 'success' },
+      );
     } catch (err) {
-      // expo-updates wraps the real reason as "Call to function … has been rejected. → Caused by: …".
-      const message = err instanceof Error ? err.message : '';
-      const cause = message.split('Caused by:').pop()?.trim();
-      showError(cause ? `Could not check for updates: ${cause}` : 'Could not check for updates.');
+      // expo-updates' own text ("Call to function … rejected → Caused by: …") is
+      // for the logs; the person gets a plain sentence.
+      if (__DEV__) console.warn('[update] JS update check failed:', err);
+      showError("Couldn't check for updates. Try again in a moment.");
     } finally {
       setOtaChecking(false);
     }
@@ -95,43 +80,47 @@ export function ApkUpdateSection() {
       await install();
       return;
     }
+    // No internet: say so, without trying -- "could not reach" is for a phone that
+    // is online but cannot get to the update page.
+    if (!online) {
+      showError("You're offline. Connect to the internet to check for updates.");
+      return;
+    }
     const result = await refresh();
     // A newer APK turns this button into its download; the status line says so.
     if (result?.available) return;
-    await checkOta();
-  }, [downloading, checking, otaChecking, available, install, refresh, checkOta]);
+    await checkOta(result !== null);
+  }, [downloading, checking, otaChecking, available, install, refresh, checkOta, online, showError]);
 
   const onInstallErrorHelp = useCallback(() => {
     if (!installError) return;
     const blocked = installError.kind === 'blocked';
-    Alert.alert('Update failed', installError.message, [
-      { text: 'Close', style: 'cancel' },
-      blocked
-        ? { text: 'Allow installs', onPress: () => openUnknownAppSourcesSettings().catch(() => {}) }
-        : {
-            text: 'Open in browser',
-            onPress: () => openInBrowser(apk?.downloadUrl ?? RELEASES_PAGE_URL).catch(() => {}),
-          },
-    ]);
+    showDialog(
+      'Update failed',
+      installError.message,
+      [
+        { text: 'Close', style: 'cancel' },
+        blocked
+          ? { text: 'Allow installs', onPress: () => openUnknownAppSourcesSettings().catch(() => {}) }
+          : {
+              text: 'Open in browser',
+              onPress: () => openInBrowser(apk?.downloadUrl ?? RELEASES_PAGE_URL).catch(() => {}),
+            },
+      ],
+      { name: 'alert-circle-outline', tone: 'warn' },
+    );
   }, [installError, apk]);
 
   let status: string | null = null;
   if (check) {
+    // Only news is shown: being up to date needs no line of its own.
     if (available && apk) status = `v${apk.version} is available as a new APK.`;
-    else if (apk) status = `Latest APK is v${apk.version}. This APK is up to date.`;
-    else status = 'No APK has been published yet.';
   }
 
   return (
     <View>
-      <View style={s.versions}>
-        <VersionRow label="Installed APK" value={`v${INSTALLED_APK_VERSION}${INSTALLED_APK_BUILD ? ` (build ${INSTALLED_APK_BUILD})` : ''}`} />
-        <VersionRow label="App" value={`v${APP_VERSION} · ${bundleLabel()}`} />
-        <VersionRow label="ERPNext" value={serverValue(server?.erpnext)} />
-        <VersionRow label="Frappe" value={serverValue(server?.frappe)} />
-      </View>
       {status ? <Text style={[s.hint, available && s.accent]}>{status}</Text> : null}
-      {checkError ? (
+      {checkError && !(checkError.kind === 'offline' && !online) ? (
         <Text style={s.error}>
           {checkError.message}
           {checkError.kind === 'rate_limited' ? (
@@ -159,20 +148,7 @@ export function ApkUpdateSection() {
   );
 }
 
-function VersionRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={s.vRow}>
-      <Text style={s.vLabel}>{label}</Text>
-      <Text style={s.vValue}>{value}</Text>
-    </View>
-  );
-}
-
 const s = StyleSheet.create({
-  versions: { marginTop: spacing.md, gap: 4 },
-  vRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
-  vLabel: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted },
-  vValue: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: COLORS.text, flexShrink: 1, textAlign: 'right' },
   hint: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: spacing.sm },
   accent: { fontFamily: fontFamily.semiBold, color: COLORS.primary },
   error: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.danger, marginTop: spacing.sm },

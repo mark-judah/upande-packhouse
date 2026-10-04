@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,7 +9,7 @@ import { useNetworkStore } from '@/src/core/network/store';
 export function OfflineBanner() {
   const online = useNetworkStore((s) => s.online);
   const insets = useSafeAreaInsets();
-  const anim = useRef(new Animated.Value(0)).current;
+  const anim = useState(() => new Animated.Value(0))[0];
 
   useEffect(() => {
     Animated.timing(anim, {

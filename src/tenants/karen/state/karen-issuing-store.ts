@@ -23,6 +23,8 @@ export type PackingItem = {
   mixed: number;
   downgradeTo: string | null;
   isIssued: boolean;
+  /** Replaced from a remote farm: issued once the truck brings it and it is shelved. */
+  waitingTransfer: string | null;
   /** Sale order lines this bucket feeds on the OPL; each is issued on its own. */
   lines: PackingLine[];
 };
@@ -34,8 +36,19 @@ export type PackingLine = {
 };
 
 /** Why an allocated bucket is replaced (Bucket Replacement.reason). */
-export type ReplaceReason = 'Missing' | 'Damaged' | 'Wrong variety' | 'Other';
-export const REPLACE_REASONS: ReplaceReason[] = ['Missing', 'Damaged', 'Wrong variety', 'Other'];
+export type ReplaceReason = 'Missing' | 'Damaged' | 'Wrong variety' | 'Issued offline';
+export const REPLACE_REASONS: ReplaceReason[] = ['Missing', 'Damaged', 'Wrong variety', 'Issued offline'];
+
+/** "Issued offline": the lines (OPL teams) the bucket already went to, and whether
+ *  one is this OPL's own line -- then it is marked issued instead of replaced. */
+export type IssuedOfflineInfo =
+  | {
+      kind: 'ok';
+      line: string;
+      sameLine: boolean;
+      issuedTo: { opl: string; orderName: string; team: string; sameLine: boolean }[];
+    }
+  | { kind: 'error'; message: string };
 
 export type ReplacementCandidate = {
   bucket: string;
@@ -43,6 +56,8 @@ export type ReplacementCandidate = {
   stemLength: string | null;
   availableQty: number | null;
   harvestDate: string | null;
+  /** The remote farm it comes from by truck; null at the sales farm. */
+  farm: string | null;
 };
 
 /** The Replace sheet for one packing-list bucket. */
@@ -51,8 +66,11 @@ export type ReplaceSheet = {
   loading: boolean;
   candidates: ReplacementCandidate[];
   neededQty: number | null;
-  /** Why nothing can be offered, when that is the answer. */
+  /** Why nothing can be offered, when that is the answer -- or, with remote
+   *  candidates, that they come from remote farms. */
   message: string | null;
+  /** Same-day order and the candidates are remote: they may not arrive in time. */
+  warning: string | null;
   submitting: boolean;
 };
 
@@ -107,6 +125,10 @@ type State = {
     newBucket: string,
     reason: ReplaceReason,
   ) => Promise<{ ok: boolean; message: string }>;
+  /** "Issued offline": where the Replace sheet's bucket was already issued. */
+  issuedOfflineInfo: () => Promise<IssuedOfflineInfo>;
+  /** Issued offline to this OPL's own line: mark it issued; the packing list reloads. */
+  markIssuedOffline: () => Promise<{ ok: boolean; message: string }>;
   reset: () => void;
 };
 
@@ -216,6 +238,7 @@ function extractPackingList(raw: RawPackingListResponse): PackingItem[] {
         mixed:         typeof r.mixed === 'number' ? r.mixed : 0,
         downgradeTo:   r.downgrade_to ? r.downgrade_to.toString() : null,
         isIssued:      true,
+        waitingTransfer: null,
         lines:         [],
       };
       merged.set(key, item);
@@ -226,6 +249,7 @@ function extractPackingList(raw: RawPackingListResponse): PackingItem[] {
       if (!item.downgradeTo && r.downgrade_to) item.downgradeTo = r.downgrade_to.toString();
     }
 
+    if (r.waiting_transfer) item.waitingTransfer = (r.transfer_farm ?? '').toString() || 'remote farm';
     item.qty = String((Number(item.qty) || 0) + qty);
     item.isIssued = item.isIssued && isIssued;
     const line = item.lines.find((l) => l.saleOrderItem === saleOrderItem);
@@ -411,6 +435,16 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
       return out;
     }
 
+    if (match.waitingTransfer) {
+      const out: IssueOutcome = {
+        kind: 'error',
+        bucket: bucketId,
+        message: `Bucket ${bucketId} is waiting for transfer from ${match.waitingTransfer}. Issue it once it arrives and is shelved.`,
+      };
+      set({ lastOutcome: out });
+      return out;
+    }
+
     set({ submitting: true });
     // One scan hands over the whole bucket: issue each of its outstanding
     // lines in turn, stopping at the first the server rejects.
@@ -455,7 +489,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
     if (!opl) return;
     const pendingLine = item.lines.find((l) => !l.isIssued)?.saleOrderItem;
     set({
-      replace: { item, loading: true, candidates: [], neededQty: null, message: null, submitting: false },
+      replace: { item, loading: true, candidates: [], neededQty: null, message: null, warning: null, submitting: false },
     });
     try {
       const res = await karenIssuingApi.fetchReplacementOptions({
@@ -469,7 +503,8 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
           item,
           loading: false,
           neededQty: typeof res.needed_qty === 'number' ? res.needed_qty : null,
-          message: res.found ? null : res.message || 'No bucket can replace this one.',
+          message: res.found ? res.message || null : res.message || 'No bucket can replace this one.',
+          warning: res.found ? res.warning || null : null,
           submitting: false,
           candidates: (res.candidates ?? []).map((c) => ({
             bucket: c.new_bucket,
@@ -477,6 +512,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
             stemLength: c.stem_length ?? null,
             availableQty: typeof c.available_qty === 'number' ? c.available_qty : null,
             harvestDate: c.harvest_date ?? null,
+            farm: c.remote ? c.farm ?? null : null,
           })),
         },
       });
@@ -488,6 +524,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
           loading: false,
           candidates: [],
           neededQty: null,
+          warning: null,
           message: mapAxiosError(err).message || 'Could not load replacements.',
           submitting: false,
         },
@@ -517,11 +554,65 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
       set({ replace: null });
       // The OPL now lists the replacement; scanning it issues it as usual.
       await get().selectOrder(opl);
+      if (res.remote_farm) {
+        return { ok: true, message: res.message || `${newBucket} requested from ${res.remote_farm}.` };
+      }
       const where = res.shelf ? ` from shelf ${res.shelf}` : '';
       return { ok: true, message: `${sheet.item.bucket} replaced. Fetch ${newBucket}${where} and scan it.` };
     } catch (err) {
       set({ replace: { ...sheet, submitting: false } });
       return { ok: false, message: mapAxiosError(err).message || 'The replacement failed.' };
+    }
+  },
+
+  issuedOfflineInfo: async () => {
+    const sheet = get().replace;
+    const opl = get().selectedOpl;
+    if (!sheet || !opl) return { kind: 'error', message: 'Nothing to check.' };
+    try {
+      const res = await karenIssuingApi.fetchIssuedOfflineInfo({
+        opl_name: opl,
+        bucket: sheet.item.bucket,
+        sale_order_item: sheet.item.lines.find((l) => !l.isIssued)?.saleOrderItem || undefined,
+      });
+      if (!res.success) return { kind: 'error', message: res.message || 'Could not check where it was issued.' };
+      return {
+        kind: 'ok',
+        line: res.line ?? '',
+        sameLine: !!res.same_line,
+        issuedTo: (res.issued_to ?? []).map((r) => ({
+          opl: r.opl,
+          orderName: r.order_name || r.opl,
+          team: r.team ?? '',
+          sameLine: !!r.same_line,
+        })),
+      };
+    } catch (err) {
+      return { kind: 'error', message: mapAxiosError(err).message || 'Could not check where it was issued.' };
+    }
+  },
+
+  markIssuedOffline: async () => {
+    const sheet = get().replace;
+    const opl = get().selectedOpl;
+    if (!sheet || !opl) return { ok: false, message: 'Nothing to mark.' };
+    set({ replace: { ...sheet, submitting: true } });
+    try {
+      const res = await karenIssuingApi.markIssuedOffline({
+        opl_name: opl,
+        bucket: sheet.item.bucket,
+        sale_order_item: sheet.item.lines.find((l) => !l.isIssued)?.saleOrderItem || undefined,
+      });
+      if (!res.success) {
+        set({ replace: { ...sheet, submitting: false } });
+        return { ok: false, message: res.message || 'Could not mark it issued.' };
+      }
+      set({ replace: null });
+      await get().selectOrder(opl);
+      return { ok: true, message: res.message || `${sheet.item.bucket} marked issued.` };
+    } catch (err) {
+      set({ replace: { ...sheet, submitting: false } });
+      return { ok: false, message: mapAxiosError(err).message || 'Could not mark it issued.' };
     }
   },
 

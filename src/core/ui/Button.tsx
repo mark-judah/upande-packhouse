@@ -19,6 +19,10 @@ type Props = {
   variant?: 'primary' | 'outline' | 'ghost';
   iconLeft?: keyof typeof Ionicons.glyphMap;
   style?: ViewStyle;
+  /** 'sm': a compact pill for secondary actions inside a card. */
+  size?: 'md' | 'sm';
+  /** Keep the label on one line, shrinking it a little to fit, instead of wrapping. */
+  singleLine?: boolean;
 };
 
 export function Button({
@@ -30,7 +34,10 @@ export function Button({
   variant = 'primary',
   iconLeft,
   style,
+  size = 'md',
+  singleLine,
 }: Props) {
+  const sm = size === 'sm';
   const isDisabled = !!disabled || !!loading;
   const isOutline = variant === 'outline';
   const isGhost = variant === 'ghost';
@@ -43,6 +50,7 @@ export function Button({
       onPress={isDisabled ? undefined : onPress}
       style={({ pressed }) => [
         s.btn,
+        sm ? s.btnSm : null,
         {
           backgroundColor: bg,
           borderColor,
@@ -55,8 +63,16 @@ export function Button({
         <ActivityIndicator color={fg} />
       ) : (
         <View style={s.inner}>
-          {iconLeft ? <Ionicons name={iconLeft} size={18} color={fg} /> : null}
-          <Text style={[s.label, { color: fg }]}>{label}</Text>
+          {iconLeft ? <Ionicons name={iconLeft} size={sm ? 14 : 18} color={fg} /> : null}
+          <Text
+            style={[s.label, sm ? s.labelSm : null, { color: fg }]}
+            // Small buttons have a fixed height, so they always keep one line.
+            numberOfLines={singleLine || sm ? 1 : undefined}
+            adjustsFontSizeToFit={singleLine || sm}
+            minimumFontScale={0.75}
+          >
+            {label}
+          </Text>
         </View>
       )}
     </Pressable>
@@ -73,6 +89,9 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  inner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  label: { fontFamily: fontFamily.bold, fontSize: fontSize.md },
+  // Small: one fixed height, so side-by-side buttons always line up.
+  btnSm: { paddingVertical: 6, paddingHorizontal: spacing.md, minHeight: 34, height: 34 },
+  inner: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, maxWidth: '100%' },
+  label: { fontFamily: fontFamily.bold, fontSize: fontSize.md, flexShrink: 1, textAlign: 'center' },
+  labelSm: { fontFamily: fontFamily.regular, fontSize: fontSize.sm },
 });

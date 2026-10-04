@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Animated,
   StyleSheet,
@@ -32,7 +32,7 @@ export function Segmented<T extends string>({ value, options, onChange }: Segmen
   const padding = 4;
   const innerWidth = Math.max(0, containerWidth - padding * 2);
   const segmentWidth = options.length > 0 ? innerWidth / options.length : 0;
-  const anim = useRef(new Animated.Value(activeIndex)).current;
+  const anim = useState(() => new Animated.Value(activeIndex))[0];
 
   useEffect(() => {
     Animated.spring(anim, {
