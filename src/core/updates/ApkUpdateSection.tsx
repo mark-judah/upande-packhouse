@@ -64,6 +64,12 @@ export function ApkUpdateSection() {
         { name: 'cloud-download-outline', tone: 'success' },
       );
     } catch (err) {
+      // No manifest for this runtime yet (a fresh APK, before its first OTA):
+      // nothing newer exists, so that is "up to date", not a failure.
+      if (/\b404\b/.test(String((err as Error)?.message ?? err))) {
+        showSuccess(apkChecked ? "You're on the latest version." : 'No JS update available.');
+        return;
+      }
       // expo-updates' own text ("Call to function … rejected → Caused by: …") is
       // for the logs; the person gets a plain sentence.
       if (__DEV__) console.warn('[update] JS update check failed:', err);

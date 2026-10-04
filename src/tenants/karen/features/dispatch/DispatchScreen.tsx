@@ -1,10 +1,11 @@
 import { useCallback, useEffect } from 'react';
-import { Alert as RNAlert, StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card, Alert } from '@/src/core/ui/Card';
 import { Button } from '@/src/core/ui/Button';
+import { showDialog } from '@/src/core/ui/DialogHost';
 import { DateSelector } from '@/src/core/ui/DateSelector';
 import { tomorrowISO } from '@/src/core/date';
 import { useToast } from '@/src/core/ui/Toast';
@@ -56,15 +57,19 @@ export function KarenDispatchScreen() {
     loadOrders();
   };
 
+  // The app's own dialog (not the phone's plain alert), like every other confirm.
   const onConfirmPress = () => {
-    RNAlert.alert(
-      'Confirm dispatch',
-      `This finalizes dispatch for ${deliveryDate || selectedDate} with seal number ` +
-        `"${sealNumberInput.trim()}" and cannot be undone. Continue?`,
+    const boxes = `${totalBoxes} box${totalBoxes === 1 ? '' : 'es'}`;
+    const ords = `${orders.length} order${orders.length === 1 ? '' : 's'}`;
+    showDialog(
+      'Confirm dispatch?',
+      `${ords} · ${boxes} for ${deliveryDate || selectedDate}, seal ${sealNumberInput.trim()}. ` +
+        'Once confirmed, dispatch is final and cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Confirm dispatch', style: 'destructive', onPress: doConfirm },
+        { text: 'Confirm dispatch', onPress: doConfirm },
       ],
+      { name: 'car-outline', tone: 'warn' },
     );
   };
 
