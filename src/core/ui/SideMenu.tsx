@@ -17,7 +17,7 @@ import { useTenant } from '@/src/core/tenant/tenant-context';
 import { useAuthStore } from '@/src/core/auth/store';
 import { storage, StorageKeys } from '@/src/core/storage';
 import { useDrawerItems } from './drawer-items-context';
-import { APP_VERSION } from '@/src/core/version';
+import { APP_NAME, APP_VERSION } from '@/src/core/version';
 import type { DrawerItem } from '@/src/core/tenant/types';
 
 type IconName = keyof typeof Ionicons.glyphMap;
@@ -200,7 +200,7 @@ export function SideMenu({
                   </View>
                   <Text style={[s.footerText, { color: COLORS.danger }]}>Sign Out</Text>
                 </Pressable>
-                <Text style={s.version}>Upande Quality v{APP_VERSION}</Text>
+                <Text style={s.version}>{APP_NAME} v{APP_VERSION}</Text>
               </View>
             </ScrollView>
           </SafeAreaView>
