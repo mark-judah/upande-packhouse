@@ -119,13 +119,27 @@ export function KarenIssuingScreen() {
 
   // Label shows customer + variety + stem length per OPL, per the packhouse
   // spec — operators pick the specific pick list, not a merged sale order.
+  // Listed in schedule order (the server's: every team's #1, then #2 …); each shows
+  // its place, and the team's next order to issue says so.
   const orderOptions = filteredOrders.map((o) => ({
     label:
-      [o.customer, o.varieties.join(', '), o.stemLengths.join(', ')]
+      [
+        o.schedule ? `#${o.schedule}${o.isNext ? ' · Next' : ''}` : null,
+        o.customer,
+        o.varieties.join(', '),
+        o.stemLengths.join(', '),
+      ]
         .filter(Boolean)
         .join(' · ') || o.name,
     value: o.oplName,
-    sublabel: [o.name, o.qty ? `${o.qty} stems` : null].filter(Boolean).join(' · ') || undefined,
+    sublabel:
+      [
+        o.schedule ? `${o.scheduleTeam || 'Team'} #${o.schedule}` : 'Not scheduled',
+        o.name,
+        o.qty ? `${o.qty} stems` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ') || undefined,
   }));
 
   const selectedOplInfo = useMemo(

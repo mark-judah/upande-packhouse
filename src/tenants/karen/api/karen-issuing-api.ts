@@ -37,6 +37,11 @@ export type RawReadyOrder = {
   custom_item_group?: string | string[];
   team?: string | string[];
   custom_team?: string | string[];
+  /** Packhouse Schedule: its team's place for it (0 = not scheduled), that team,
+   *  and whether it is the team's next order to issue. */
+  schedule?: number;
+  schedule_team?: string;
+  is_next?: boolean;
 };
 
 /** The endpoint returns `orders` at the TOP LEVEL of the body alongside a

@@ -119,6 +119,7 @@ export function KarenPackingScreen() {
   } = useKarenPackingStore();
 
   const openQualityIssue = useKarenPackingQualityStore((s) => s.openFor);
+  const qualityIssueOpen = useKarenPackingQualityStore((s) => s.open);
 
   const savedLabels = savedFor && savedFor.opl === selectedOpl ? savedFor.entries : [];
 
@@ -771,29 +772,13 @@ export function KarenPackingScreen() {
         </Card>
       ) : null}
 
-      {showTable && packingGuide && selectedOpl ? (
-        <Card title="Quality issue">
-          <Text style={s.helper}>
-            Wrong stem length, disease or pests on a bucket of this order? Reject the bad stems and replace
-            them — from the sales farm first, else from a remote farm on the next truck (ASAP).
-          </Text>
-          <View style={{ height: spacing.sm }} />
-          <Button
-            label="Report quality issue"
-            iconLeft="alert-circle-outline"
-            variant="outline"
-            onPress={() => openQualityIssue(selectedOpl, selectedItemKey ? selectedItemKey.split('|')[0] : null)}
-          />
-        </Card>
-      ) : null}
-
-      {showTable && packingGuide && !boxClosed ? (
-        <Card title="Packing issue">
+      {showTable && packingGuide && (!boxClosed || selectedOpl) ? (
+        <Card>
           <Pressable
             style={s.issueHeaderRow}
             onPress={() => setIssueSectionOpen((v) => !v)}
           >
-            <Text style={s.issueHeaderLabel}>Report a bypass or under-pack</Text>
+            <Text style={s.issueHeaderLabel}>Packing issue</Text>
             <MaterialCommunityIcons
               name={issueSectionOpen ? 'chevron-up' : 'chevron-down'}
               size={20}
@@ -803,88 +788,114 @@ export function KarenPackingScreen() {
           {issueSectionOpen ? (
             <>
               <View style={{ height: spacing.sm }} />
-              <Pressable
-                style={s.bypassCheckRow}
-                onPress={() => setBypassOpen((v) => !v)}
-                disabled={bypassSubmitting}
-              >
-                <MaterialCommunityIcons
-                  name={bypassOpen ? 'checkbox-marked' : 'checkbox-blank-outline'}
-                  size={22}
-                  color={bypassOpen ? COLORS.primary : COLORS.textMuted}
-                />
-                <Text style={s.bypassCheckLabel}>Bypass packing</Text>
-              </Pressable>
-              {bypassOpen ? (
+              {!boxClosed ? (
                 <>
-                  <Text style={s.helper}>
-                    Use this when a bunch can&rsquo;t be scanned (damaged/missing QR, or ungraded) —
-                    it still counts toward Box {currentBoxId} and is logged for review.
-                  </Text>
-                  <View style={{ height: spacing.sm }} />
-                  <Dropdown
-                    label="Reason"
-                    value={bypassReason}
-                    options={bypassReasonOptions}
-                    placeholder={packingBypassReasonsLoading ? 'Loading…' : 'Select a reason'}
-                    iconName="alert-circle-outline"
-                    onChange={setBypassReason}
-                    disabled={packingBypassReasonsLoading || bypassSubmitting || bypassReasonOptions.length === 0}
-                  />
-                  <View style={{ height: spacing.sm }} />
-                  <TextInput
-                    value={bypassQty}
-                    onChangeText={(t) => setBypassQty(t.replace(/[^0-9]/g, ''))}
-                    keyboardType="number-pad"
-                    placeholder="Number of bunches"
-                    placeholderTextColor={COLORS.textMuted}
-                    style={s.manualInput}
-                    editable={!bypassSubmitting}
-                  />
-                  <View style={{ height: spacing.sm }} />
-                  <Button
-                    label={bypassSubmitting ? 'Reporting…' : 'Report issue'}
-                    onPress={onSubmitBypass}
-                    disabled={bypassSubmitting || !bypassReason || !bypassQty || parseInt(bypassQty, 10) <= 0}
-                  />
-                  <View style={{ height: spacing.md }} />
+                  <Pressable
+                    style={s.bypassCheckRow}
+                    onPress={() => setBypassOpen((v) => !v)}
+                    disabled={bypassSubmitting}
+                  >
+                    <MaterialCommunityIcons
+                      name={bypassOpen ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                      size={22}
+                      color={bypassOpen ? COLORS.primary : COLORS.textMuted}
+                    />
+                    <Text style={s.bypassCheckLabel}>Bypass packing</Text>
+                  </Pressable>
+                  {bypassOpen ? (
+                    <>
+                      <Text style={s.helper}>
+                        Use this when a bunch can&rsquo;t be scanned (damaged/missing QR, or ungraded) —
+                        it still counts toward Box {currentBoxId} and is logged for review.
+                      </Text>
+                      <View style={{ height: spacing.sm }} />
+                      <Dropdown
+                        label="Reason"
+                        value={bypassReason}
+                        options={bypassReasonOptions}
+                        placeholder={packingBypassReasonsLoading ? 'Loading…' : 'Select a reason'}
+                        iconName="alert-circle-outline"
+                        onChange={setBypassReason}
+                        disabled={packingBypassReasonsLoading || bypassSubmitting || bypassReasonOptions.length === 0}
+                      />
+                      <View style={{ height: spacing.sm }} />
+                      <TextInput
+                        value={bypassQty}
+                        onChangeText={(t) => setBypassQty(t.replace(/[^0-9]/g, ''))}
+                        keyboardType="number-pad"
+                        placeholder="Number of bunches"
+                        placeholderTextColor={COLORS.textMuted}
+                        style={s.manualInput}
+                        editable={!bypassSubmitting}
+                      />
+                      <View style={{ height: spacing.sm }} />
+                      <Button
+                        label={bypassSubmitting ? 'Reporting…' : 'Report issue'}
+                        onPress={onSubmitBypass}
+                        disabled={bypassSubmitting || !bypassReason || !bypassQty || parseInt(bypassQty, 10) <= 0}
+                      />
+                      <View style={{ height: spacing.md }} />
+                    </>
+                  ) : null}
+
+                  <Pressable
+                    style={s.bypassCheckRow}
+                    onPress={() => setUnderPackOpen((v) => !v)}
+                    disabled={reasonSubmitting}
+                  >
+                    <MaterialCommunityIcons
+                      name={underPackOpen ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                      size={22}
+                      color={underPackOpen ? COLORS.primary : COLORS.textMuted}
+                    />
+                    <Text style={s.bypassCheckLabel}>Report under-pack</Text>
+                  </Pressable>
+                  {underPackOpen ? (
+                    <>
+                      <Text style={s.helper}>
+                        Closes Box {currentBoxId} short of its packrate — once saved, this box can&rsquo;t be
+                        packed further and packing moves on to the next box.
+                      </Text>
+                      <View style={{ height: spacing.sm }} />
+                      <Dropdown
+                        label="Reason"
+                        value={underPackReason}
+                        options={reasonOptions}
+                        placeholder={underPackReasonsLoading ? 'Loading…' : 'Select a reason'}
+                        iconName="alert-circle-outline"
+                        onChange={setUnderPackReason}
+                        disabled={underPackReasonsLoading || reasonSubmitting || reasonOptions.length === 0}
+                      />
+                      <View style={{ height: spacing.sm }} />
+                      <Button
+                        label={reasonSubmitting ? 'Closing…' : 'Close box as under-packed'}
+                        onPress={onSubmitUnderPack}
+                        disabled={reasonSubmitting || !underPackReason}
+                      />
+                      <View style={{ height: spacing.md }} />
+                    </>
+                  ) : null}
                 </>
               ) : null}
 
-              <Pressable
-                style={s.bypassCheckRow}
-                onPress={() => setUnderPackOpen((v) => !v)}
-                disabled={reasonSubmitting}
-              >
-                <MaterialCommunityIcons
-                  name={underPackOpen ? 'checkbox-marked' : 'checkbox-blank-outline'}
-                  size={22}
-                  color={underPackOpen ? COLORS.primary : COLORS.textMuted}
-                />
-                <Text style={s.bypassCheckLabel}>Report under-pack</Text>
-              </Pressable>
-              {underPackOpen ? (
+              {selectedOpl ? (
                 <>
-                  <Text style={s.helper}>
-                    Closes Box {currentBoxId} short of its packrate — once saved, this box can&rsquo;t be
-                    packed further and packing moves on to the next box.
-                  </Text>
-                  <View style={{ height: spacing.sm }} />
-                  <Dropdown
-                    label="Reason"
-                    value={underPackReason}
-                    options={reasonOptions}
-                    placeholder={underPackReasonsLoading ? 'Loading…' : 'Select a reason'}
-                    iconName="alert-circle-outline"
-                    onChange={setUnderPackReason}
-                    disabled={underPackReasonsLoading || reasonSubmitting || reasonOptions.length === 0}
-                  />
-                  <View style={{ height: spacing.sm }} />
-                  <Button
-                    label={reasonSubmitting ? 'Closing…' : 'Close box as under-packed'}
-                    onPress={onSubmitUnderPack}
-                    disabled={reasonSubmitting || !underPackReason}
-                  />
+                  {/* Ticked while the replacement modal is open; closing it clears the tick. */}
+                  <Pressable
+                    style={s.bypassCheckRow}
+                    onPress={() => {
+                      if (!qualityIssueOpen) {
+                        openQualityIssue(selectedOpl, selectedItemKey ? selectedItemKey.split('|')[0] : null);
+                      }
+                    }}
+                  >
+                    <MaterialCommunityIcons
+                      name={qualityIssueOpen ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                      size={22}
+                      color={qualityIssueOpen ? COLORS.primary : COLORS.textMuted}
+                    />
+                    <Text style={s.bypassCheckLabel}>Report quality issue</Text>
+                  </Pressable>
                 </>
               ) : null}
             </>
@@ -1247,7 +1258,14 @@ const s = StyleSheet.create({
   },
 
   issueHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  issueHeaderLabel: { fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },
+  // Matches the Card title style: this row is the card's only heading.
+  issueHeaderLabel: {
+    fontFamily: fontFamily.semiBold,
+    fontSize: fontSize.sm,
+    color: COLORS.text,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
 
   bypassCheckRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   bypassCheckLabel: { fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },

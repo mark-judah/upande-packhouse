@@ -89,6 +89,11 @@ export type ReadyOrder = {
   qty: string;
   itemGroups: string[];
   teams: string[];
+  /** Its team's place on the Packhouse Schedule (0 = not scheduled). */
+  schedule: number;
+  scheduleTeam: string;
+  /** The team's next order to issue. */
+  isNext: boolean;
 };
 
 type State = {
@@ -170,6 +175,9 @@ function toReadyOrder(entry: string | RawReadyOrder): ReadyOrder | null {
     qty: (entry.qty ?? '').toString(),
     itemGroups: toStringList(entry.custom_item_group ?? entry.item_group),
     teams: toStringList(entry.custom_team ?? entry.team),
+    schedule: Number(entry.schedule ?? 0) || 0,
+    scheduleTeam: (entry.schedule_team ?? '').toString(),
+    isNext: !!entry.is_next,
   };
 }
 

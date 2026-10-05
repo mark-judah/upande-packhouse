@@ -29,6 +29,9 @@ export type RawMissingBox = {
 
 export type RawLoadedOrdersData = {
   delivery_date?: string;
+  /** The location the data is for, and the locations to choose from (Loading Plan). */
+  location?: string;
+  locations?: string[];
   loading_sheet?: string | null;
   loading_sheet_status?: string;
   /** True once this date's Loading Sheet has been confirmed Departed --
@@ -62,22 +65,35 @@ export type RawRebuildResponse = {
 export const karenDispatchApi = {
   /** Orders that have been loaded (from the day's Loading Sheet), by order name.
    *  `deliveryDate` optional — server defaults to tomorrow (matches loading). */
-  fetchLoadedOrders(deliveryDate?: string): Promise<RawLoadedOrdersResponse> {
+  fetchLoadedOrders(deliveryDate?: string, location?: string): Promise<RawLoadedOrdersResponse> {
     return api<RawLoadedOrdersResponse>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.fetchDispatchLoadedOrders',
-      params: deliveryDate ? { delivery_date: deliveryDate } : {},
+      params: {
+        ...(deliveryDate ? { delivery_date: deliveryDate } : {}),
+        // Only that location's orders (its Loading Plans) and its own departure.
+        ...(location ? { location } : {}),
+      },
     });
   },
 
   /** Confirm dispatch for the day: builds the Delivery Note(s) from all loaded
    *  boxes and records the truck's seal number. One-time — the server refuses
    *  a repeat call once the day's Loading Sheet is marked Departed. */
-  createOrUpdateDispatch(deliveryDate: string | undefined, sealNumber: string): Promise<RawRebuildResponse> {
+  createOrUpdateDispatch(
+    deliveryDate: string | undefined,
+    sealNumber: string,
+    location?: string,
+  ): Promise<RawRebuildResponse> {
     return api<RawRebuildResponse>({
       method: 'POST',
       url: '/api/method/upande_packhouse.mobile.api.createOrUpdateDispatch',
-      data: { ...(deliveryDate ? { delivery_date: deliveryDate } : {}), seal_number: sealNumber },
+      data: {
+        ...(deliveryDate ? { delivery_date: deliveryDate } : {}),
+        seal_number: sealNumber,
+        // Dispatches only this location's orders; the other location confirms its own.
+        ...(location ? { location } : {}),
+      },
     });
   },
 };
