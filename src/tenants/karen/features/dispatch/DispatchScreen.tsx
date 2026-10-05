@@ -7,6 +7,8 @@ import { Card, Alert } from '@/src/core/ui/Card';
 import { Button } from '@/src/core/ui/Button';
 import { showDialog } from '@/src/core/ui/DialogHost';
 import { DateSelector } from '@/src/core/ui/DateSelector';
+import { Segmented } from '@/src/core/ui/Segmented';
+import { useUserStation } from '@/src/core/tenant/user-station';
 import { tomorrowISO } from '@/src/core/date';
 import { useToast } from '@/src/core/ui/Toast';
 import { useKarenDispatchStore } from '@/src/tenants/karen/state/karen-dispatch-store';
@@ -35,18 +37,26 @@ export function KarenDispatchScreen() {
     save,
     setDate,
     reset,
+    location,
+    locations,
+    setLocation,
+    initLocation,
   } = useKarenDispatchStore();
   const { showSuccess, showError } = useToast();
+  const { station } = useUserStation();
+  const farm = station?.userFarm ?? '';
 
+  // Orders load once a location is picked (remembered, else the station's farm's):
+  // dispatch never mixes Ravine's and Karen's orders.
   useEffect(() => {
-    loadOrders();
+    initLocation(farm);
     return () => reset();
-  }, [loadOrders, reset]);
+  }, [farm, initLocation, reset]);
 
   // Refresh the loaded-orders list whenever the screen regains focus.
   useFocusEffect(
     useCallback(() => {
-      loadOrders();
+      if (useKarenDispatchStore.getState().location) loadOrders();
     }, [loadOrders]),
   );
 
@@ -79,6 +89,12 @@ export function KarenDispatchScreen() {
   return (
     <Screen title="Dispatch" onRefresh={loadOrders}>
       <Card title="Delivery day">
+        <Text style={s.filterLabel}>Location</Text>
+        <Segmented
+          value={location || locations[0] || ''}
+          options={locations.map((l) => ({ value: l, label: l }))}
+          onChange={(v) => void setLocation(v)}
+        />
         <DateSelector
           value={selectedDate}
           onChange={(d) => { if (d !== selectedDate) setDate(d); }}
@@ -227,6 +243,12 @@ export function KarenDispatchScreen() {
 }
 
 const s = StyleSheet.create({
+  filterLabel: {
+    fontFamily: fontFamily.medium,
+    fontSize: fontSize.sm,
+    color: COLORS.textMuted,
+    marginBottom: spacing.xs,
+  },
   helper: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.xs,

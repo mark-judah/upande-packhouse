@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { karenDispatchApi } from '../api/karen-dispatch-api';
 import type { RawLoadedOrdersResponse, RawMissingBox, RawRebuildResponse } from '../api/karen-dispatch-api';
 import { mapAxiosError } from '@/src/core/api/client';
+import { storage, StorageKeys } from '@/src/core/storage';
 import { tomorrowISO } from '@/src/core/date';
 
 export type LoadedOrder = {
@@ -60,6 +61,14 @@ type State = {
    *  blocked server-side while any exist for this date. */
   missingBoxes: MissingBox[];
   lastOutcome: DispatchOutcome | null;
+  /** Location dispatched from (Loading Plan > Location): only its orders show, and
+   *  confirming dispatches only them. '' until the screen picks one. */
+  location: string;
+  /** Locations to choose from (the server's Loading Plan options). */
+  locations: string[];
+  setLocation: (location: string) => Promise<void>;
+  /** The location remembered on this device, else the station's farm's. */
+  initLocation: (farm: string) => Promise<void>;
 
   loadOrders: () => Promise<void>;
   setSealNumberInput: (v: string) => void;
@@ -98,13 +107,37 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
   sealNumberInput: '',
   missingBoxes: [],
   lastOutcome: null,
+  location: '',
+  locations: ['Ravine', 'Karen'],
 
   setSealNumberInput: (v) => set({ sealNumberInput: v }),
+
+  setLocation: async (location) => {
+    if (location === get().location) return;
+    storage.set(StorageKeys.dispatchLocation, location).catch(() => {});
+    set({ location, orders: [], totalBoxes: 0, totalRequired: 0, sealNumberInput: '', savedSealNumber: '', dispatched: false, missingBoxes: [] });
+    await get().loadOrders();
+  },
+
+  initLocation: async (farm) => {
+    if (get().location) return;
+    let saved: string | null = null;
+    try {
+      saved = await storage.get(StorageKeys.dispatchLocation);
+    } catch {
+      saved = null;
+    }
+    const pick = saved && get().locations.includes(saved) ? saved : farm === 'Karen' ? 'Karen' : 'Ravine';
+    if (!get().location) await get().setLocation(pick);
+  },
 
   loadOrders: async () => {
     set({ loading: true });
     try {
-      const raw: RawLoadedOrdersResponse = await karenDispatchApi.fetchLoadedOrders(get().selectedDate);
+      const location = get().location;
+      const raw: RawLoadedOrdersResponse = await karenDispatchApi.fetchLoadedOrders(get().selectedDate, location || undefined);
+      // A reply for a location the operator has since switched off is dropped.
+      if (get().location !== location) return;
       const msg = unwrap(raw);
       const data = msg?.data ?? {};
       const orders: LoadedOrder[] = (data.orders ?? []).map((o) => ({
@@ -124,6 +157,7 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
         totalBoxes: Number(data.total_boxes ?? 0),
         totalRequired: orders.reduce((sum, o) => sum + o.boxesRequired, 0),
         deliveryDate: (data.delivery_date ?? '').toString(),
+        ...(Array.isArray(data.locations) && data.locations.length ? { locations: data.locations } : {}),
         dispatched: !!data.dispatched,
         savedSealNumber,
         missingBoxes: mapMissingBoxes(data.missing_boxes),
@@ -148,6 +182,7 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
       const raw: RawRebuildResponse = await karenDispatchApi.createOrUpdateDispatch(
         get().selectedDate,
         get().sealNumberInput.trim(),
+        get().location || undefined,
       );
       const msg = unwrap(raw);
       if (msg?.status === 'error') {
@@ -191,5 +226,6 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
       sealNumberInput: '',
       missingBoxes: [],
       lastOutcome: null,
+      location: '',
     }),
 }));

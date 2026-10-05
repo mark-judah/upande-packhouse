@@ -22,6 +22,8 @@ export const StorageKeys = {
   knownInstances: 'known_instances',
   // Last GitHub Releases check for a newer APK (see src/core/updates).
   apkUpdateCheck: 'apk_update_check',
+  /** Dispatch: the location last picked (Loading Plan > Location, e.g. Ravine / Karen). */
+  dispatchLocation: 'dispatch_location',
 } as const;
 
 export const storage = {
