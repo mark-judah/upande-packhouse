@@ -3,7 +3,7 @@
     "name": "Upande Packhouse",
     "slug": "upande-packhouse",
     "owner": "markjk",
-    "version": "1.1.2",
+    "version": "1.1.3",
     "orientation": "portrait",
     "icon": "./assets/upande_logo.png",
     "scheme": "upandepackhouse",
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.upande.packhouse",
-      "versionCode": 105102,
+      "versionCode": 105103,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/upande_logo.png"
