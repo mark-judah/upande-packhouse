@@ -111,12 +111,14 @@ jobs:
       # Published before the bump is committed, so a failed publish leaves no
       # tag behind and the next run retries the same version.
 
+      # An APK release publishes it too: the new runtime's phones ask for
+      # ota/android/<new runtime>/manifest.json from the first launch, and a 404
+      # there fails every update check until the next OTA. It carries the same
+      # JS as the APK.
       - name: Build the JS update
-        if: steps.version.outputs.release == 'ota'
         run: npm run ota:build
 
       - name: Publish the JS update to GitHub Pages
-        if: steps.version.outputs.release == 'ota'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

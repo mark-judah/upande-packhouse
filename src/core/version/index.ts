@@ -15,6 +15,9 @@ const otaExtra = (Updates.manifest as { extra?: OtaExtra } | null)?.extra;
 export const APP_VERSION: string =
   otaExtra?.expoClient?.version ?? otaExtra?.appVersion ?? Constants.expoConfig?.version ?? '1.0.0';
 
+/** The app's own name (app.json `name`), shown beside its version. */
+export const APP_NAME: string = Constants.expoConfig?.name ?? 'Upande Packhouse';
+
 /** Version of the installed APK (the native build), which OTA updates never change. */
 export const INSTALLED_APK_VERSION: string = Constants.nativeAppVersion ?? APP_VERSION;
 /** Android versionCode of the installed APK. */
