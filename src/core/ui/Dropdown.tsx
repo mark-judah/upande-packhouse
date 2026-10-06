@@ -13,7 +13,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
-type Option = { label: string; value: string; sublabel?: string };
+/** `parts`: the label in pieces, some bold; `label` stays the plain text (search).
+ *  `corner`: bold text at the row's bottom right. */
+type LabelPart = { text: string; bold?: boolean; semi?: boolean; color?: string };
+/** `subParts`: the sublabel in styled pieces (wins over `sublabel`). */
+type Option = {
+  label: string;
+  value: string;
+  sublabel?: string;
+  subParts?: LabelPart[];
+  parts?: LabelPart[];
+  corner?: string;
+};
 
 type Props = {
   label: string;
@@ -23,6 +34,8 @@ type Props = {
   /** MCI glyph name — kept on MaterialCommunityIcons for backwards-compat. */
   iconName?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
   searchable?: boolean;
+  /** Hide the option list's scrollbar. */
+  hideScrollbar?: boolean;
   disabled?: boolean;
   onChange: (value: string) => void;
 };
@@ -34,6 +47,7 @@ export function Dropdown({
   placeholder,
   iconName,
   searchable = true,
+  hideScrollbar,
   disabled,
   onChange,
 }: Props) {
@@ -104,6 +118,7 @@ export function Dropdown({
               keyExtractor={(it) => it.value}
               ItemSeparatorComponent={() => <View style={s.sep} />}
               keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={!hideScrollbar}
               renderItem={({ item }) => {
                 const isSelected = item.value === value;
                 return (
@@ -118,9 +133,28 @@ export function Dropdown({
                   >
                     <View style={{ flex: 1 }}>
                       <Text style={[s.rowText, isSelected && { fontFamily: fontFamily.semiBold }]}>
-                        {item.label}
+                        {item.parts
+                          ? item.parts.map((p, i) => (
+                              <Text key={i} style={p.bold ? s.rowBold : p.semi ? s.rowSemi : undefined}>
+                                {p.text}
+                              </Text>
+                            ))
+                          : item.label}
                       </Text>
-                      {item.sublabel ? <Text style={s.rowSub}>{item.sublabel}</Text> : null}
+                      {item.sublabel || item.subParts || item.corner ? (
+                        <View style={s.rowFoot}>
+                          <Text style={[s.rowSub, { flex: 1 }]}>
+                            {item.subParts
+                              ? item.subParts.map((p, i) => (
+                                  <Text key={i} style={[p.bold && s.rowBold, p.color ? { color: p.color } : null]}>
+                                    {p.text}
+                                  </Text>
+                                ))
+                              : (item.sublabel ?? '')}
+                          </Text>
+                          {item.corner ? <Text style={s.rowCorner}>{item.corner}</Text> : null}
+                        </View>
+                      ) : null}
                     </View>
                     {isSelected ? <Ionicons name="checkmark" size={18} color={COLORS.text} /> : null}
                   </TouchableOpacity>
@@ -197,7 +231,11 @@ const s = StyleSheet.create({
 
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md },
   rowText: { fontFamily: fontFamily.regular, fontSize: fontSize.md, color: COLORS.text },
+  rowBold: { fontFamily: fontFamily.bold },
+  rowSemi: { fontFamily: fontFamily.semiBold },
   rowSub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 2 },
+  rowFoot: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm },
+  rowCorner: { fontFamily: fontFamily.bold, fontSize: fontSize.xs, color: COLORS.text, marginTop: 2 },
   sep: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.border },
   empty: { padding: spacing.xl, alignItems: 'center' },
   emptyText: { fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textMuted },

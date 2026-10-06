@@ -26,6 +26,9 @@ const URL_TO_TENANT: Record<string, Tenant> = {
   'http://10.77.222.154:8002': 'Karen',
   'http://192.168.88.245:8000': 'Karen',
   'http://192.168.100.27:8000': 'Karen',
+  'http://172.16.32.240:8000': 'Karen',
+  'http://100.120.242.4:8000': 'Karen',
+  'http://192.168.1.150:8000': 'Karen',
   'https://draft-unnecessary-trinity-isa.trycloudflare.com': 'Karen'
 };
 

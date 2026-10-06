@@ -26,6 +26,15 @@ export type OplOption = {
   varieties: string[];
   stemLengths: string[];
   qty: string;
+  issuedBuckets: number;
+  totalBuckets: number;
+  issuedPct: number;
+  packedPct: number;
+  varietyLengths: string[];
+  schedule: number;
+  scheduleTeam: string;
+  isNext: boolean;
+  waitsFor: number;
 };
 
 export type PickListLine = {
@@ -282,6 +291,15 @@ function extractPicklists(raw: RawPicklistsResponse): OplOption[] {
       varieties: toStringList(d.varieties),
       stemLengths: toStringList(d.stem_lengths),
       qty: (d.qty ?? '').toString(),
+      issuedBuckets: Number(d.issued_buckets ?? 0),
+      totalBuckets: Number(d.total_buckets ?? 0),
+      issuedPct: Number(d.issued_pct ?? 0),
+      packedPct: Number(d.packed_pct ?? 0),
+      varietyLengths: toStringList(d.variety_lengths),
+      schedule: Number(d.schedule ?? 0),
+      scheduleTeam: (d.schedule_team ?? '').toString(),
+      isNext: !!d.is_next,
+      waitsFor: Number(d.waits_for ?? 0),
     }))
     .filter((o) => o.oplName.length > 0);
 }
