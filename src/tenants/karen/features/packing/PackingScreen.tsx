@@ -237,14 +237,41 @@ export function KarenPackingScreen() {
 
   // Label shows customer + variety + stem length per OPL, same as the
   // issuing screen; order name + stems shown below as the sublabel.
-  const orderOptions = filteredPicklists.map((o) => ({
-    label:
-      [o.customer, o.varieties.join(', '), o.stemLengths.join(', ')]
-        .filter(Boolean)
-        .join(' · ') || o.orderName || o.oplName,
-    value: o.oplName,
-    sublabel: [o.orderName, o.qty ? `${o.qty} stems` : null].filter(Boolean).join(' · ') || undefined,
-  }));
+  const orderOptions = filteredPicklists.map((o) => {
+    const varieties = (o.varietyLengths.length ? o.varietyLengths : o.varieties).join(', ');
+    const parts: { text: string; bold?: boolean; semi?: boolean }[] = [];
+    if (o.orderName) parts.push({ text: o.orderName, bold: true });
+    if (varieties) parts.push(...(parts.length ? [{ text: ' · ' }] : []), { text: varieties, semi: true });
+    return {
+      label: parts.map((p) => p.text).join('') || o.oplName,
+      parts,
+      value: o.oplName,
+      corner: o.schedule
+        ? `${o.scheduleTeam || 'Team'} #${o.schedule}`
+        : undefined,
+      subParts: [
+        { text: `${o.oplName} · ` },
+        ...(o.customer ? [{ text: `${o.customer} · ` }] : []),
+        ...(o.totalBuckets
+          ? [
+              o.issuedPct >= 100
+                ? { text: `100% issued (${o.issuedBuckets}/${o.totalBuckets} bkt)`, bold: true, color: COLORS.success }
+                : { text: `${o.issuedPct}% issued (${o.issuedBuckets}/${o.totalBuckets} bkt)` },
+              { text: ' · ' },
+            ]
+          : []),
+        o.packedPct >= 100
+          ? { text: '100% packed', bold: true, color: COLORS.success }
+          : { text: `${o.packedPct}% packed` },
+      ],
+    };
+  });
+  const selectedPicklist = availablePicklists.find((o) => o.oplName === selectedOpl);
+  // Every order line packed (live tally), or the list already says 100%.
+  const fullyPacked =
+    (selectedPicklist?.packedPct ?? 0) >= 100 ||
+    (pickListItems.length > 0 &&
+      pickListItems.every((i) => Math.trunc(packedBunchesTally[lineKey(i)] ?? 0) >= Math.trunc(i.qty)));
 
   const currentStems = useMemo(
     () =>
@@ -573,6 +600,27 @@ export function KarenPackingScreen() {
           onChange={onPickOrder}
           disabled={picklistsLoading || filteredPicklists.length === 0}
         />
+        {selectedPicklist ? (
+          <Text style={s.helper}>
+            <Text style={s.bold}>
+              {selectedPicklist.schedule
+                ? `${selectedPicklist.scheduleTeam || 'Team'} #${selectedPicklist.schedule}`
+                : 'Not scheduled'}
+            </Text>
+            {selectedPicklist.totalBuckets ? (
+              <>
+                {' · '}
+                <Text style={selectedPicklist.issuedPct >= 100 ? s.packedDone : undefined}>
+                  {`${selectedPicklist.issuedPct}% issued (${selectedPicklist.issuedBuckets}/${selectedPicklist.totalBuckets} buckets)`}
+                </Text>
+              </>
+            ) : null}
+            {' · '}
+            <Text style={selectedPicklist.packedPct >= 100 ? s.packedDone : undefined}>
+              {`${selectedPicklist.packedPct}% packed`}
+            </Text>
+          </Text>
+        ) : null}
         {!showTable ? (
           <Text style={s.helper}>
             {picklistsLoading
@@ -772,7 +820,7 @@ export function KarenPackingScreen() {
         </Card>
       ) : null}
 
-      {showTable && packingGuide && (!boxClosed || selectedOpl) ? (
+      {showTable && packingGuide && (!boxClosed || selectedOpl) && !fullyPacked ? (
         <Card>
           <Pressable
             style={s.issueHeaderRow}
@@ -1091,6 +1139,8 @@ function BoxBreakdown({
 }
 
 const s = StyleSheet.create({
+  bold: { fontFamily: fontFamily.bold },
+  packedDone: { fontFamily: fontFamily.bold, color: COLORS.success },
   debugBtn: { width: 32, alignItems: 'center', justifyContent: 'center', padding: 4 },
   modalBackdrop: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',

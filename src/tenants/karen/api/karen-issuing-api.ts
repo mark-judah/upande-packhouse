@@ -42,6 +42,14 @@ export type RawReadyOrder = {
   schedule?: number;
   schedule_team?: string;
   is_next?: boolean;
+  /** "Wham (50cm)" per variety with its own stem lengths. */
+  variety_lengths?: string[];
+  /** Buckets issued so far (not-found ones left out). */
+  issued_buckets?: number;
+  total_buckets?: number;
+  issued_pct?: number;
+  /** The team's earlier order still to issue first (0 = none). */
+  waits_for?: number;
 };
 
 /** The endpoint returns `orders` at the TOP LEVEL of the body alongside a
@@ -181,7 +189,7 @@ export const karenIssuingApi = {
     return res.message ?? {};
   },
 
-  /** List sale orders ready to be issued for a day (YYYY-MM-DD; default today). */
+  /** List submitted sale orders ready to be issued for a day (YYYY-MM-DD; default today). */
   fetchReadyOrders(date: string): Promise<RawReadyOrdersResponse> {
     return api<RawReadyOrdersResponse>({
       method: 'GET',

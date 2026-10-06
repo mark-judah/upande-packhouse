@@ -13,6 +13,17 @@ export type RawOplItem = {
   varieties?: string[];
   stem_lengths?: string[];
   qty?: string | number;
+  issued_buckets?: number;
+  total_buckets?: number;
+  issued_pct?: number;
+  packed_pct?: number;
+  /** "Wham (50cm)" per variety with its own stem lengths. */
+  variety_lengths?: string[];
+  schedule?: number;
+  schedule_team?: string;
+  is_next?: boolean;
+  /** The team's earlier order still to pack first (0 = none). */
+  waits_for?: number;
 };
 export type RawPicklistsResponse = {
   message?: { success?: boolean; data?: RawOplItem[]; count?: number };

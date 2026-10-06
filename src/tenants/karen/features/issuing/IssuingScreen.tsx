@@ -121,26 +121,33 @@ export function KarenIssuingScreen() {
   // spec — operators pick the specific pick list, not a merged sale order.
   // Listed in schedule order (the server's: every team's #1, then #2 …); each shows
   // its place, and the team's next order to issue says so.
-  const orderOptions = filteredOrders.map((o) => ({
-    label:
-      [
-        o.schedule ? `#${o.schedule}${o.isNext ? ' · Next' : ''}` : null,
-        o.customer,
-        o.varieties.join(', '),
-        o.stemLengths.join(', '),
-      ]
-        .filter(Boolean)
-        .join(' · ') || o.name,
-    value: o.oplName,
-    sublabel:
-      [
-        o.schedule ? `${o.scheduleTeam || 'Team'} #${o.schedule}` : 'Not scheduled',
-        o.name,
-        o.qty ? `${o.qty} stems` : null,
-      ]
-        .filter(Boolean)
-        .join(' · ') || undefined,
-  }));
+  const doneOrders = availableOrders.filter((o) => o.issuedPct >= 100).length;
+  const orderOptions = filteredOrders.map((o) => {
+    const varieties = (o.varietyLengths.length ? o.varietyLengths : o.varieties).join(', ');
+    const parts: { text: string; bold?: boolean; semi?: boolean }[] = [];
+    if (o.name) parts.push({ text: o.name, bold: true });
+    if (varieties) parts.push(...(parts.length ? [{ text: ' · ' }] : []), { text: varieties, semi: true });
+    return {
+      label: parts.map((p) => p.text).join('') || o.oplName,
+      parts,
+      value: o.oplName,
+      corner: o.schedule
+        ? `${o.scheduleTeam || 'Team'} #${o.schedule}`
+        : 'Not scheduled',
+      subParts: [
+        { text: o.oplName },
+        ...(o.customer ? [{ text: ` · ${o.customer}` }] : []),
+        ...(o.totalBuckets
+          ? [
+              { text: ' · ' },
+              o.issuedPct >= 100
+                ? { text: `100% issued (${o.issuedBuckets}/${o.totalBuckets} bkt)`, bold: true, color: COLORS.success }
+                : { text: `${o.issuedPct}% issued (${o.issuedBuckets}/${o.totalBuckets} bkt)` },
+            ]
+          : []),
+      ],
+    };
+  });
 
   const selectedOplInfo = useMemo(
     () => availableOrders.find((o) => o.oplName === selectedOpl) ?? null,
@@ -195,6 +202,7 @@ export function KarenIssuingScreen() {
           label="Pick List"
           value={selectedOpl}
           options={orderOptions}
+          hideScrollbar
           placeholder={ordersLoading ? 'Loading…' : 'Pick a pick list'}
           iconName="clipboard-text-outline"
           onChange={onPickOrder}
@@ -207,7 +215,7 @@ export function KarenIssuingScreen() {
               ? 'No pick lists are ready to be issued.'
               : selectedItemGroup || selectedTeam
                 ? `${filteredOrders.length} of ${availableOrders.length} pick list${availableOrders.length === 1 ? '' : 's'}${[selectedItemGroup, selectedTeam].filter(Boolean).length ? ' · ' + [selectedItemGroup, selectedTeam].filter(Boolean).join(' · ') : ''}`
-                : `${availableOrders.length} pick list${availableOrders.length === 1 ? '' : 's'} ready`}
+                : `${availableOrders.length - doneOrders} pick list${availableOrders.length - doneOrders === 1 ? '' : 's'} to issue${doneOrders ? ` · ${doneOrders} fully issued` : ''}`}
         </Text>
         {!ordersLoading && availableOrders.length === 0 ? (
           <>
@@ -223,8 +231,21 @@ export function KarenIssuingScreen() {
         >
           {selectedOplInfo ? (
             <Text style={s.helper}>
-              {selectedOplInfo.name} · {selectedOplInfo.varieties.join(', ') || '—'}
-              {selectedOplInfo.stemLengths.length ? ` · ${selectedOplInfo.stemLengths.join(', ')}` : ''}
+              <Text style={s.bold}>{selectedOplInfo.name}</Text> ·{' '}
+              <Text style={s.semi}>
+                {(selectedOplInfo.varietyLengths.length
+                  ? selectedOplInfo.varietyLengths
+                  : selectedOplInfo.varieties
+                ).join(', ') || '—'}
+              </Text>
+              {selectedOplInfo.totalBuckets ? (
+                <>
+                  {' · '}
+                  <Text style={selectedOplInfo.issuedPct >= 100 ? s.issuedDone : undefined}>
+                    {`${selectedOplInfo.issuedPct}% issued (${selectedOplInfo.issuedBuckets}/${selectedOplInfo.totalBuckets} bkt)`}
+                  </Text>
+                </>
+              ) : null}
               {selectedOplInfo.qty ? ` · ${selectedOplInfo.qty} stems` : ''}
             </Text>
           ) : null}
@@ -447,6 +468,9 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 const s = StyleSheet.create({
+  bold: { fontFamily: fontFamily.bold },
+  semi: { fontFamily: fontFamily.semiBold },
+  issuedDone: { fontFamily: fontFamily.bold, color: COLORS.success },
   helper: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.xs,

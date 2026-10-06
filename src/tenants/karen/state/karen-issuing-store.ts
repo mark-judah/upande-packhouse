@@ -94,6 +94,12 @@ export type ReadyOrder = {
   scheduleTeam: string;
   /** The team's next order to issue. */
   isNext: boolean;
+  /** "Wham (50cm)" per variety with its own stem lengths. */
+  varietyLengths: string[];
+  issuedBuckets: number;
+  totalBuckets: number;
+  issuedPct: number;
+  waitsFor: number;
 };
 
 type State = {
@@ -178,6 +184,11 @@ function toReadyOrder(entry: string | RawReadyOrder): ReadyOrder | null {
     schedule: Number(entry.schedule ?? 0) || 0,
     scheduleTeam: (entry.schedule_team ?? '').toString(),
     isNext: !!entry.is_next,
+    varietyLengths: toStringList(entry.variety_lengths),
+    issuedBuckets: Number(entry.issued_buckets ?? 0),
+    totalBuckets: Number(entry.total_buckets ?? 0),
+    issuedPct: Number(entry.issued_pct ?? 0),
+    waitsFor: Number(entry.waits_for ?? 0),
   };
 }
 
@@ -488,7 +499,21 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
     const out: IssueOutcome = failure
       ? { kind: 'error', bucket: bucketId, message: failure }
       : { kind: 'success', bucket: bucketId, message: [...new Set(messages)].join('\n') || undefined };
-    set({ submitting: false, packingItems: updated, lastOutcome: out });
+    // Progress on the order list: the bucket counts once all its lines are issued, and
+    // a fully issued order moves to the bottom of the list.
+    const nowIssued =
+      !match.isIssued &&
+      updated.some((it) => it.bucket === match.bucket && it.oplName === match.oplName && it.isIssued);
+    const availableOrders = nowIssued
+      ? get()
+          .availableOrders.map((o) => {
+            if (o.oplName !== match.oplName || !o.totalBuckets) return o;
+            const issuedBuckets = Math.min(o.totalBuckets, o.issuedBuckets + 1);
+            return { ...o, issuedBuckets, issuedPct: Math.round((100 * issuedBuckets) / o.totalBuckets) };
+          })
+          .sort((a, b) => Number(a.issuedPct >= 100) - Number(b.issuedPct >= 100))
+      : get().availableOrders;
+    set({ submitting: false, packingItems: updated, lastOutcome: out, availableOrders });
     return out;
   },
 
