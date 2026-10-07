@@ -17,10 +17,11 @@ import { useNetworkStore } from '@/src/core/network/store';
  * on the installed runtime. With an APK available the same button downloads it.
  */
 export function ApkUpdateSection() {
-  const { check, checking, checkError, downloading, progress, installError, refresh, install } =
+  const { check, checking, checkError, downloading, progress, downloaded, installError, refresh, install } =
     useApkUpdate();
   const apk = check?.apk ?? null;
   const available = !!check?.available;
+  const ready = available && !!apk && downloaded === apk.version;
   const { showSuccess, showError } = useToast();
   const [otaChecking, setOtaChecking] = useState(false);
   const online = useNetworkStore((st) => st.online);
@@ -32,12 +33,13 @@ export function ApkUpdateSection() {
       return `Downloading ${Math.round(progress.fraction * 100)}% · ${written} of ${formatBytes(progress.total)}`;
     }
     if (checking || otaChecking) return 'Checking for updates…';
+    if (ready && apk) return `Install v${apk.version}`;
     if (available && apk) {
       const size = formatBytes(apk.sizeBytes);
       return `Download v${apk.version}${size ? ` (${size})` : ''}`;
     }
     return 'Check for updates';
-  }, [downloading, progress, checking, otaChecking, available, apk]);
+  }, [downloading, progress, checking, otaChecking, ready, available, apk]);
 
   /** A JS patch for the runtime this APK already has, through `updates.url`. */
   const checkOta = useCallback(async (apkChecked: boolean) => {
@@ -120,7 +122,8 @@ export function ApkUpdateSection() {
   let status: string | null = null;
   if (check) {
     // Only news is shown: being up to date needs no line of its own.
-    if (available && apk) status = `v${apk.version} is available as a new APK.`;
+    if (ready && apk) status = `v${apk.version} is downloaded and ready to install.`;
+    else if (available && apk) status = `v${apk.version} is available as a new APK.`;
   }
 
   return (
@@ -148,7 +151,7 @@ export function ApkUpdateSection() {
         onPress={onPress}
         loading={checking || otaChecking}
         disabled={downloading}
-        iconLeft={available ? 'download-outline' : 'cloud-download-outline'}
+        iconLeft={ready ? 'checkmark-circle-outline' : available ? 'download-outline' : 'cloud-download-outline'}
       />
     </View>
   );

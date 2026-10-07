@@ -51,7 +51,8 @@ const INSTALL_ACTION = 'android.intent.action.INSTALL_PACKAGE';
 const UNKNOWN_SOURCES_SETTINGS = 'android.settings.MANAGE_UNKNOWN_APP_SOURCES';
 const APK_MIME = 'application/vnd.android.package-archive';
 
-/** A dropped connection is normal for a file this size; one failure is not final. */
+/** A dropped connection is normal for a file this size: it is resumed, and only
+ *  this many failures in a row without progress are final. */
 const DOWNLOAD_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 1500;
 
@@ -90,15 +91,50 @@ export async function openInBrowser(url: string): Promise<void> {
   await Linking.openURL(url);
 }
 
+/** Where a release's APK lands: the files directory, not the cache — Android
+ *  evicts cache under storage pressure, mid-write, which surfaces as a bare
+ *  IOException. */
+function apkPath(url: string, fileName?: string | null): string | null {
+  const dir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+  if (!dir) return null;
+  return `${dir}${fileName || url.split('/').pop() || 'update.apk'}`;
+}
+
+async function sizeOf(uri: string): Promise<number> {
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    return info.exists && !info.isDirectory ? info.size ?? 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * The local URI of a release that is already fully downloaded, or null. Only
+ * trusted when the release's exact size is known — a partial file looks like
+ * a whole one otherwise.
+ */
+export async function findDownloadedApk(
+  url: string,
+  opts: { fileName?: string | null; expectedBytes?: number | null } = {},
+): Promise<string | null> {
+  if (Platform.OS !== 'android' || !url || !opts.expectedBytes) return null;
+  const target = apkPath(url, opts.fileName);
+  if (!target) return null;
+  return (await sizeOf(target)) === opts.expectedBytes ? target : null;
+}
+
 /**
  * Download `url` into the app's files directory and return the local URI.
  *
- * Kept separate from launching the installer because Android 10+ refuses to
- * start an activity from the background: a download that lands while the app
- * is not visible must be held and the installer opened on the next foreground.
+ * Kept separate from launching the installer: the APK is kept once complete,
+ * so the installer can be opened (and reopened, after a dismissed installer)
+ * without fetching it again.
  *
- * Files directory, not cache: Android evicts cache under storage pressure,
- * mid-write, which surfaces as a bare IOException.
+ * A dropped connection resumes from the bytes already on disk (an HTTP Range
+ * request) instead of starting over, and so does a download cut off by the
+ * app being closed. Resuming needs the release's exact size, which is also
+ * what proves the result complete.
  */
 export async function downloadApk(
   url: string,
@@ -107,27 +143,35 @@ export async function downloadApk(
   if (Platform.OS !== 'android') throw new InstallError('APK installation is only possible on Android.');
   if (!url) throw new InstallError('No download link for this release.');
 
-  const dir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
-  if (!dir) throw new InstallError('No storage is available for the download.');
-  const target = `${dir}${opts.fileName || url.split('/').pop() || 'update.apk'}`;
+  const target = apkPath(url, opts.fileName);
+  if (!target) throw new InstallError('No storage is available for the download.');
+  const dir = target.slice(0, target.lastIndexOf('/') + 1);
+  const expected = opts.expectedBytes || null;
 
-  // Sweep every APK first: a partial file would be rejected as corrupt, and the
-  // files directory is never reclaimed by Android. Deleting after launching is
-  // unsafe because the installer reads the file asynchronously.
+  const done = await findDownloadedApk(url, opts);
+  if (done) {
+    opts.onProgress?.({ fraction: 1, written: expected ?? 0, total: expected });
+    return done;
+  }
+
+  // Sweep every other APK: the files directory is never reclaimed by Android.
+  // This release's partial file stays, to be resumed. Deleting after launching
+  // is unsafe because the installer reads the file asynchronously.
   try {
     for (const entry of await FileSystem.readDirectoryAsync(dir)) {
-      if (entry.toLowerCase().endsWith('.apk')) {
+      if (entry.toLowerCase().endsWith('.apk') && `${dir}${entry}` !== target) {
         await FileSystem.deleteAsync(`${dir}${entry}`, { idempotent: true }).catch(() => {});
       }
     }
   } catch {
     // An unreadable directory is no reason to refuse the download.
   }
+  if (!expected) await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => {});
 
   // Say "not enough space" up front rather than a generic write error halfway.
   try {
     const free = await FileSystem.getFreeDiskStorageAsync();
-    const needed = (opts.expectedBytes || 80 * 1024 * 1024) * 1.1;
+    const needed = ((expected ?? 80 * 1024 * 1024) - (await sizeOf(target))) * 1.1;
     if (free != null && free < needed) {
       throw new InstallError(
         `Not enough free space for the update — about ${Math.ceil(needed / 1048576)} MB is ` +
@@ -143,45 +187,61 @@ export async function downloadApk(
     if (!opts.onProgress) return;
     const written = p.totalBytesWritten;
     // Android reports -1 when there is no Content-Length.
-    const total = p.totalBytesExpectedToWrite > 0 ? p.totalBytesExpectedToWrite : null;
-    opts.onProgress({ fraction: total ? written / total : null, written, total });
+    const total = expected ?? (p.totalBytesExpectedToWrite > 0 ? p.totalBytesExpectedToWrite : null);
+    opts.onProgress({ fraction: total ? Math.min(written / total, 1) : null, written, total });
   };
 
-  // Each attempt starts clean; `resumeAsync` only resumes from `pauseAsync`
-  // state, so after an error it would restart anyway — and risk appending.
-  let result: FileSystem.FileSystemDownloadResult | undefined;
+  // Attempts that moved the download forward don't count against the limit:
+  // only DOWNLOAD_ATTEMPTS failures in a row without a new byte give up.
   let lastError: unknown;
-  for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
-    try {
-      if (attempt > 1) {
-        await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => {});
-        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * (attempt - 1)));
-      }
-      result = await FileSystem.createDownloadResumable(url, target, {}, report).downloadAsync();
-      if (result?.uri) break;
-    } catch (err) {
-      lastError = err;
-      if (__DEV__) console.warn(`[update] download attempt ${attempt}/${DOWNLOAD_ATTEMPTS} failed:`, err);
+  let stalled = 0;
+  while (stalled < DOWNLOAD_ATTEMPTS) {
+    let have = expected ? await sizeOf(target) : 0;
+    if (expected && have > expected) {
+      // The server ignored the Range and appended a whole copy: start clean.
+      await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => {});
+      have = 0;
     }
+    if (expected && have === expected) return target;
+    if (stalled > 0) await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * stalled));
+
+    try {
+      const result = await FileSystem.createDownloadResumable(
+        url,
+        target,
+        {},
+        report,
+        have > 0 ? String(have) : undefined,
+      ).downloadAsync();
+      if (result?.status && (result.status < 200 || result.status >= 300)) {
+        // An error page may have been appended to the partial file.
+        await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => {});
+        if (__DEV__) console.warn(`[update] update file answered ${result.status}`);
+        throw new InstallError("The update file isn't available right now. Try again later.", 'download');
+      }
+      if (result?.uri && !expected) {
+        // An HTML error page saved under a .apk name is still a "successful" download.
+        if (!(await sizeOf(result.uri))) {
+          throw new InstallError("The update didn't download properly. Try again.", 'download');
+        }
+        return result.uri;
+      }
+    } catch (err) {
+      if (err instanceof InstallError) throw err;
+      lastError = err;
+      if (__DEV__) console.warn('[update] download interrupted:', err);
+    }
+    if (!expected || (await sizeOf(target)) <= have) stalled += 1;
+    else stalled = 0;
   }
 
-  if (!result?.uri) {
-    const reason = lastError instanceof Error && lastError.message ? ` (${lastError.message})` : '';
-    throw new InstallError(
-      `The download failed after ${DOWNLOAD_ATTEMPTS} attempts${reason}. Check your connection and try again.`,
-      'download',
-      lastError,
-    );
-  }
-  if (result.status && (result.status < 200 || result.status >= 300)) {
-    throw new InstallError(`The server returned ${result.status} for the update file.`, 'download');
-  }
-
-  // An HTML error page saved under a .apk name is still a "successful" download.
-  const info = await FileSystem.getInfoAsync(result.uri);
-  if (!info.exists || !info.size) throw new InstallError('The downloaded file is empty.', 'download');
-
-  return result.uri;
+  // The system's own error text is for the logs, not the person updating.
+  if (__DEV__) console.warn('[update] download failed:', lastError);
+  throw new InstallError(
+    "The update couldn't be downloaded. Check your connection and try again.",
+    'download',
+    lastError,
+  );
 }
 
 /**
