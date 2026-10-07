@@ -190,7 +190,20 @@ export const karenIssuingApi = {
   },
 
   /** List submitted sale orders ready to be issued for a day (YYYY-MM-DD; default today). */
-  fetchReadyOrders(date: string): Promise<RawReadyOrdersResponse> {
+  async fetchReadyOrders(date: string, station?: string): Promise<RawReadyOrdersResponse> {
+    // Scoped to the configured station's location (Karen vs Ravine) by the
+    // packhouseIssuingOrders Server Script; the app endpoint lists both.
+    if (station) {
+      try {
+        return await api<RawReadyOrdersResponse>({
+          method: 'GET',
+          url: '/api/method/packhouseIssuingOrders',
+          params: { date, station },
+        });
+      } catch {
+        // Not on this server: fall through to the unscoped list.
+      }
+    }
     return api<RawReadyOrdersResponse>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.getReadySaleOrderItems',

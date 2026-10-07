@@ -8,6 +8,7 @@ import type {
   RawReadySaleOrderItem,
 } from '../api/karen-issuing-api';
 import { mapAxiosError } from '@/src/core/api/client';
+import { readUserStation } from '@/src/core/tenant/user-station';
 import { tomorrowISO } from '@/src/core/date';
 
 /** Normalised packing-list row used by the screen. */
@@ -338,7 +339,8 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
   loadOrders: async () => {
     set({ ordersLoading: true });
     try {
-      const raw = await karenIssuingApi.fetchReadyOrders(get().selectedDate);
+      const station = await readUserStation();
+      const raw = await karenIssuingApi.fetchReadyOrders(get().selectedDate, station?.userFarm);
       // Drop stale filters if the reloaded orders no longer contain them.
       const orders = extractOrders(raw);
       const groups = new Set(orders.flatMap((o) => o.itemGroups));
