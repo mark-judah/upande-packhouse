@@ -89,12 +89,18 @@ export function KarenDispatchScreen() {
   return (
     <Screen title="Dispatch" onRefresh={loadOrders}>
       <Card title="Delivery day">
-        <Text style={s.filterLabel}>Location</Text>
-        <Segmented
-          value={location || locations[0] || ''}
-          options={locations.map((l) => ({ value: l, label: l }))}
-          onChange={(v) => void setLocation(v)}
-        />
+        {/* A station dispatches its own location only; the choice is for a device
+            with no station set. */}
+        {farm ? null : (
+          <>
+            <Text style={s.filterLabel}>Location</Text>
+            <Segmented
+              value={location || locations[0] || ''}
+              options={locations.map((l) => ({ value: l, label: l }))}
+              onChange={(v) => void setLocation(v)}
+            />
+          </>
+        )}
         <DateSelector
           value={selectedDate}
           onChange={(d) => { if (d !== selectedDate) setDate(d); }}

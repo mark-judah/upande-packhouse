@@ -44,6 +44,7 @@ export function KarenIssuingScreen() {
     openReplace,
     closeReplace,
     confirmReplace,
+    completeShort,
     issuedOfflineInfo,
     markIssuedOffline,
     reset,
@@ -145,6 +146,15 @@ export function KarenIssuingScreen() {
                 : { text: `${o.issuedPct}% issued (${o.issuedBuckets}/${o.totalBuckets} bkt)` },
             ]
           : []),
+        ...(o.notFound
+          ? [
+              {
+                text: ` · ${o.draft ? 'DRAFT · ' : ''}${o.notFound} not found · short ${o.shortPct}%`,
+                bold: true,
+                color: COLORS.danger,
+              },
+            ]
+          : []),
       ],
     };
   });
@@ -153,6 +163,33 @@ export function KarenIssuingScreen() {
     () => availableOrders.find((o) => o.oplName === selectedOpl) ?? null,
     [availableOrders, selectedOpl],
   );
+
+  // Complete short: every bucket that is here issued, the not-found ones left out.
+  const [completing, setCompleting] = useState(false);
+  const readyToComplete = packingItems.length > 0 && packingItems.every((i) => i.isIssued || i.notFound);
+  const onCompleteShort = () => {
+    if (!selectedOplInfo) return;
+    showDialog(
+      'Complete short?',
+      `${selectedOplInfo.name}: ${selectedOplInfo.notFound} bucket${selectedOplInfo.notFound === 1 ? '' : 's'} not found ` +
+        `(${Math.round(selectedOplInfo.shortStems)} stems, ${selectedOplInfo.shortPct}%). ` +
+        'The order is recorded short and goes to packing with what was issued.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Complete short',
+          onPress: async () => {
+            setCompleting(true);
+            const res = await completeShort();
+            setCompleting(false);
+            if (res.ok) showSuccess(res.message);
+            else showError(res.message);
+          },
+        },
+      ],
+      { name: 'cut-outline', tone: 'warn' },
+    );
+  };
 
   const onPickOrder = (next: string) => {
     if (!next || next === selectedOpl) return;
@@ -248,6 +285,22 @@ export function KarenIssuingScreen() {
               ) : null}
               {selectedOplInfo.qty ? ` · ${selectedOplInfo.qty} stems` : ''}
             </Text>
+          ) : null}
+          {selectedOplInfo && selectedOplInfo.notFound ? (
+            <View style={s.shortBox}>
+              <Alert tone="warn">
+                {`${selectedOplInfo.notFound} bucket${selectedOplInfo.notFound === 1 ? '' : 's'} not found at the farm` +
+                  ` · ${Math.round(selectedOplInfo.shortStems)} stems · short ${selectedOplInfo.shortPct}%` +
+                  (selectedOplInfo.draft ? ' · still a draft' : '')}
+              </Alert>
+              <Button
+                label={`Complete short (${selectedOplInfo.shortPct}%)`}
+                variant="outline"
+                disabled={completing || !readyToComplete}
+                loading={completing}
+                onPress={onCompleteShort}
+              />
+            </View>
           ) : null}
           {packingLoading ? (
             <Text style={s.helper}>Loading packing list…</Text>
@@ -435,6 +488,11 @@ function PackingRow({ item, onReplace }: { item: PackingItem; onReplace?: () => 
           <View style={s.tagDone}>
             <Text style={s.tagDoneText}>ISSUED</Text>
           </View>
+        ) : item.notFound ? (
+          // Marked not found at its farm: never coming -- replace it or complete short.
+          <View style={s.tagNotFound}>
+            <Text style={s.tagNotFoundText}>NOT FOUND</Text>
+          </View>
         ) : item.waitingTransfer ? (
           // Replaced from a remote farm: on its way, issued once it is shelved here.
           <View style={s.tagMixed}>
@@ -449,8 +507,12 @@ function PackingRow({ item, onReplace }: { item: PackingItem; onReplace?: () => 
         ) : null}
         {!done && onReplace ? (
           <Pressable onPress={onReplace} hitSlop={8} style={s.infoBtn} accessibilityRole="button">
-            <Ionicons name="information-circle-outline" size={14} color={COLORS.text} />
-            <Text style={s.infoLink}>Info</Text>
+            <Ionicons
+              name={item.notFound ? 'swap-horizontal-outline' : 'information-circle-outline'}
+              size={14}
+              color={COLORS.text}
+            />
+            <Text style={s.infoLink}>{item.notFound ? 'Replace' : 'Info'}</Text>
           </Pressable>
         ) : null}
       </View>
@@ -566,6 +628,19 @@ const s = StyleSheet.create({
     fontFamily: fontFamily.bold,
     fontSize: 9,
     color: '#166534',
+    letterSpacing: 0.4,
+  },
+  shortBox: { gap: spacing.sm, marginTop: spacing.sm },
+  tagNotFound: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: '#fee2e2',
+  },
+  tagNotFoundText: {
+    fontFamily: fontFamily.bold,
+    fontSize: 9,
+    color: '#991b1b',
     letterSpacing: 0.4,
   },
   tagMixed: {

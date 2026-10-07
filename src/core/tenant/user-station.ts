@@ -72,6 +72,12 @@ export function useUserStation() {
 
 // Imperative helpers for non-React code paths (rare, but kept for parity).
 export const readUserStation = readFromStorage;
+/** `{ station }` for a request scoped to this device's station (Karen and Ravine share
+ *  packing teams, not orders); empty when no station is set. */
+export async function stationParams(): Promise<{ station?: string }> {
+  const station = await readFromStorage();
+  return station?.userFarm ? { station: station.userFarm } : {};
+}
 export async function writeUserStation(station: UserStation): Promise<void> {
   await useStationStoreInternal.getState().setStation(station);
 }

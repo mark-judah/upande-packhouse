@@ -26,6 +26,8 @@ export type PackingItem = {
   isIssued: boolean;
   /** Replaced from a remote farm: issued once the truck brings it and it is shelved. */
   waitingTransfer: string | null;
+  /** Marked not found at its farm: never coming -- replace it, or complete the order short. */
+  notFound: boolean;
   /** Sale order lines this bucket feeds on the OPL; each is issued on its own. */
   lines: PackingLine[];
 };
@@ -101,6 +103,12 @@ export type ReadyOrder = {
   totalBuckets: number;
   issuedPct: number;
   waitsFor: number;
+  /** Still a draft: a farm marked buckets not found and nothing else is coming. */
+  draft: boolean;
+  /** Buckets marked not found, and their stems as a share of the order. */
+  notFound: number;
+  shortStems: number;
+  shortPct: number;
 };
 
 type State = {
@@ -132,6 +140,8 @@ type State = {
   /** Open the Replace sheet for a bucket that cannot be found. */
   openReplace: (item: PackingItem) => Promise<void>;
   closeReplace: () => void;
+  /** Complete the selected order without its not-found buckets (short), for packing. */
+  completeShort: () => Promise<{ ok: boolean; message: string }>;
   /** Swap the bucket for `newBucket`; the packing list reloads to show it. */
   confirmReplace: (
     newBucket: string,
@@ -190,6 +200,10 @@ function toReadyOrder(entry: string | RawReadyOrder): ReadyOrder | null {
     totalBuckets: Number(entry.total_buckets ?? 0),
     issuedPct: Number(entry.issued_pct ?? 0),
     waitsFor: Number(entry.waits_for ?? 0),
+    draft: !!entry.draft,
+    notFound: Number(entry.not_found ?? 0),
+    shortStems: Number(entry.short_stems ?? 0),
+    shortPct: Number(entry.short_pct ?? 0),
   };
 }
 
@@ -259,6 +273,7 @@ function extractPackingList(raw: RawPackingListResponse): PackingItem[] {
         downgradeTo:   r.downgrade_to ? r.downgrade_to.toString() : null,
         isIssued:      true,
         waitingTransfer: null,
+        notFound:      false,
         lines:         [],
       };
       merged.set(key, item);
@@ -270,6 +285,7 @@ function extractPackingList(raw: RawPackingListResponse): PackingItem[] {
     }
 
     if (r.waiting_transfer) item.waitingTransfer = (r.transfer_farm ?? '').toString() || 'remote farm';
+    if (r.not_found) item.notFound = true;
     item.qty = String((Number(item.qty) || 0) + qty);
     item.isIssued = item.isIssued && isIssued;
     const line = item.lines.find((l) => l.saleOrderItem === saleOrderItem);
@@ -568,6 +584,20 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
   },
 
   closeReplace: () => set({ replace: null }),
+
+  completeShort: async () => {
+    const opl = get().selectedOpl;
+    if (!opl) return { ok: false, message: 'Pick an order first.' };
+    try {
+      const res = (await karenIssuingApi.completeShort(opl))?.message;
+      if (!res?.success) return { ok: false, message: res?.message || 'Could not complete the order.' };
+      await get().loadOrders();
+      await get().selectOrder(opl);
+      return { ok: true, message: res.message || 'Completed short.' };
+    } catch (err) {
+      return { ok: false, message: mapAxiosError(err).message || 'Could not complete the order.' };
+    }
+  },
 
   confirmReplace: async (newBucket, reason) => {
     const sheet = get().replace;

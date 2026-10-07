@@ -1,18 +1,27 @@
 import { api } from '@/src/core/api/client';
+import { stationParams } from '@/src/core/tenant/user-station';
 
 /** A pick-list line inside a scheduler OPL — carries the per-bucket status flags. */
 export type RawSchedulerLocation = {
   item_code?: string;
   item_name?: string;
+  stock_qty?: number | string;
+  custom_ready_for_packing?: number;
+  // v16 sends the transfer flags bare; the custom_* names are the v15 ones.
+  bucket?: string;
+  stem_length?: string;
+  awaiting_transfer?: number;
+  loaded_in_trolley?: number;
+  in_transit?: number;
+  shelved?: number;
+  issued?: number;
   custom_bucket?: string;
   custom_stem_length?: string;
-  stock_qty?: number | string;
   custom_awaiting_transfer?: number;
   custom_loaded_in_trolley?: number;
   custom_in_transit?: number;
   custom_shelved?: number;
   custom_issued?: number;
-  custom_ready_for_packing?: number;
 };
 
 /** A spec line on the OPL — from the Sales Order Item the pick-list lines reference. */
@@ -27,6 +36,8 @@ export type RawSchedulerSpec = {
 export type RawSchedulerOpl = {
   name?: string;
   customer?: string;
+  order_name?: string;
+  team?: string;
   custom_order_name?: string;
   custom_farm?: string;
   custom_team?: string;
@@ -67,11 +78,11 @@ const JOIN = '|~|';
 
 export const karenSchedulerApi = {
   /** OPLs for a delivery date (default today) with per-bucket status + box counts. */
-  fetchData(deliveryDate: string): Promise<RawSchedulerDataResponse> {
+  async fetchData(deliveryDate: string): Promise<RawSchedulerDataResponse> {
     return api<RawSchedulerDataResponse>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.getSchedulerData',
-      params: { delivery_date: deliveryDate },
+      params: { delivery_date: deliveryDate, ...(await stationParams()) },
     });
   },
 

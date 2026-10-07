@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { FlatList, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card } from '@/src/core/ui/Card';
 import { DateSelector } from '@/src/core/ui/DateSelector';
@@ -68,8 +68,21 @@ export function KarenSchedulerScreen() {
     });
   }, [orders, query, selectedTeam]);
 
-  return (
-    <Screen title="Scheduler" onRefresh={load}>
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [load]);
+
+  // A day can hold 200+ orders: a plain scroll view drew every card at once and
+  // ran low-memory phones out of memory ("keeps stopping"). The list only draws
+  // what is on screen.
+  const header = (
+    <>
       <Card title="Delivery day">
         <DateSelector
           value={date}
@@ -111,23 +124,49 @@ export function KarenSchedulerScreen() {
         </Card>
       ) : null}
 
-      {filtered.map((o) => (
-        <OrderRow key={o.oplName} order={o} />
-      ))}
+    </>
+  );
 
-      {!loading && orders.length === 0 && !error ? (
-        <Card><Text style={s.helper}>No orders for this delivery date.</Text></Card>
-      ) : null}
-
-      {!loading && orders.length > 0 && filtered.length === 0 ? (
-        <Card><Text style={s.helper}>No orders match “{query.trim()}”.</Text></Card>
-      ) : null}
+  return (
+    <Screen title="Scheduler" scroll={false}>
+      <FlatList
+        data={filtered}
+        keyExtractor={(o) => o.oplName}
+        renderItem={({ item }) => <OrderRow order={item} />}
+        ListHeaderComponent={header}
+        ListEmptyComponent={
+          loading ? null : orders.length === 0 ? (
+            error ? null : (
+              <Card><Text style={s.helper}>No orders for this delivery date.</Text></Card>
+            )
+          ) : (
+            <Card><Text style={s.helper}>No orders match “{query.trim()}”.</Text></Card>
+          )
+        }
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.text} colors={[COLORS.text]} />
+        }
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
+      />
     </Screen>
   );
 }
 
-function OrderRow({ order }: { order: SchedulerOrder }) {
+const OrderRow = memo(function OrderRow({ order }: { order: SchedulerOrder }) {
   const badges = STAGES.filter((st) => (order.stages[st] || 0) > 0);
+  // Every bucket already at Kapkolia: none waiting at a farm, on a trolley or on the road.
+  const atHub =
+    !order.packed &&
+    order.buckets > 0 &&
+    !order.stages['Awaiting Transfer'] &&
+    !order.stages['Loaded in Trolley'] &&
+    !order.stages['In Transit'];
 
   return (
     <View style={s.row}>
@@ -143,6 +182,11 @@ function OrderRow({ order }: { order: SchedulerOrder }) {
         <View style={s.titleLine}>
           <Text style={s.customer} numberOfLines={1}>{order.customer || '—'}</Text>
           {order.packed ? <Text style={s.packed}>packed</Text> : null}
+          {atHub ? (
+            <View style={s.hub}>
+              <Text style={s.hubText}>At Kapkolia</Text>
+            </View>
+          ) : null}
         </View>
         <Text style={s.orderName} numberOfLines={1}>{order.orderName}</Text>
         {order.team ? <Text style={s.sub} numberOfLines={1}>{order.team}</Text> : null}
@@ -183,7 +227,7 @@ function OrderRow({ order }: { order: SchedulerOrder }) {
       </View>
     </View>
   );
-}
+});
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -233,6 +277,8 @@ const s = StyleSheet.create({
   customer: { flex: 1, fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: COLORS.text },
   orderName: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textSecondary, marginTop: 1 },
   packed: { fontFamily: fontFamily.bold, fontSize: 10, color: '#16a34a' },
+  hub: { backgroundColor: '#e3ecfd', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
+  hubText: { fontFamily: fontFamily.bold, fontSize: 10, color: '#1d4ed8' },
   sub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 1 },
   specs: { marginTop: 6, gap: 2 },
   specRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },

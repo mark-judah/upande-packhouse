@@ -30,6 +30,8 @@ export type OplOption = {
   totalBuckets: number;
   issuedPct: number;
   packedPct: number;
+  /** Completed short (buckets not found): the share of stems it goes without. */
+  shortPct: number;
   varietyLengths: string[];
   schedule: number;
   scheduleTeam: string;
@@ -295,6 +297,7 @@ function extractPicklists(raw: RawPicklistsResponse): OplOption[] {
       totalBuckets: Number(d.total_buckets ?? 0),
       issuedPct: Number(d.issued_pct ?? 0),
       packedPct: Number(d.packed_pct ?? 0),
+      shortPct: d.short_accepted ? Number(d.short_pct ?? 0) : 0,
       varietyLengths: toStringList(d.variety_lengths),
       schedule: Number(d.schedule ?? 0),
       scheduleTeam: (d.schedule_team ?? '').toString(),
