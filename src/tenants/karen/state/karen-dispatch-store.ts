@@ -67,7 +67,7 @@ type State = {
   /** Locations to choose from (the server's Loading Plan options). */
   locations: string[];
   setLocation: (location: string) => Promise<void>;
-  /** The location remembered on this device, else the station's farm's. */
+  /** The station's location; on a device with no station, the one remembered. */
   initLocation: (farm: string) => Promise<void>;
 
   loadOrders: () => Promise<void>;
@@ -120,6 +120,12 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
   },
 
   initLocation: async (farm) => {
+    // A configured station dispatches its own location only: Karen never Ravine's.
+    if (farm) {
+      const own = farm === 'Karen' ? 'Karen' : 'Ravine';
+      if (get().location !== own) await get().setLocation(own);
+      return;
+    }
     if (get().location) return;
     let saved: string | null = null;
     try {

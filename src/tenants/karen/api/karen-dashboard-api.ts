@@ -1,4 +1,5 @@
 import { api } from '@/src/core/api/client';
+import { stationParams } from '@/src/core/tenant/user-station';
 
 /**
  * Packhouse home dashboard — boxes required vs boxes packed for one delivery
@@ -63,11 +64,11 @@ export type RawDashboardResponse = {
 };
 
 export const karenDashboardApi = {
-  fetch(date?: string): Promise<RawDashboardResponse> {
+  async fetch(date?: string): Promise<RawDashboardResponse> {
     return api<RawDashboardResponse>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.getPackhouseDashboardData',
-      params: date ? { date } : {},
+      params: { ...(date ? { date } : {}), ...(await stationParams()) },
     });
   },
 };

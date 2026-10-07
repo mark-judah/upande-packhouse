@@ -1,4 +1,5 @@
 import { api } from '@/src/core/api/client';
+import { stationParams } from '@/src/core/tenant/user-station';
 
 /** Raw line returned by `/api/method/upande_packhouse.mobile.api.getReadySaleOrderItemsData`. */
 export type RawReadySaleOrderItem = {
@@ -16,6 +17,8 @@ export type RawReadySaleOrderItem = {
   /** Replaced from a remote farm at issuing and not here yet. */
   waiting_transfer?: number;
   transfer_farm?: string | null;
+  /** Marked not found at its farm: never coming -- replace it or complete short. */
+  not_found?: number;
 };
 
 /** One ready-TO-ISSUE entry — one row PER ORDER PICK LIST (an OPL is the
@@ -50,6 +53,12 @@ export type RawReadyOrder = {
   issued_pct?: number;
   /** The team's earlier order still to issue first (0 = none). */
   waits_for?: number;
+  /** A draft listed because a farm marked buckets not found (nothing else coming). */
+  draft?: number;
+  not_found?: number;
+  short_stems?: number;
+  short_pct?: number;
+  short_accepted?: number;
 };
 
 /** The endpoint returns `orders` at the TOP LEVEL of the body alongside a
@@ -189,36 +198,35 @@ export const karenIssuingApi = {
     return res.message ?? {};
   },
 
-  /** List submitted sale orders ready to be issued for a day (YYYY-MM-DD; default today). */
+  /** Orders with buckets here to issue for a day (YYYY-MM-DD; default today). */
   async fetchReadyOrders(date: string, station?: string): Promise<RawReadyOrdersResponse> {
-    // Scoped to the configured station's location (Karen vs Ravine) by the
-    // packhouseIssuingOrders Server Script; the app endpoint lists both.
-    if (station) {
-      try {
-        return await api<RawReadyOrdersResponse>({
-          method: 'GET',
-          url: '/api/method/packhouseIssuingOrders',
-          params: { date, station },
-        });
-      } catch {
-        // Not on this server: fall through to the unscoped list.
-      }
-    }
+    // Scoped by the server to the buckets at this station's farms (Karen vs Ravine).
     return api<RawReadyOrdersResponse>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.getReadySaleOrderItems',
-      params: { date },
+      params: station ? { date, station } : { date },
+    });
+  },
+
+  /** Complete an order without its not-found buckets: recorded short, then submitted
+   *  so packing takes it. Refused while a bucket is still to issue or on a truck. */
+  completeShort(oplName: string, reason?: string): Promise<{ message?: { success?: boolean; message?: string; short_pct?: number } }> {
+    return api({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.mobile.api.completeOplShort',
+      data: { opl_name: oplName, ...(reason ? { reason } : {}) },
     });
   },
 
   /** For a given Order Pick List, get its packing-list rows (one row per
    *  bucket allocated to THAT OPL only — never other OPLs of the same
    *  sale order). */
-  fetchPackingList(oplName: string): Promise<RawPackingListResponse> {
+  async fetchPackingList(oplName: string): Promise<RawPackingListResponse> {
     return api<RawPackingListResponse>({
       method: 'POST',
       url: '/api/method/upande_packhouse.mobile.api.getReadySaleOrderItemsData',
-      data: { opl_name: oplName },
+      // The station decides which buckets are here to scan (Karen vs Kapkolia).
+      data: { opl_name: oplName, ...(await stationParams()) },
     });
   },
 

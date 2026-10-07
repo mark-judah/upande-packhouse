@@ -67,12 +67,14 @@ function num(v: unknown): number {
 }
 
 function bucketStage(l: RawSchedulerLocation): string {
-  if (l.custom_issued) return 'Issued';
+  if (l.issued || l.custom_issued) return 'Issued';
   if (l.custom_ready_for_packing) return 'Ready for Packing';
-  if (l.custom_shelved) return 'Shelved';
-  if (l.custom_in_transit) return 'In Transit';
-  if (l.custom_loaded_in_trolley) return 'Loaded in Trolley';
-  return 'Awaiting Transfer';
+  if (l.shelved || l.custom_shelved) return 'Shelved';
+  if (l.in_transit || l.custom_in_transit) return 'In Transit';
+  if (l.loaded_in_trolley || l.custom_loaded_in_trolley) return 'Loaded in Trolley';
+  if (l.awaiting_transfer || l.custom_awaiting_transfer) return 'Awaiting Transfer';
+  // No transfer flag at all: allocated from Kapkolia's own shelves, never needed a truck.
+  return 'Shelved';
 }
 
 function buildOrder(
@@ -85,7 +87,7 @@ function buildOrder(
   const locs = o.locations ?? [];
   for (const l of locs) stages[bucketStage(l)] += 1;
   // Issuing % = buckets with the issued checkbox ticked / total buckets.
-  const issuedCount = locs.filter((l) => l.custom_issued).length;
+  const issuedCount = locs.filter((l) => l.issued || l.custom_issued).length;
   const issuingPct = locs.length ? Math.round((issuedCount / locs.length) * 100) : 0;
   const name = (o.name ?? '').toString();
   const specs: OrderSpec[] = (o.specs ?? []).map((sp) => ({
@@ -96,10 +98,10 @@ function buildOrder(
   }));
   return {
     oplName: name,
-    orderName: (o.custom_order_name || name).toString(),
+    orderName: (o.order_name || o.custom_order_name || name).toString(),
     scheduleNumber: Math.round(num(schedule[name])),
     customer: (o.customer ?? '').toString(),
-    team: (o.custom_team ?? '').toString(),
+    team: (o.team || o.custom_team || '').toString(),
     salesOrder: (o.sales_order ?? '').toString(),
     issuingPct,
     packed: packed[name] === 1,

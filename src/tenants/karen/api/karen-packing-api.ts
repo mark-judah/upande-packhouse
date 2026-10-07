@@ -1,4 +1,5 @@
 import { api } from '@/src/core/api/client';
+import { stationParams } from '@/src/core/tenant/user-station';
 
 // =====================================================================
 // fetchPicklists — list of order pick lists available for packing.
@@ -17,6 +18,9 @@ export type RawOplItem = {
   total_buckets?: number;
   issued_pct?: number;
   packed_pct?: number;
+  /** Completed short: the share of stems whose buckets were not found. */
+  short_pct?: number;
+  short_accepted?: number;
   /** "Wham (50cm)" per variety with its own stem lengths. */
   variety_lengths?: string[];
   schedule?: number;
@@ -209,11 +213,11 @@ export type RawBoxLabelsPdfResponse = {
 
 export const karenPackingApi = {
   /** List order pick lists for a given day (YYYY-MM-DD; defaults to today). */
-  fetchPicklists(date: string): Promise<RawPicklistsResponse> {
+  async fetchPicklists(date: string): Promise<RawPicklistsResponse> {
     return api<RawPicklistsResponse>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.fetchPicklists',
-      params: { date },
+      params: { date, ...(await stationParams()) },
     });
   },
 

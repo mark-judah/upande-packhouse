@@ -260,6 +260,7 @@ export function KarenPackingScreen() {
               { text: ' · ' },
             ]
           : []),
+        ...(o.shortPct ? [{ text: `short ${o.shortPct}% · `, bold: true, color: COLORS.danger }] : []),
         o.packedPct >= 100
           ? { text: '100% packed', bold: true, color: COLORS.success }
           : { text: `${o.packedPct}% packed` },
@@ -613,6 +614,9 @@ export function KarenPackingScreen() {
                 <Text style={selectedPicklist.issuedPct >= 100 ? s.packedDone : undefined}>
                   {`${selectedPicklist.issuedPct}% issued (${selectedPicklist.issuedBuckets}/${selectedPicklist.totalBuckets} buckets)`}
                 </Text>
+                {selectedPicklist.shortPct ? (
+                  <Text style={s.shortText}>{` · short ${selectedPicklist.shortPct}%`}</Text>
+                ) : null}
               </>
             ) : null}
             {' · '}
@@ -1141,6 +1145,7 @@ function BoxBreakdown({
 const s = StyleSheet.create({
   bold: { fontFamily: fontFamily.bold },
   packedDone: { fontFamily: fontFamily.bold, color: COLORS.success },
+  shortText: { fontFamily: fontFamily.bold, color: COLORS.danger },
   debugBtn: { width: 32, alignItems: 'center', justifyContent: 'center', padding: 4 },
   modalBackdrop: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
