@@ -77,6 +77,15 @@ export type RawTrip = {
   total_stems: number;
   capacity_buckets: number;
   orders: RawTripOrder[];
+  /** Buckets already on its truck (> 0 once a farm loaded it). */
+  loaded_buckets?: number;
+  /** 1 while buckets are on the truck before it has been dispatched. */
+  loading?: number;
+  /** 1 for a planned trip from an earlier day that never left. */
+  stale?: number;
+  /** Who asked (on the dashboard) for the truck to go to the farm, and when. */
+  requested_by?: string;
+  requested_at?: string | null;
   /** '' until dispatchBucketTrip is called. */
   dispatched_at: string;
   /** '' until receiveBucketTrip is called. */
@@ -105,10 +114,19 @@ export type RawRoute = {
 // aggregate (can't tell trips on the same vehicle apart, never counted
 // shelved buckets) — superseded for this screen by the bucket-accurate
 // per-(order, farm) counts now on RawTripOrder above.
+/** A transfer truck: what it holds and whether it is out on a trip right now. */
+export type RawVehicle = {
+  name: string;
+  capacity_buckets: number;
+  /** The trip it is out on, '' / null when at the hub. */
+  on_road?: string | null;
+};
+
 export type RawTransferScheduleData = {
   orders: RawScheduleOrder[];
   trips: RawTrip[];
   routes: RawRoute[];
+  vehicles?: RawVehicle[];
   packhouse: string;
   window: { from: string; to: string };
   generated_at: string;
@@ -133,6 +151,33 @@ export const karenBucketLogisticsApi = {
       method: 'POST',
       url: '/api/method/upande_packhouse.mobile.api.dispatchBucketTrip',
       data: { name },
+    });
+  },
+
+  /** Put a planned trip on another truck (before anything is loaded). */
+  changeVehicle(name: string, vehicle: string): Promise<RawTripActionResponse> {
+    return api<RawTripActionResponse>({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.api.transfer_control.changeTripVehicle',
+      data: { name, vehicle },
+    });
+  },
+
+  /** Confirm the requested truck has left the hub for the trip's farms. */
+  release(name: string): Promise<RawTripActionResponse> {
+    return api<RawTripActionResponse>({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.api.transfer_control.releaseBucketTrip',
+      data: { name },
+    });
+  },
+
+  /** Turn down a truck request: the trip goes back to the scheduler with the reason. */
+  reject(name: string, reason: string): Promise<RawTripActionResponse> {
+    return api<RawTripActionResponse>({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.api.transfer_control.rejectBucketTrip',
+      data: { name, reason },
     });
   },
 

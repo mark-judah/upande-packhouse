@@ -67,17 +67,19 @@ function scheduleOrder(overrides: Partial<RawScheduleOrder> & Pick<RawScheduleOr
 }
 
 describe('groupTrips', () => {
-  it('buckets trips into planned/on_the_road/back by status', () => {
+  it('buckets trips into requests/started/on_the_road/back by status', () => {
     const data = fixture({
       trips: [
         rawTrip({ name: 'TRIP-1', vehicle: 'KAA 001A', status: 'Draft' }),
         rawTrip({ name: 'TRIP-2', vehicle: 'KAA 002B', status: 'Scheduled' }),
+        rawTrip({ name: 'TRIP-5', vehicle: 'KAA 005E', status: 'Requested' }),
         rawTrip({ name: 'TRIP-3', vehicle: 'KAA 003C', status: 'Dispatched' }),
         rawTrip({ name: 'TRIP-4', vehicle: 'KAA 004D', status: 'Received' }),
       ],
     });
     const groups = groupTrips(data);
-    expect(groups.planned.map((t) => t.name)).toEqual(['TRIP-1', 'TRIP-2']);
+    expect(groups.requests.map((t) => t.name)).toEqual(['TRIP-1', 'TRIP-5']);
+    expect(groups.started.map((t) => t.name)).toEqual(['TRIP-2']);
     expect(groups.on_the_road.map((t) => t.name)).toEqual(['TRIP-3']);
     expect(groups.back.map((t) => t.name)).toEqual(['TRIP-4']);
   });
@@ -90,8 +92,8 @@ describe('groupTrips', () => {
       ],
     });
     const groups = groupTrips(data);
-    expect(groups.planned.find((t) => t.name === 'TRIP-OVER')!.fillPct).toBe(100);
-    expect(groups.planned.find((t) => t.name === 'TRIP-NOCAP')!.fillPct).toBe(0);
+    expect(groups.requests.find((t) => t.name === 'TRIP-OVER')!.fillPct).toBe(100);
+    expect(groups.requests.find((t) => t.name === 'TRIP-NOCAP')!.fillPct).toBe(0);
   });
 
   it('groups a multi-farm trip into stops in collection_order sequence, extra farms appended', () => {
@@ -108,7 +110,7 @@ describe('groupTrips', () => {
         }),
       ],
     });
-    const trip = groupTrips(data).planned[0];
+    const trip = groupTrips(data).requests[0];
     expect(trip.stops.map((s) => s.farm)).toEqual(['Kaptumbo', 'Simotwo', 'Torongo']);
     expect(trip.stops[0].buckets).toBe(15);
     expect(trip.stops[0].orders).toEqual([{ orderName: 'ORD-2', customer: 'Acme', varieties: 'Avalanche', buckets: 15 }]);
@@ -152,7 +154,7 @@ describe('groupTrips', () => {
         }),
       ],
     });
-    const trip = groupTrips(data).planned[0];
+    const trip = groupTrips(data).requests[0];
     expect(trip.stops[0].buckets).toBe(8); // planned buckets ARE additive across rounds
     expect(trip.stops[0].stage).toEqual({ awaiting: 0, loaded: 0, inTransit: 0, shelved: 4 }); // stage is not
   });
@@ -161,7 +163,7 @@ describe('groupTrips', () => {
     const data = fixture({
       trips: [rawTrip({ name: 'TRIP-1', vehicle: 'KAA 999Z', status: 'Draft', orders: [orderRow({ order_pick_list: 'OPL-1', farm: 'Simotwo', buckets: 5 })] })],
     });
-    expect(groupTrips(data).planned[0].pills).toEqual([]);
+    expect(groupTrips(data).requests[0].pills).toEqual([]);
   });
 
   it('builds scheduleContext from the matching schedule order with the lowest sequence number', () => {
@@ -180,7 +182,7 @@ describe('groupTrips', () => {
         }),
       ],
     });
-    expect(groupTrips(data).planned[0].scheduleContext).toBe('Team A · #2 in queue');
+    expect(groupTrips(data).requests[0].scheduleContext).toBe('Team A · #2 in queue');
   });
 
   it('returns an empty scheduleContext when no order on the trip matches the schedule feed', () => {
@@ -192,7 +194,7 @@ describe('groupTrips', () => {
         }),
       ],
     });
-    expect(groupTrips(data).planned[0].scheduleContext).toBe('');
+    expect(groupTrips(data).requests[0].scheduleContext).toBe('');
   });
 
   it('numbers trips globally by ascending schedule priority, regardless of status, ties broken by name', () => {
@@ -209,7 +211,7 @@ describe('groupTrips', () => {
         rawTrip({ name: 'TRIP-C', vehicle: 'V3', status: 'Draft', orders: [orderRow({ order_pick_list: 'OPL-UNKNOWN', farm: 'Simotwo', buckets: 1 })] }),
       ],
     });
-    const all = [...groupTrips(data).planned, ...groupTrips(data).on_the_road];
+    const all = [...groupTrips(data).requests, ...groupTrips(data).on_the_road];
     const byName = new Map(all.map((t) => [t.name, t.sequence]));
     expect(byName.get('TRIP-A')).toBe(1);
     expect(byName.get('TRIP-B')).toBe(2);
@@ -258,7 +260,7 @@ describe('turnaroundLabel', () => {
 });
 
 describe('buildRoutes', () => {
-  it('builds the drive chain from ordered legs, packhouse at both ends', () => {
+  it('builds each trip from ordered legs, packhouse at both ends', () => {
     const data = fixture({
       routes: [
         {
@@ -274,7 +276,8 @@ describe('buildRoutes', () => {
     });
     const routes = buildRoutes(data);
     expect(routes).toHaveLength(1);
-    expect(routes[0].stops).toEqual(['Kapkolia', 'Simotwo', 'Kaptumbo', 'Kapkolia']);
+    expect(routes[0].hub).toBe('Kapkolia');
+    expect(routes[0].runs).toEqual([['Simotwo', 'Kaptumbo']]);
     expect(routes[0].totalKm).toBe(12.5);
     expect(routes[0].hasRoute).toBe(true);
     expect(routes[0].trip).toBeNull();
@@ -286,8 +289,26 @@ describe('buildRoutes', () => {
     });
     const routes = buildRoutes(data);
     expect(routes).toEqual([
-      { vehicle: 'KAA 999Z', stops: [], totalKm: 0, hasRoute: false, trip: { name: 'TRIP-1', status: 'Draft' } },
+      { vehicle: 'KAA 999Z', hub: '', runs: [], totalKm: 0, hasRoute: false, trip: { name: 'TRIP-1', status: 'Draft' } },
     ]);
+  });
+
+  it('splits a route into trips where it comes back to the packhouse, as the dashboard does', () => {
+    const data = fixture({
+      routes: [
+        {
+          name: 'ROUTE-2', vehicle: 'KAX 254U', total_km: 4.3,
+          legs: [
+            { leg: 'Kapkolia-Chepsito', from_farm: 'Kapkolia', to_farm: 'Chepsito', distance_km: 1 },
+            { leg: 'Chepsito-Kapkolia', from_farm: 'Chepsito', to_farm: 'Kapkolia', distance_km: 1 },
+            { leg: 'Kapkolia-Chepsito', from_farm: 'Kapkolia', to_farm: 'Chepsito', distance_km: 1 },
+            { leg: 'Chepsito-Kapkolia', from_farm: 'Chepsito', to_farm: 'Kapkolia', distance_km: 1.3 },
+          ],
+          farms: ['Chepsito'],
+        },
+      ],
+    });
+    expect(buildRoutes(data)[0].runs).toEqual([['Chepsito'], ['Chepsito']]);
   });
 
   it('cross-references a route with its trip status when both exist for the same vehicle', () => {
@@ -298,3 +319,4 @@ describe('buildRoutes', () => {
     expect(buildRoutes(data)[0].trip).toEqual({ name: 'TRIP-1', status: 'Dispatched' });
   });
 });
+
