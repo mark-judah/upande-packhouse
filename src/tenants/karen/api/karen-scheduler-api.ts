@@ -62,6 +62,8 @@ export type RawSchedulerMetaResponse = {
     success?: boolean;
     takt_minutes?: number;
     schedule?: Record<string, number>;
+    /** Where each order's stock is: 'hub' (at Kapkolia), 'remote' (coming from a farm), 'issued'. */
+    where?: Record<string, 'hub' | 'remote' | 'issued'>;
     created?: Record<string, string>;
     packed?: Record<string, number>;
     error?: string;

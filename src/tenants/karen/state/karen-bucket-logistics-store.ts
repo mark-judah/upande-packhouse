@@ -6,6 +6,7 @@ import type {
   RawTransferScheduleData,
   RawTrip,
   RawTripActionResponse,
+  RawVehicle,
 } from '../api/karen-bucket-logistics-api';
 import { mapAxiosError } from '@/src/core/api/client';
 
@@ -25,7 +26,7 @@ export type TripStop = {
   stage: StageCounts;
 };
 
-export type TripStatus = 'Draft' | 'Scheduled' | 'Dispatched' | 'Received';
+export type TripStatus = 'Draft' | 'Requested' | 'Scheduled' | 'Dispatched' | 'Received';
 
 export type Trip = {
   name: string;
@@ -47,14 +48,26 @@ export type Trip = {
   receivedAt: string;
   /** e.g. "1h 45m" once both timestamps are present; '' otherwise. */
   turnaround: string;
+  /** Can still be edited: planned (not left the hub with a load), nothing on its truck. */
+  editable: boolean;
+  tripDate: string;
+  notes: string;
+  collectionOrder: string;
+  /** Who requested the truck on the dashboard ('' if not yet), and when. */
+  requestedBy: string;
+  requestedAt: string;
 };
 
-export type TripGroup = 'planned' | 'on_the_road' | 'back';
+/** requests: planned and requested (the Trip Requests tab); started: released to the
+ *  farm; on_the_road: loaded, heading to the packhouse; back: ended. */
+export type TripGroup = 'requests' | 'started' | 'on_the_road' | 'back';
 
 export type Route = {
   vehicle: string;
-  /** Full drive chain including the packhouse at both ends; [] if no route set today. */
-  stops: string[];
+  /** The packhouse the route starts and ends at. */
+  hub: string;
+  /** The route's trips in driving order, each the farms it collects from; [] if no route set today. */
+  runs: string[][];
   totalKm: number;
   hasRoute: boolean;
   trip: { name: string; status: TripStatus } | null;
@@ -68,19 +81,28 @@ type State = {
   actioning: Record<string, boolean>;
   groups: Record<TripGroup, Trip[]>;
   routes: Route[];
+  /** Transfer trucks, for moving a trip to another one. */
+  vehicles: RawVehicle[];
 
   load: () => Promise<void>;
+  /** Put a planned trip on another truck; its buckets stay as planned. */
+  saveEdit: (trip: Trip, vehicle: string) => Promise<ActionOutcome>;
   dispatch: (name: string) => Promise<ActionOutcome>;
+  /** Confirm a requested truck has been released to the farm. */
+  release: (name: string) => Promise<ActionOutcome>;
+  /** Reject a truck request with a reason: back to the scheduler. */
+  reject: (name: string, reason: string) => Promise<ActionOutcome>;
   receive: (name: string) => Promise<ActionOutcome>;
   reset: () => void;
 };
 
-const EMPTY_GROUPS: Record<TripGroup, Trip[]> = { planned: [], on_the_road: [], back: [] };
+const EMPTY_GROUPS: Record<TripGroup, Trip[]> = { requests: [], started: [], on_the_road: [], back: [] };
 
 function groupForStatus(status: string): TripGroup {
   if (status === 'Dispatched') return 'on_the_road';
   if (status === 'Received') return 'back';
-  return 'planned'; // Draft, Scheduled
+  if (status === 'Scheduled') return 'started'; // released to the farm
+  return 'requests'; // Draft, Requested
 }
 
 const ZERO_STAGE: StageCounts = { awaiting: 0, loaded: 0, inTransit: 0, shelved: 0 };
@@ -210,6 +232,16 @@ function buildTrip(raw: RawTrip, scheduleOrders: RawScheduleOrder[], sequence: n
     dispatchedAt: raw.dispatched_at || '',
     receivedAt: raw.received_at || '',
     turnaround: turnaroundLabel(raw.dispatched_at, raw.received_at),
+    editable:
+      ['Draft', 'Requested', 'Scheduled'].includes(raw.status || 'Draft') &&
+      !raw.stale &&
+      !raw.loading &&
+      !(raw.loaded_buckets || 0),
+    tripDate: raw.trip_date || '',
+    notes: raw.notes || '',
+    collectionOrder: raw.collection_order || '',
+    requestedBy: raw.requested_by || '',
+    requestedAt: raw.requested_at || '',
   };
 }
 
@@ -223,7 +255,7 @@ export function groupTrips(data: RawTransferScheduleData): Record<TripGroup, Tri
     .map((raw) => ({ raw, seq: bestScheduleSeq(scheduleMatches(raw, data.orders)) }))
     .sort((a, b) => a.seq - b.seq || a.raw.name.localeCompare(b.raw.name));
 
-  const groups: Record<TripGroup, Trip[]> = { planned: [], on_the_road: [], back: [] };
+  const groups: Record<TripGroup, Trip[]> = { requests: [], started: [], on_the_road: [], back: [] };
   ranked.forEach(({ raw }, i) => {
     const trip = buildTrip(raw, data.orders, i + 1);
     groups[groupForStatus(trip.status)].push(trip);
@@ -231,10 +263,22 @@ export function groupTrips(data: RawTransferScheduleData): Record<TripGroup, Tri
   return groups;
 }
 
-/** The full drive chain (packhouse at both ends) from a route's ordered legs. */
-function routeStops(route: RawRoute): string[] {
-  if (!route.legs.length) return [];
-  return [route.legs[0].from_farm, ...route.legs.map((l) => l.to_farm)];
+/** A route's trips, as the dashboard shows them: split where the legs come back to the
+ *  packhouse, each trip the farms it collects from (Kapkolia → Chepsito → Kapkolia →
+ *  Simotwo → Kapkolia is two trips). Same rule as the server's route_runs. */
+function routeRuns(route: RawRoute): { hub: string; runs: string[][] } {
+  const hub = route.legs[0]?.from_farm ?? '';
+  const runs: string[][] = [];
+  let cur: string[] | null = null;
+  for (const leg of route.legs) {
+    if (!cur) {
+      cur = [];
+      runs.push(cur);
+    }
+    if (leg.to_farm && leg.to_farm !== hub && !cur.includes(leg.to_farm)) cur.push(leg.to_farm);
+    if (leg.to_farm === hub) cur = null;
+  }
+  return { hub, runs: runs.filter((r) => r.length) };
 }
 
 /**
@@ -258,9 +302,11 @@ export function buildRoutes(data: RawTransferScheduleData): Route[] {
     .map((vehicle) => {
       const raw = data.routes.find((r) => r.vehicle === vehicle) || null;
       const trip = tripByVehicle.get(vehicle) || null;
+      const { hub, runs } = raw ? routeRuns(raw) : { hub: '', runs: [] };
       return {
         vehicle,
-        stops: raw ? routeStops(raw) : [],
+        hub,
+        runs,
         totalKm: raw ? raw.total_km : 0,
         hasRoute: !!raw,
         trip: trip ? { name: trip.name, status: (trip.status || 'Draft') as TripStatus } : null,
@@ -331,22 +377,69 @@ export const useKarenBucketLogisticsStore = create<State>((set, get) => ({
   actioning: {},
   groups: EMPTY_GROUPS,
   routes: [],
+  vehicles: [],
 
   load: async () => {
     set({ loading: true, error: null });
     try {
       const raw = await karenBucketLogisticsApi.fetch();
-      set({ loading: false, groups: groupTrips(raw), routes: buildRoutes(raw) });
+      set({ loading: false, groups: groupTrips(raw), routes: buildRoutes(raw), vehicles: raw.vehicles ?? [] });
     } catch (err) {
       set({ loading: false, error: mapAxiosError(err).message || 'Could not load trips.' });
     }
   },
 
   dispatch: (name) =>
-    moveTrip(get, set, name, 'planned', 'on_the_road', 'Dispatched', karenBucketLogisticsApi.dispatch, 'Truck dispatched.'),
+    moveTrip(get, set, name, 'started', 'on_the_road', 'Dispatched', karenBucketLogisticsApi.dispatch, 'Truck dispatched.'),
+
+  release: async (name) => {
+    set({ actioning: { ...get().actioning, [name]: true } });
+    try {
+      const res = unwrapAction(await karenBucketLogisticsApi.release(name));
+      set({ actioning: { ...get().actioning, [name]: false } });
+      await get().load();
+      return res.status === 'success'
+        ? { kind: 'success', message: 'Release confirmed.' }
+        : { kind: 'error', message: res.message || 'Could not confirm the release.' };
+    } catch (err) {
+      set({ actioning: { ...get().actioning, [name]: false } });
+      return { kind: 'error', message: mapAxiosError(err).message || 'Could not confirm the release.' };
+    }
+  },
+
+  reject: async (name, reason) => {
+    set({ actioning: { ...get().actioning, [name]: true } });
+    try {
+      const res = unwrapAction(await karenBucketLogisticsApi.reject(name, reason));
+      set({ actioning: { ...get().actioning, [name]: false } });
+      await get().load();
+      return res.status === 'success'
+        ? { kind: 'success', message: 'Request rejected — sent back to the scheduler.' }
+        : { kind: 'error', message: res.message || 'Could not reject the request.' };
+    } catch (err) {
+      set({ actioning: { ...get().actioning, [name]: false } });
+      return { kind: 'error', message: mapAxiosError(err).message || 'Could not reject the request.' };
+    }
+  },
 
   receive: (name) =>
     moveTrip(get, set, name, 'on_the_road', 'back', 'Received', karenBucketLogisticsApi.receive, 'Trip ended.'),
 
-  reset: () => set({ loading: false, error: null, actioning: {}, groups: EMPTY_GROUPS, routes: [] }),
+  saveEdit: async (trip, vehicle) => {
+    const name = trip.name;
+    set({ actioning: { ...get().actioning, [name]: true } });
+    try {
+      const res = unwrapAction(await karenBucketLogisticsApi.changeVehicle(name, vehicle));
+      set({ actioning: { ...get().actioning, [name]: false } });
+      await get().load();
+      return res.status === 'success'
+        ? { kind: 'success', message: `${name} moved to ${vehicle}.` }
+        : { kind: 'error', message: res.message || 'Could not change the truck.' };
+    } catch (err) {
+      set({ actioning: { ...get().actioning, [name]: false } });
+      return { kind: 'error', message: mapAxiosError(err).message || 'Could not change the truck.' };
+    }
+  },
+
+  reset: () => set({ loading: false, error: null, actioning: {}, groups: EMPTY_GROUPS, routes: [], vehicles: [] }),
 }));

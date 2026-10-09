@@ -30,6 +30,8 @@ export type SchedulerOrder = {
   orderName: string;
   /** Persisted custom_schedule_number (0 = not yet scheduled). */
   scheduleNumber: number;
+  /** Where its stock is, as the Scheduler ranks it: at Kapkolia, at a remote farm, issued. */
+  where: 'hub' | 'remote' | 'issued' | '';
   customer: string;
   team: string;
   /** Linked Sales Order (for search). */
@@ -81,6 +83,7 @@ function buildOrder(
   o: RawSchedulerOpl,
   packed: Record<string, number>,
   schedule: Record<string, number>,
+  where: Record<string, 'hub' | 'remote' | 'issued'> = {},
 ): SchedulerOrder {
   const stages: Record<string, number> = {};
   for (const s of STAGES) stages[s] = 0;
@@ -100,6 +103,7 @@ function buildOrder(
     oplName: name,
     orderName: (o.order_name || o.custom_order_name || name).toString(),
     scheduleNumber: Math.round(num(schedule[name])),
+    where: where[name] ?? '',
     customer: (o.customer ?? '').toString(),
     team: (o.team || o.custom_team || '').toString(),
     salesOrder: (o.sales_order ?? '').toString(),
@@ -112,6 +116,20 @@ function buildOrder(
     specs,
     stages,
   };
+}
+
+/** The order issuing works to: stock at Kapkolia first (it is already there), then
+ *  orders still coming from the farms, then issued ones; within each, the schedule's
+ *  sequence (every team's #1, then #2 …), then team. Unscheduled sink to the bottom.
+ *  Exported for testing. */
+const WHERE_RANK: Record<string, number> = { hub: 0, remote: 1, issued: 2, '': 1 };
+export function bySchedule(a: SchedulerOrder, b: SchedulerOrder): number {
+  if (!a.scheduleNumber !== !b.scheduleNumber) return a.scheduleNumber ? -1 : 1;
+  return (
+    WHERE_RANK[a.where] - WHERE_RANK[b.where] ||
+    a.scheduleNumber - b.scheduleNumber ||
+    a.team.localeCompare(b.team)
+  );
 }
 
 const initial = {
@@ -139,6 +157,7 @@ export const useKarenSchedulerStore = create<State>((set, get) => {
         const names = opls.map((o) => (o.name ?? '').toString()).filter(Boolean);
 
         let schedule: Record<string, number> = {};
+        let where: Record<string, 'hub' | 'remote' | 'issued'> = {};
         let packed: Record<string, number> = {};
         let takt = 0;
         if (names.length) {
@@ -147,6 +166,7 @@ export const useKarenSchedulerStore = create<State>((set, get) => {
             const mm = metaRes?.message;
             if (mm?.success) {
               schedule = mm.schedule ?? {};
+              where = mm.where ?? {};
               packed = mm.packed ?? {};
               takt = num(mm.takt_minutes);
             }
@@ -155,17 +175,8 @@ export const useKarenSchedulerStore = create<State>((set, get) => {
           }
         }
 
-        const built = opls.map((o) => buildOrder(o, packed, schedule));
-        // Sort by persisted schedule number; unscheduled (0) sink to the bottom
-        // keeping the server's customer/name order among themselves.
-        built.sort((a, b) => {
-          const sa = a.scheduleNumber;
-          const sb = b.scheduleNumber;
-          if (sa && sb) return sa - sb;
-          if (sa) return -1;
-          if (sb) return 1;
-          return 0;
-        });
+        const built = opls.map((o) => buildOrder(o, packed, schedule, where));
+        built.sort(bySchedule);
         set({ loading: false, orders: built, taktMinutes: takt });
       } catch (err) {
         set({ loading: false, error: mapAxiosError(err).message, orders: [] });

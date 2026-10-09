@@ -160,13 +160,17 @@ export function KarenSchedulerScreen() {
 
 const OrderRow = memo(function OrderRow({ order }: { order: SchedulerOrder }) {
   const badges = STAGES.filter((st) => (order.stages[st] || 0) > 0);
-  // Every bucket already at Kapkolia: none waiting at a farm, on a trolley or on the road.
+  // Where its stock is, as the Scheduler ranks it (the server's answer; bucket stages
+  // when an older server sends none).
   const atHub =
     !order.packed &&
-    order.buckets > 0 &&
-    !order.stages['Awaiting Transfer'] &&
-    !order.stages['Loaded in Trolley'] &&
-    !order.stages['In Transit'];
+    (order.where
+      ? order.where === 'hub'
+      : order.buckets > 0 &&
+        !order.stages['Awaiting Transfer'] &&
+        !order.stages['Loaded in Trolley'] &&
+        !order.stages['In Transit']);
+  const atFarm = !order.packed && order.where === 'remote';
 
   return (
     <View style={s.row}>
@@ -185,6 +189,10 @@ const OrderRow = memo(function OrderRow({ order }: { order: SchedulerOrder }) {
           {atHub ? (
             <View style={s.hub}>
               <Text style={s.hubText}>At Kapkolia</Text>
+            </View>
+          ) : atFarm ? (
+            <View style={[s.hub, s.farm]}>
+              <Text style={[s.hubText, s.farmText]}>At farm</Text>
             </View>
           ) : null}
         </View>
@@ -279,6 +287,8 @@ const s = StyleSheet.create({
   packed: { fontFamily: fontFamily.bold, fontSize: 10, color: '#16a34a' },
   hub: { backgroundColor: '#e3ecfd', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
   hubText: { fontFamily: fontFamily.bold, fontSize: 10, color: '#1d4ed8' },
+  farm: { backgroundColor: '#fff3e0' },
+  farmText: { color: '#9a5a00' },
   sub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 1 },
   specs: { marginTop: 6, gap: 2 },
   specRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },

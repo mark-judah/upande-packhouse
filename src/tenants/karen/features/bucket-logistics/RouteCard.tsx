@@ -5,7 +5,8 @@ import type { Route, TripStatus } from '@/src/tenants/karen/state/karen-bucket-l
 
 const TRIP_BADGE: Record<TripStatus, { label: string; fg: string }> = {
   Draft: { label: 'Trip planned', fg: '#525252' },
-  Scheduled: { label: 'Trip planned', fg: '#525252' },
+  Requested: { label: 'Truck requested', fg: '#B45309' },
+  Scheduled: { label: 'Trip started', fg: '#2563EB' },
   Dispatched: { label: 'On the road', fg: '#2563EB' },
   Received: { label: 'Completed', fg: '#166534' },
 };
@@ -19,14 +20,20 @@ export function RouteCard({ route }: { route: Route }) {
       </View>
 
       {route.hasRoute ? (
-        <View style={s.chain}>
-          {route.stops.map((stop, i) => (
-            <View key={`${stop}-${i}`} style={s.chainItem}>
-              {i > 0 ? <Ionicons name="arrow-forward" size={12} color={COLORS.textMuted} style={s.arrow} /> : null}
-              <Text style={s.chainStop} numberOfLines={1}>{stop}</Text>
+        route.runs.map((farms, r) => {
+          const stops = [route.hub, ...farms, route.hub];
+          return (
+            <View key={r} style={s.chain}>
+              <Text style={s.runLbl}>Trip {r + 1}</Text>
+              {stops.map((stop, i) => (
+                <View key={`${stop}-${i}`} style={s.chainItem}>
+                  {i > 0 ? <Ionicons name="arrow-forward" size={12} color={COLORS.textMuted} style={s.arrow} /> : null}
+                  <Text style={s.chainStop} numberOfLines={1}>{stop}</Text>
+                </View>
+              ))}
             </View>
-          ))}
-        </View>
+          );
+        })
       ) : (
         <View style={s.noRoute}>
           <Ionicons name="warning-outline" size={14} color="#D97706" />
@@ -57,6 +64,7 @@ const s = StyleSheet.create({
   km: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: COLORS.textSecondary },
   chain: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: spacing.sm },
   chainItem: { flexDirection: 'row', alignItems: 'center' },
+  runLbl: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: COLORS.textSecondary, marginRight: spacing.sm },
   arrow: { marginHorizontal: 4 },
   chainStop: { fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },
   noRoute: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.sm },
