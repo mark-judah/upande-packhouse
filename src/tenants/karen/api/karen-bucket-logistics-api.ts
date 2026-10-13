@@ -137,11 +137,13 @@ export type RawTripActionResponse = {
 };
 
 export const karenBucketLogisticsApi = {
-  /** Today's transfer schedule: orders-by-farm, today's trips with live bucket-stage counts. */
-  fetch(): Promise<RawTransferScheduleData> {
+  /** Today's transfer schedule: orders-by-farm, today's trips with live bucket-stage counts.
+   *  `tripDate` (YYYY-MM-DD) also returns every trip of that day. */
+  fetch(tripDate?: string): Promise<RawTransferScheduleData> {
     return api<RawTransferScheduleData>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.getTransferScheduleData',
+      ...(tripDate ? { params: { trip_date: tripDate } } : {}),
     });
   },
 

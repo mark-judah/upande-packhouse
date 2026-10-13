@@ -14,7 +14,7 @@ export type RawReadySaleOrderItem = {
   team?: string;
   is_issued?: boolean | number;
   opl_name?: string;
-  /** Replaced from a remote farm at issuing and not here yet. */
+  /** Allocated at a remote farm and not transferred here yet. */
   waiting_transfer?: number;
   transfer_farm?: string | null;
   /** Marked not found at its farm: never coming -- replace it or complete short. */
@@ -97,9 +97,6 @@ export type RawReplacementCandidate = {
   stem_length?: string | null;
   available_qty?: number;
   harvest_date?: string | null;
-  /** Set when the bucket is at a remote farm (nothing matched at the sales farm). */
-  farm?: string | null;
-  remote?: boolean;
 };
 
 export type RawReplacementOptions = {
@@ -107,10 +104,6 @@ export type RawReplacementOptions = {
   message?: string;
   needed_qty?: number;
   candidates?: RawReplacementCandidate[];
-  /** 'remote': nothing at the sales farm; these come from remote farms by truck. */
-  source?: 'local' | 'remote';
-  /** Same-day order: a remote bucket may not arrive in time. */
-  warning?: string | null;
 };
 
 /** Replace reason "Issued offline": the OPLs the bucket was already issued on. */
@@ -127,16 +120,20 @@ export type RawReplaceResult = {
   message?: string;
   new_bucket?: string;
   shelf?: string;
-  /** Requested from this remote farm: it comes by truck, then is issued. */
-  remote_farm?: string | null;
 };
 
 const OFFLINE_ISSUE = '/api/method/upande_packhouse.api.offline_issue';
 
+/** `{ farm }` = this device's station, for calls that take it as `farm`. */
+async function stationFarm(): Promise<{ farm?: string }> {
+  const { station } = await stationParams();
+  return station ? { farm: station } : {};
+}
+
 export const karenIssuingApi = {
-  /** Buckets that can replace one on this OPL -- the same rules remote
-   *  transfers replace by (same variety, same or longer length, enough stems,
-   *  unallocated, shelved at the same farm), best match first. */
+  /** Buckets that can replace one on this OPL (same variety, same or longer
+   *  length, enough stems, unallocated), best match first -- only from this
+   *  device's station farm. */
   async fetchReplacementOptions(payload: {
     opl_name: string;
     bucket: string;
@@ -145,7 +142,7 @@ export const karenIssuingApi = {
     const res = await api<{ message?: RawReplacementOptions }>({
       method: 'GET',
       url: `${OFFLINE_ISSUE}.replacement_options`,
-      params: payload,
+      params: { ...payload, ...(await stationFarm()) },
     });
     return res.message ?? {};
   },
@@ -161,7 +158,8 @@ export const karenIssuingApi = {
     const res = await api<{ message?: RawReplaceResult }>({
       method: 'POST',
       url: `${OFFLINE_ISSUE}.replace_for_issuing`,
-      data: payload,
+      // The replacement must be shelved at this station's farm.
+      data: { ...payload, ...(await stationFarm()) },
       // A swap can wait on stock locks and retry server-side.
       timeout: 120000,
     });

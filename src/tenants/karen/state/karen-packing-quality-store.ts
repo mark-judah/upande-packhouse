@@ -8,9 +8,8 @@ import {
 
 // ---------------------------------------------------------------------
 // Report a quality issue while packing: pick the bucket on the line, the
-// defect, whole bucket or some stems, then the replacement -- the sales
-// farm's buckets first (best one recommended), else a remote farm's, which
-// comes on the next truck as ASAP.
+// defect, whole bucket or some stems, then the replacement -- only from the
+// station's farm (best one recommended).
 // ---------------------------------------------------------------------
 
 export type DefectCategory = 'Wrong stem length' | 'Disease' | 'Pest' | 'Other';
@@ -35,7 +34,6 @@ export type QualityCandidate = {
   availableQty: number | null;
   harvestDate: string | null;
   recommended: boolean;
-  remote: boolean;
 };
 
 export type QualityOptions = {
@@ -43,9 +41,7 @@ export type QualityOptions = {
   needed: number;
   salesFarm: string | null;
   salesFarmCandidates: QualityCandidate[];
-  remoteCandidates: QualityCandidate[];
   message: string | null;
-  warning: string | null;
 };
 
 type State = {
@@ -79,7 +75,7 @@ function toCategory(value: string | undefined): DefectCategory {
   return (CATEGORIES as string[]).includes(value ?? '') ? (value as DefectCategory) : 'Other';
 }
 
-function toCandidate(c: RawQualityCandidate, remote: boolean): QualityCandidate {
+function toCandidate(c: RawQualityCandidate): QualityCandidate {
   return {
     bucket: c.new_bucket,
     farm: c.farm,
@@ -88,7 +84,6 @@ function toCandidate(c: RawQualityCandidate, remote: boolean): QualityCandidate 
     availableQty: typeof c.available_qty === 'number' ? c.available_qty : null,
     harvestDate: c.harvest_date ?? null,
     recommended: !!c.recommended,
-    remote,
   };
 }
 
@@ -156,9 +151,7 @@ export const useKarenPackingQualityStore = create<State>((set, get) => ({
         needed: stems,
         salesFarm: get().salesFarm,
         salesFarmCandidates: [],
-        remoteCandidates: [],
         message: null,
-        warning: null,
       },
     });
     try {
@@ -175,10 +168,8 @@ export const useKarenPackingQualityStore = create<State>((set, get) => ({
           loading: false,
           needed: typeof res.needed === 'number' ? res.needed : stems,
           salesFarm: res.sales_farm ?? get().salesFarm,
-          salesFarmCandidates: (res.sales_farm_candidates ?? []).map((c) => toCandidate(c, false)),
-          remoteCandidates: (res.remote_candidates ?? []).map((c) => toCandidate(c, true)),
+          salesFarmCandidates: (res.sales_farm_candidates ?? []).map(toCandidate),
           message: res.success === false ? res.message || 'Could not load replacements.' : res.message ?? null,
-          warning: res.warning ?? null,
         },
       });
     } catch (err) {
@@ -188,9 +179,7 @@ export const useKarenPackingQualityStore = create<State>((set, get) => ({
           needed: stems,
           salesFarm: get().salesFarm,
           salesFarmCandidates: [],
-          remoteCandidates: [],
           message: mapAxiosError(err).message,
-          warning: null,
         },
       });
     }

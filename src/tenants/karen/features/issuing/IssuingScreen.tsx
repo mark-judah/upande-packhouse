@@ -410,11 +410,9 @@ export function KarenIssuingScreen() {
           // A replacement cannot be undone here, so it is confirmed first.
           showDialog(
             'Replace this bucket?',
-            c.farm
-              ? `Are you sure you want to replace ${old.toUpperCase()} with ${c.bucket.toUpperCase()} from ${c.farm}? It comes on the next truck and is issued once it arrives. Reason: ${why.toLowerCase()}.`
-              : `Are you sure you want to replace ${old.toUpperCase()} with ${c.bucket.toUpperCase()}${
-                  c.shelf ? ` (shelf ${c.shelf.toUpperCase()})` : ''
-                }? Reason: ${why.toLowerCase()}.`,
+            `Are you sure you want to replace ${old.toUpperCase()} with ${c.bucket.toUpperCase()}${
+              c.shelf ? ` (shelf ${c.shelf.toUpperCase()})` : ''
+            }? Reason: ${why.toLowerCase()}.`,
             [
               { text: 'No', style: 'cancel' },
               {
@@ -494,7 +492,7 @@ function PackingRow({ item, onReplace }: { item: PackingItem; onReplace?: () => 
             <Text style={s.tagNotFoundText}>NOT FOUND</Text>
           </View>
         ) : item.waitingTransfer ? (
-          // Replaced from a remote farm: on its way, issued once it is shelved here.
+          // Allocated at a remote farm: on its way, issued once it is shelved here.
           <View style={s.tagMixed}>
             <Text style={s.tagMixedText} numberOfLines={1}>
               WAITING · {item.waitingTransfer.toUpperCase()}

@@ -1,10 +1,11 @@
 import { api } from '@/src/core/api/client';
+import { stationParams } from '@/src/core/tenant/user-station';
 
 // =====================================================================
 // Quality issues found while packing (upande_packhouse.api.packing_quality):
 // a bucket issued to a line turns out to have the wrong stem length, a
 // disease or a pest. Its bad stems go to Rejects and a replacement is
-// allocated -- from the sales farm first, else from a remote farm, ASAP.
+// allocated -- only from the station's farm.
 // =====================================================================
 
 export type RawQualityDefect = { defect: string; category: string };
@@ -40,13 +41,11 @@ export type RawQualityCandidate = {
 export type RawQualityOptions = {
   success?: boolean;
   message?: string | null;
-  warning?: string | null;
   bucket?: string;
   on_line?: number;
   needed?: number;
   sales_farm?: string | null;
   sales_farm_candidates?: RawQualityCandidate[];
-  remote_candidates?: RawQualityCandidate[];
 };
 
 export type RawQualityReport = {
@@ -54,12 +53,16 @@ export type RawQualityReport = {
   message?: string;
   replacement?: string;
   new_bucket?: string | null;
-  source?: 'sales_farm' | 'remote' | null;
-  priority?: string | null;
   issued?: boolean;
 };
 
 const PACKING_QUALITY = '/api/method/upande_packhouse.api.packing_quality';
+
+/** `{ farm }` = this device's station. */
+async function stationFarm(): Promise<{ farm?: string }> {
+  const { station } = await stationParams();
+  return station ? { farm: station } : {};
+}
 
 export const karenPackingQualityApi = {
   /** The buckets issued to each line of the OPL, and the defects to choose from. */
@@ -72,7 +75,7 @@ export const karenPackingQualityApi = {
     return res.message ?? {};
   },
 
-  /** Replacements for `stems` bad stems of the bucket: sales farm first, then remote farms. */
+  /** Replacements for `stems` bad stems of the bucket, only from this device's station farm. */
   async fetchOptions(payload: {
     opl_name: string;
     bucket: string;
@@ -82,7 +85,7 @@ export const karenPackingQualityApi = {
     const res = await api<{ message?: RawQualityOptions }>({
       method: 'GET',
       url: `${PACKING_QUALITY}.quality_replacement_options`,
-      params: payload,
+      params: { ...payload, ...(await stationFarm()) },
     });
     return res.message ?? {};
   },
@@ -101,7 +104,8 @@ export const karenPackingQualityApi = {
     const res = await api<{ message?: RawQualityReport }>({
       method: 'POST',
       url: `${PACKING_QUALITY}.report_packing_quality_issue`,
-      data: payload,
+      // The replacement must be shelved at this station, where the options came from.
+      data: { ...payload, ...(await stationFarm()) },
       // Posts stock (rejects, the replacement's allocation and issue).
       timeout: 120000,
     });

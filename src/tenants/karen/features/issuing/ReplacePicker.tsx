@@ -12,9 +12,8 @@ import {
 } from '@/src/tenants/karen/state/karen-issuing-store';
 
 /**
- * Pick a bucket to stand in for one that cannot be found at issuing -- the
- * same sheet the Quality app's remote-transfer requests use: why, then the
- * matching buckets, best match first. The replacement is issued afterwards by
+ * Pick a bucket to stand in for one that cannot be found at issuing: why, then
+ * the station's matching buckets, best match first. The replacement is issued afterwards by
  * scanning it like any other bucket. "Issued offline" first checks which line the
  * bucket already went to: this OPL's own line marks it issued, nothing replaced.
  */
@@ -115,19 +114,6 @@ export function ReplacePicker({
           <Text style={s.repNone}>Finding matching buckets…</Text>
         ) : (
           <>
-            {candidates.length && sheet?.message ? (
-              // Nothing at the sales farm: these come from remote farms by truck.
-              <View style={s.remoteNote}>
-                <Ionicons name="bus-outline" size={14} color={COLORS.text} />
-                <Text style={s.remoteNoteText}>{sheet.message}</Text>
-              </View>
-            ) : null}
-            {candidates.length && sheet?.warning ? (
-              <View style={[s.remoteNote, s.warnNote]}>
-                <Ionicons name="warning-outline" size={14} color="#B54708" />
-                <Text style={[s.remoteNoteText, s.warnNoteText]}>{sheet.warning}</Text>
-              </View>
-            ) : null}
             <Text style={s.repCount}>
               {candidates.length} matching bucket{candidates.length === 1 ? '' : 's'}
             </Text>
@@ -154,11 +140,6 @@ export function ReplacePicker({
                         {i === 0 ? (
                           <View style={s.repBest}>
                             <Text style={s.repBestText}>Best match</Text>
-                          </View>
-                        ) : null}
-                        {c.farm ? (
-                          <View style={s.repFarm}>
-                            <Text style={s.repFarmText}>{c.farm}</Text>
                           </View>
                         ) : null}
                       </View>
@@ -306,20 +287,6 @@ const s = StyleSheet.create({
   repTop: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   repId: { fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: COLORS.text },
   repBest: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6, backgroundColor: '#ECFDF3' },
-  repFarm: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6, backgroundColor: '#EFF8FF' },
-  repFarmText: { fontFamily: fontFamily.semiBold, fontSize: 10, color: '#175CD3' },
-  remoteNote: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-    marginTop: spacing.sm,
-    padding: spacing.sm,
-    borderRadius: 8,
-    backgroundColor: COLORS.surfaceAlt,
-  },
-  remoteNoteText: { flex: 1, fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.text },
-  warnNote: { backgroundColor: '#FFFAEB' },
-  warnNoteText: { color: '#B54708' },
   repBestText: { fontFamily: fontFamily.semiBold, fontSize: 10, color: '#067647' },
   repMeta: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary, marginTop: 2 },
   repShelf: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3 },
