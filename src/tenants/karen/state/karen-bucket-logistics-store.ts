@@ -9,6 +9,7 @@ import type {
   RawVehicle,
 } from '../api/karen-bucket-logistics-api';
 import { mapAxiosError } from '@/src/core/api/client';
+import { todayISO } from '@/src/core/date';
 
 export type TripStatusPill = {
   key: 'awaiting' | 'loaded' | 'in_transit' | 'shelved';
@@ -56,6 +57,12 @@ export type Trip = {
   /** Who requested the truck on the dashboard ('' if not yet), and when. */
   requestedBy: string;
   requestedAt: string;
+  /** Buckets are already on its truck (loaded at a farm, not yet dispatched). */
+  hasLoads: boolean;
+  /** Requested, for today: the release can still be confirmed. */
+  canRelease: boolean;
+  /** Can leave for the packhouse now: loaded, or released. */
+  canDispatch: boolean;
 };
 
 /** requests: planned and requested (the Trip Requests tab); started: released to the
@@ -76,15 +83,26 @@ export type Route = {
 type ActionOutcome = { kind: 'success' | 'error'; message: string };
 
 type State = {
+  /** First load only: nothing to show yet. */
   loading: boolean;
+  /** A reload while data is already on screen. */
+  refreshing: boolean;
+  /** At least one load has succeeded since the last reset. */
+  loaded: boolean;
   error: string | null;
   actioning: Record<string, boolean>;
   groups: Record<TripGroup, Trip[]>;
   routes: Route[];
   /** Transfer trucks, for moving a trip to another one. */
   vehicles: RawVehicle[];
+  /** The feed's day (server), the default and latest selectable day. */
+  today: string;
+  /** The day being viewed; null = today. */
+  date: string | null;
 
   load: () => Promise<void>;
+  /** View another day's trips: clears what is shown, then loads that day. */
+  setDate: (date: string) => Promise<void>;
   /** Put a planned trip on another truck; its buckets stay as planned. */
   saveEdit: (trip: Trip, vehicle: string) => Promise<ActionOutcome>;
   dispatch: (name: string) => Promise<ActionOutcome>;
@@ -97,6 +115,26 @@ type State = {
 };
 
 const EMPTY_GROUPS: Record<TripGroup, Trip[]> = { requests: [], started: [], on_the_road: [], back: [] };
+
+const ACTIVE_STATUSES: string[] = ['Draft', 'Requested', 'Scheduled'];
+
+/** The server's day the feed was built on (generated_at), else the device's. */
+export function feedToday(data: Pick<RawTransferScheduleData, 'generated_at'>): string {
+  const day = (data.generated_at || '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : todayISO();
+}
+
+function rawHasLoads(raw: RawTrip): boolean {
+  return !!raw.loading || (raw.loaded_buckets || 0) > 0;
+}
+
+/** The feed also carries up to a week of earlier, never-received trips. Only the
+ *  selected day's show; on today, also an earlier one whose truck is still on the road. */
+function isShown(raw: RawTrip, today: string, day: string): boolean {
+  if (!raw.trip_date) return day === today;
+  if (raw.trip_date === day) return true;
+  return day === today && raw.trip_date < today && raw.status === 'Dispatched';
+}
 
 function groupForStatus(status: string): TripGroup {
   if (status === 'Dispatched') return 'on_the_road';
@@ -212,7 +250,11 @@ export function turnaroundLabel(dispatchedAt: string, receivedAt: string): strin
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-function buildTrip(raw: RawTrip, scheduleOrders: RawScheduleOrder[], sequence: number): Trip {
+export function buildTrip(raw: RawTrip, scheduleOrders: RawScheduleOrder[], sequence: number, today: string): Trip {
+  const status = raw.status || 'Draft';
+  const active = ACTIVE_STATUSES.includes(status);
+  const hasLoads = rawHasLoads(raw);
+  const earlier = !!raw.trip_date && raw.trip_date < today;
   const cap = raw.capacity_buckets || 0;
   const fillPct = cap > 0 ? Math.max(0, Math.min(100, Math.round((raw.total_buckets / cap) * 100))) : 0;
   const matches = scheduleMatches(raw, scheduleOrders);
@@ -221,7 +263,7 @@ function buildTrip(raw: RawTrip, scheduleOrders: RawScheduleOrder[], sequence: n
     name: raw.name,
     sequence,
     vehicle: raw.vehicle || 'Unassigned',
-    status: (raw.status || 'Draft') as TripStatus,
+    status: status as TripStatus,
     capacityBuckets: cap,
     totalBuckets: raw.total_buckets || 0,
     totalStems: raw.total_stems || 0,
@@ -232,32 +274,40 @@ function buildTrip(raw: RawTrip, scheduleOrders: RawScheduleOrder[], sequence: n
     dispatchedAt: raw.dispatched_at || '',
     receivedAt: raw.received_at || '',
     turnaround: turnaroundLabel(raw.dispatched_at, raw.received_at),
-    editable:
-      ['Draft', 'Requested', 'Scheduled'].includes(raw.status || 'Draft') &&
-      !raw.stale &&
-      !raw.loading &&
-      !(raw.loaded_buckets || 0),
+    editable: active && !earlier && !raw.stale && !hasLoads,
     tripDate: raw.trip_date || '',
     notes: raw.notes || '',
     collectionOrder: raw.collection_order || '',
     requestedBy: raw.requested_by || '',
     requestedAt: raw.requested_at || '',
+    hasLoads,
+    // The server refuses to release an earlier day's trip.
+    canRelease: status === 'Requested' && !earlier,
+    // dispatchBucketTrip takes any planned status (Draft / Requested / Scheduled).
+    canDispatch: active && !earlier && (hasLoads || status === 'Scheduled'),
   };
 }
 
 /**
- * Pure: raw feed -> trips grouped by lifecycle stage, numbered Trip 1, Trip 2, ...
- * globally in ascending packhouse-schedule priority (Trip 1 = whichever truck's
- * cargo is needed soonest), independent of status. Exported for testing.
+ * Pure: raw feed -> the selected day's trips (on today, plus any earlier one still on
+ * the road) grouped by lifecycle stage, numbered Trip 1, Trip 2, ... globally in
+ * ascending packhouse-schedule priority (Trip 1 = whichever truck's cargo is needed
+ * soonest), independent of status. An earlier day's trips are view-only. Exported for
+ * testing.
  */
-export function groupTrips(data: RawTransferScheduleData): Record<TripGroup, Trip[]> {
+export function groupTrips(
+  data: RawTransferScheduleData,
+  today: string = feedToday(data),
+  day: string = today,
+): Record<TripGroup, Trip[]> {
   const ranked = data.trips
+    .filter((raw) => isShown(raw, today, day))
     .map((raw) => ({ raw, seq: bestScheduleSeq(scheduleMatches(raw, data.orders)) }))
     .sort((a, b) => a.seq - b.seq || a.raw.name.localeCompare(b.raw.name));
 
   const groups: Record<TripGroup, Trip[]> = { requests: [], started: [], on_the_road: [], back: [] };
   ranked.forEach(({ raw }, i) => {
-    const trip = buildTrip(raw, data.orders, i + 1);
+    const trip = buildTrip(raw, data.orders, i + 1, today);
     groups[groupForStatus(trip.status)].push(trip);
   });
   return groups;
@@ -287,20 +337,27 @@ function routeRuns(route: RawRoute): { hub: string; runs: string[][] } {
  * "has anyone dispatched it yet". Includes vehicles that have a trip but no route
  * (a data-quality signal worth surfacing, not hiding). Exported for testing.
  */
-export function buildRoutes(data: RawTransferScheduleData): Route[] {
+export function buildRoutes(
+  data: RawTransferScheduleData,
+  today: string = feedToday(data),
+  day: string = today,
+): Route[] {
+  const trips = data.trips.filter((t) => isShown(t, today, day));
+  // The feed's routes are always today's.
+  const routes = day === today ? data.routes : [];
   const tripByVehicle = new Map<string, RawTrip>();
-  for (const t of data.trips) {
+  for (const t of trips) {
     if (t.vehicle && !tripByVehicle.has(t.vehicle)) tripByVehicle.set(t.vehicle, t);
   }
 
   const vehicles = new Set<string>();
-  data.routes.forEach((r) => { if (r.vehicle) vehicles.add(r.vehicle); });
-  data.trips.forEach((t) => { if (t.vehicle) vehicles.add(t.vehicle); });
+  routes.forEach((r) => { if (r.vehicle) vehicles.add(r.vehicle); });
+  trips.forEach((t) => { if (t.vehicle) vehicles.add(t.vehicle); });
 
   return Array.from(vehicles)
     .sort()
     .map((vehicle) => {
-      const raw = data.routes.find((r) => r.vehicle === vehicle) || null;
+      const raw = routes.find((r) => r.vehicle === vehicle) || null;
       const trip = tripByVehicle.get(vehicle) || null;
       const { hub, runs } = raw ? routeRuns(raw) : { hub: '', runs: [] };
       return {
@@ -327,26 +384,32 @@ function unwrapAction(raw: RawTripActionResponse | undefined): { status?: string
   return m;
 }
 
-async function moveTrip(
+/** Optimistically move a trip (from whichever group holds it) to `to`, then run the
+ *  action; a failure reloads to put it back. Exported for testing. */
+export async function moveTrip(
   get: () => State,
   set: (partial: Partial<State>) => void,
   name: string,
-  from: TripGroup,
   to: TripGroup,
   newStatus: TripStatus,
   action: (name: string) => Promise<RawTripActionResponse>,
   successMessage: string,
 ): Promise<ActionOutcome> {
   const { groups, actioning } = get();
-  const trip = groups[from].find((t) => t.name === name);
-  if (!trip) return { kind: 'error', message: 'Trip not found.' };
+  const from = (Object.keys(groups) as TripGroup[]).find((g) => groups[g].some((t) => t.name === name));
+  const trip = from ? groups[from].find((t) => t.name === name) : undefined;
+  if (!from || !trip) return { kind: 'error', message: 'Trip not found.' };
 
+  const moved: Trip = {
+    ...trip,
+    status: newStatus,
+    editable: false,
+    canRelease: false,
+    canDispatch: false,
+  };
+  const without = { ...groups, [from]: groups[from].filter((t) => t.name !== name) };
   set({
-    groups: {
-      ...groups,
-      [from]: groups[from].filter((t) => t.name !== name),
-      [to]: [...groups[to], { ...trip, status: newStatus }],
-    },
+    groups: { ...without, [to]: [...without[to], moved] },
     actioning: { ...actioning, [name]: true },
   });
 
@@ -371,26 +434,91 @@ async function moveTrip(
   }
 }
 
-export const useKarenBucketLogisticsStore = create<State>((set, get) => ({
+// One feed request at a time: a load asked for while one is in flight runs once more
+// after it (its data may predate the action that asked), and every caller awaits that.
+let inflight: Promise<void> | null = null;
+let rerun = false;
+// Bumped by reset(): a response that lands after it is dropped.
+let generation = 0;
+
+export const useKarenBucketLogisticsStore = create<State>((set, get) => {
+  const fetchOnce = async () => {
+    const gen = generation;
+    const hasData = get().loaded;
+    set(hasData ? { refreshing: true } : { loading: true, error: null });
+    try {
+      const date = get().date;
+      const raw = await karenBucketLogisticsApi.fetch(date ?? undefined);
+      if (gen !== generation) return;
+      const today = feedToday(raw);
+      const day = date ?? today;
+      set({
+        loading: false,
+        refreshing: false,
+        loaded: true,
+        error: null,
+        today,
+        date: day === today ? null : date,
+        groups: groupTrips(raw, today, day),
+        routes: buildRoutes(raw, today, day),
+        vehicles: raw.vehicles ?? [],
+      });
+    } catch (err) {
+      if (gen !== generation) return;
+      // Data on screen stays; only an empty screen shows the error.
+      set(
+        get().loaded
+          ? { loading: false, refreshing: false }
+          : { loading: false, refreshing: false, error: mapAxiosError(err).message || 'Could not load trips.' },
+      );
+    }
+  };
+
+  return {
   loading: false,
+  refreshing: false,
+  loaded: false,
   error: null,
   actioning: {},
   groups: EMPTY_GROUPS,
   routes: [],
   vehicles: [],
+  today: todayISO(),
+  date: null,
 
-  load: async () => {
-    set({ loading: true, error: null });
-    try {
-      const raw = await karenBucketLogisticsApi.fetch();
-      set({ loading: false, groups: groupTrips(raw), routes: buildRoutes(raw), vehicles: raw.vehicles ?? [] });
-    } catch (err) {
-      set({ loading: false, error: mapAxiosError(err).message || 'Could not load trips.' });
+  load: () => {
+    if (inflight) {
+      rerun = true;
+      return inflight;
     }
+    const gen = generation;
+    inflight = (async () => {
+      try {
+        do {
+          rerun = false;
+          await fetchOnce();
+        } while (rerun && gen === generation);
+      } finally {
+        // After a reset() a newer load may own `inflight`.
+        if (gen === generation) inflight = null;
+      }
+    })();
+    return inflight;
+  },
+
+  setDate: (date) => {
+    const next = date === get().today ? null : date;
+    if (next === get().date) return get().load();
+    // Drop the other day's trips and any load still fetching it.
+    generation += 1;
+    inflight = null;
+    rerun = false;
+    set({ date: next, loaded: false, refreshing: false, error: null, actioning: {}, groups: EMPTY_GROUPS, routes: [], vehicles: [] });
+    return get().load();
   },
 
   dispatch: (name) =>
-    moveTrip(get, set, name, 'started', 'on_the_road', 'Dispatched', karenBucketLogisticsApi.dispatch, 'Truck dispatched.'),
+    moveTrip(get, set, name, 'on_the_road', 'Dispatched', karenBucketLogisticsApi.dispatch, 'Truck dispatched.'),
 
   release: async (name) => {
     set({ actioning: { ...get().actioning, [name]: true } });
@@ -423,7 +551,7 @@ export const useKarenBucketLogisticsStore = create<State>((set, get) => ({
   },
 
   receive: (name) =>
-    moveTrip(get, set, name, 'on_the_road', 'back', 'Received', karenBucketLogisticsApi.receive, 'Trip ended.'),
+    moveTrip(get, set, name, 'back', 'Received', karenBucketLogisticsApi.receive, 'Trip ended.'),
 
   saveEdit: async (trip, vehicle) => {
     const name = trip.name;
@@ -441,5 +569,14 @@ export const useKarenBucketLogisticsStore = create<State>((set, get) => ({
     }
   },
 
-  reset: () => set({ loading: false, error: null, actioning: {}, groups: EMPTY_GROUPS, routes: [], vehicles: [] }),
-}));
+  reset: () => {
+    generation += 1;
+    inflight = null;
+    rerun = false;
+    set({
+      loading: false, refreshing: false, loaded: false, error: null, actioning: {},
+      groups: EMPTY_GROUPS, routes: [], vehicles: [], today: todayISO(), date: null,
+    });
+  },
+  };
+});

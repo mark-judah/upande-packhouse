@@ -42,9 +42,8 @@ function lengthLabel(v: string | null | undefined): string {
 /**
  * Quality issue found while packing: which bucket on the line, what is wrong
  * with it (wrong stem length, a disease, a pest), whole bucket or some stems,
- * then the replacement. The sales farm's buckets come first, the best one
- * recommended; only when it has none is a remote farm's offered, and that one
- * comes on the next truck as ASAP. The bad stems go to Rejects either way.
+ * then the replacement: only the station's buckets, the best one recommended.
+ * The bad stems go to Rejects either way.
  */
 type SheetProps = {
   /** The variety on screen: its buckets are listed first and preselected. */
@@ -91,7 +90,6 @@ function QualityIssueForm({ currentItemCode, onDone }: SheetProps) {
   // The packer's own picks, remembered against the options they were made on;
   // until then the defaults below apply.
   const [choice, setChoice] = useState<{ key: string; bucket: string } | null>(null);
-  const [remoteToggle, setRemoteToggle] = useState<{ key: string; open: boolean } | null>(null);
   const [notes, setNotes] = useState('');
 
   // The line on screen's first bucket, until another is picked or scanned.
@@ -114,19 +112,13 @@ function QualityIssueForm({ currentItemCode, onDone }: SheetProps) {
   }, [open, bucket, stems, scope, loadOptions, clearOptions]);
 
   const local = options?.salesFarmCandidates ?? [];
-  const remote = options?.remoteCandidates ?? [];
   // These options: a pick made on other ones (another bucket or stem count) no longer applies.
   const optionsKey = `${bucketId}|${options?.needed ?? ''}|${options?.loading ? 'loading' : 'ready'}`;
-  // Best match by default: the sales farm's recommended one, else the first remote one.
-  const chosen =
-    choice && choice.key === optionsKey ? choice.bucket : (local[0]?.bucket ?? remote[0]?.bucket ?? null);
+  // Best match by default: the station's recommended one.
+  const chosen = choice && choice.key === optionsKey ? choice.bucket : (local[0]?.bucket ?? null);
   const setChosen = (b: string) => setChoice({ key: optionsKey, bucket: b });
-  // Remote farms open by default only when the sales farm has nothing.
-  const showRemote = remoteToggle && remoteToggle.key === optionsKey ? remoteToggle.open : local.length === 0;
-  const setShowRemote = (next: boolean) => setRemoteToggle({ key: optionsKey, open: next });
 
-  const replacement: QualityCandidate | null =
-    [...local, ...remote].find((c) => c.bucket === chosen) ?? null;
+  const replacement: QualityCandidate | null = local.find((c) => c.bucket === chosen) ?? null;
 
   const byCategory = useMemo(() => {
     const map: Record<DefectCategory, string[]> = { 'Wrong stem length': [], Disease: [], Pest: [], Other: [] };
@@ -147,20 +139,14 @@ function QualityIssueForm({ currentItemCode, onDone }: SheetProps) {
   };
 
   const canSubmit = !!bucket && !!defect && stems > 0 && !submitting && !options?.loading;
-  const actionLabel = !replacement
-    ? `Reject ${stems} stems`
-    : replacement.remote
-      ? `Reject & request ${replacement.bucket} ASAP`
-      : `Reject & replace with ${replacement.bucket}`;
+  const actionLabel = !replacement ? `Reject ${stems} stems` : `Reject & replace with ${replacement.bucket}`;
 
   const onSubmit = () => {
     if (!bucket || !defect) return;
     const what = scope === 'bucket' ? `all ${stems} stems of ${bucket.bucket}` : `${stems} stems of ${bucket.bucket}`;
     const then = !replacement
       ? 'No replacement will be allocated.'
-      : replacement.remote
-        ? `${replacement.bucket} will be requested from ${replacement.farm} and put on the next truck as ASAP.`
-        : `${replacement.bucket} (shelf ${replacement.shelf ?? '—'}) will be issued to this line now.`;
+      : `${replacement.bucket} (shelf ${replacement.shelf ?? '—'}) will be issued to this line now.`;
     showDialog('Report quality issue?', `${defect}: ${what} go to Rejects.\n${then}`, [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -196,11 +182,6 @@ function QualityIssueForm({ currentItemCode, onDone }: SheetProps) {
             {c.recommended ? (
               <View style={s.badgeGood}>
                 <Text style={s.badgeGoodText}>Recommended</Text>
-              </View>
-            ) : null}
-            {c.remote ? (
-              <View style={s.badgeAsap}>
-                <Text style={s.badgeAsapText}>ASAP · {c.farm}</Text>
               </View>
             ) : null}
           </View>
@@ -316,25 +297,7 @@ function QualityIssueForm({ currentItemCode, onDone }: SheetProps) {
                 {local.length ? local.map(renderCandidate) : (
                   <Text style={s.muted}>Nothing matching at {options?.salesFarm || 'the sales farm'}.</Text>
                 )}
-                {remote.length ? (
-                  <>
-                    <Pressable style={s.remoteToggle} onPress={() => setShowRemote(!showRemote)}>
-                      <Ionicons name="bus-outline" size={14} color={COLORS.text} />
-                      <Text style={s.remoteToggleText}>
-                        Remote farms · {remote.length} bucket{remote.length === 1 ? '' : 's'} — next truck, ASAP
-                      </Text>
-                      <Ionicons name={showRemote ? 'chevron-up' : 'chevron-down'} size={16} color={COLORS.textMuted} />
-                    </Pressable>
-                    {showRemote ? remote.map(renderCandidate) : null}
-                  </>
-                ) : null}
-                {options?.warning && replacement?.remote ? (
-                  <View style={s.warn}>
-                    <Ionicons name="warning-outline" size={14} color="#B54708" />
-                    <Text style={s.warnText}>{options.warning}</Text>
-                  </View>
-                ) : null}
-                {!local.length && !remote.length ? (
+                {!local.length ? (
                   <Text style={s.muted}>{options?.message || 'No bucket can replace these stems.'}</Text>
                 ) : null}
               </>
@@ -357,7 +320,7 @@ function QualityIssueForm({ currentItemCode, onDone }: SheetProps) {
             size="sm"
             singleLine
             label={actionLabel}
-            iconLeft={replacement?.remote ? 'bus-outline' : 'swap-horizontal'}
+            iconLeft="swap-horizontal"
             onPress={onSubmit}
             disabled={!canSubmit}
             loading={submitting}
@@ -467,30 +430,8 @@ const s = StyleSheet.create({
   repId: { fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: COLORS.text },
   badgeGood: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6, backgroundColor: '#ECFDF3' },
   badgeGoodText: { fontFamily: fontFamily.semiBold, fontSize: 10, color: '#067647' },
-  badgeAsap: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6, backgroundColor: '#FEE4E2' },
-  badgeAsapText: { fontFamily: fontFamily.semiBold, fontSize: 10, color: '#B42318' },
   repMeta: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary, marginTop: 2 },
   repShelf: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3 },
   repShelfText: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted, flexShrink: 1 },
-  remoteToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    padding: spacing.sm,
-    borderRadius: 8,
-    backgroundColor: COLORS.surfaceAlt,
-    marginVertical: spacing.xs,
-  },
-  remoteToggleText: { flex: 1, fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.text },
-  warn: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-    padding: spacing.sm,
-    borderRadius: 8,
-    backgroundColor: '#FFFAEB',
-    marginTop: spacing.xs,
-  },
-  warnText: { flex: 1, fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: '#B54708' },
   actions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
 });

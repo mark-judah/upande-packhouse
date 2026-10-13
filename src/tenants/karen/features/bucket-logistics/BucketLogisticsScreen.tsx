@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Screen } from '@/src/core/ui/Screen';
 import { Segmented } from '@/src/core/ui/Segmented';
+import { DateSelector } from '@/src/core/ui/DateSelector';
 import { useToast } from '@/src/core/ui/Toast';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { useKarenBucketLogisticsStore } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
@@ -13,7 +14,7 @@ import { TripEditSheet } from './TripEditSheet';
 import { RejectTripSheet } from './RejectTripSheet';
 
 const TABS = [
-  { value: 'routes', label: "Today's Routes" },
+  { value: 'routes', label: 'Routes' },
   { value: 'requests', label: 'Trip Requests' },
   { value: 'trips', label: 'Trips' },
 ] as const;
@@ -34,16 +35,16 @@ const SECTIONS: { key: TripGroup; label: string; empty: string }[] = [
 
 export function KarenBucketLogisticsScreen() {
   const [tab, setTab] = useState<Tab>('routes');
-  const { loading, error, groups, routes, vehicles, actioning, load, dispatch, release, reject, receive, saveEdit, reset } =
-    useKarenBucketLogisticsStore();
+  const {
+    loading, error, groups, routes, vehicles, actioning, today, date,
+    load, setDate, dispatch, release, reject, receive, saveEdit, reset,
+  } = useKarenBucketLogisticsStore();
+  const day = date ?? today;
   const [editing, setEditing] = useState<Trip | null>(null);
   const [rejecting, setRejecting] = useState<Trip | null>(null);
   const { showSuccess, showError } = useToast();
 
-  useEffect(() => {
-    load();
-    return () => reset();
-  }, [load, reset]);
+  useEffect(() => () => reset(), [reset]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -112,6 +113,7 @@ export function KarenBucketLogisticsScreen() {
 
   return (
     <Screen title="Bucket Logistics" loading={loading} error={error} onRetry={load} onRefresh={load}>
+      <DateSelector value={day} onChange={setDate} maxDate={today} resetTo={today} compact />
       <Segmented value={tab} options={TABS} onChange={setTab} />
 
       {tab === 'routes' ? (

@@ -127,15 +127,19 @@ export function TripCard({
         <Button label="Change truck" onPress={() => onEdit(trip)} variant="outline" size="sm" disabled={actioning} style={s.edit} />
       ) : null}
 
-      {trip.status === 'Requested' ? (
+      {trip.canDispatch ? (
+        <Button label="Dispatch" onPress={() => confirmDispatch(trip, onDispatch)} loading={actioning} style={s.action} />
+      ) : null}
+
+      {trip.canRelease ? (
         <Button
           label="Confirm request"
           onPress={() => confirmRequest(trip, onRelease, onReject)}
           loading={actioning}
           style={s.action}
         />
-      ) : trip.status === 'Scheduled' ? (
-        <Button label="Dispatch" onPress={() => confirmDispatch(trip, onDispatch)} loading={actioning} style={s.action} />
+      ) : trip.status === 'Requested' ? (
+        <Button label="Reject" onPress={() => onReject(trip)} loading={actioning} variant="outline" style={s.action} />
       ) : trip.status === 'Dispatched' ? (
         <Button label="End Trip" onPress={() => onReceive(trip.name)} loading={actioning} variant="outline" style={s.action} />
       ) : trip.turnaround ? (

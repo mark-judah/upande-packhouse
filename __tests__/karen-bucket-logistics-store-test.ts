@@ -1,4 +1,12 @@
-import { buildRoutes, groupTrips, stageToPills, turnaroundLabel } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
+import {
+  buildRoutes,
+  buildTrip,
+  groupTrips,
+  stageToPills,
+  turnaroundLabel,
+  useKarenBucketLogisticsStore,
+} from '@/src/tenants/karen/state/karen-bucket-logistics-store';
+import { karenBucketLogisticsApi } from '@/src/tenants/karen/api/karen-bucket-logistics-api';
 import type {
   RawScheduleOrder,
   RawTransferScheduleData,
@@ -320,3 +328,223 @@ describe('buildRoutes', () => {
   });
 });
 
+
+describe('earlier-day trips', () => {
+  const TODAY = '2026-08-22';
+  const EARLIER = '2026-08-18';
+
+  it('drops every earlier-day trip except one still on the road', () => {
+    const groups = groupTrips(
+      fixture({
+        generated_at: `${TODAY} 06:00:00`,
+        trips: [
+          rawTrip({ name: 'OLD-DRAFT', vehicle: 'V1', status: 'Draft', trip_date: EARLIER }),
+          rawTrip({ name: 'OLD-REQ', vehicle: 'V2', status: 'Requested', trip_date: EARLIER }),
+          rawTrip({ name: 'OLD-SCHED', vehicle: 'V5', status: 'Scheduled', trip_date: EARLIER }),
+          rawTrip({ name: 'OLD-LOADED', vehicle: 'V6', status: 'Requested', trip_date: EARLIER, loading: 1, loaded_buckets: 9 }),
+          rawTrip({ name: 'OLD-ROAD', vehicle: 'V3', status: 'Dispatched', trip_date: EARLIER }),
+          rawTrip({ name: 'NEW-DRAFT', vehicle: 'V4', status: 'Draft', trip_date: TODAY }),
+        ],
+      }),
+    );
+    expect(groups.requests.map((t) => t.name)).toEqual(['NEW-DRAFT']);
+    expect(groups.started).toEqual([]);
+    expect(groups.on_the_road.map((t) => t.name)).toEqual(['OLD-ROAD']);
+    expect(groups.back).toEqual([]);
+    expect(groups.requests[0].sequence + groups.on_the_road[0].sequence).toBe(3);
+  });
+
+  it("leaves earlier-day trips that never left out of today's routes", () => {
+    const routes = buildRoutes(
+      fixture({
+        generated_at: `${TODAY} 06:00:00`,
+        trips: [
+          rawTrip({ name: 'OLD', vehicle: 'V1', status: 'Draft', trip_date: EARLIER }),
+          rawTrip({ name: 'OLD-ROAD', vehicle: 'V2', status: 'Dispatched', trip_date: EARLIER }),
+        ],
+      }),
+    );
+    expect(routes.map((r) => r.vehicle)).toEqual(['V2']);
+  });
+
+  it('never offers release or dispatch on an earlier-day trip', () => {
+    const trip = buildTrip(
+      rawTrip({ name: 'T', vehicle: 'V', status: 'Requested', trip_date: EARLIER, loaded_buckets: 4 }),
+      [],
+      1,
+      TODAY,
+    );
+    expect(trip.canRelease).toBe(false);
+    expect(trip.canDispatch).toBe(false);
+    expect(trip.editable).toBe(false);
+  });
+
+  it("offers release for today's request and dispatch for a loaded Draft or Requested trip", () => {
+    const requested = buildTrip(rawTrip({ name: 'T', vehicle: 'V', status: 'Requested', trip_date: TODAY }), [], 1, TODAY);
+    expect(requested.canRelease).toBe(true);
+    expect(requested.canDispatch).toBe(false);
+
+    const loadedDraft = buildTrip(rawTrip({ name: 'T', vehicle: 'V', status: 'Draft', trip_date: TODAY, loaded_buckets: 3 }), [], 1, TODAY);
+    expect(loadedDraft.hasLoads).toBe(true);
+    expect(loadedDraft.canDispatch).toBe(true);
+    expect(loadedDraft.editable).toBe(false);
+
+    const loadingRequested = buildTrip(rawTrip({ name: 'T', vehicle: 'V', status: 'Requested', trip_date: TODAY, loading: 1 }), [], 1, TODAY);
+    expect(loadingRequested.canDispatch).toBe(true);
+
+    const scheduled = buildTrip(rawTrip({ name: 'T', vehicle: 'V', status: 'Scheduled', trip_date: TODAY }), [], 1, TODAY);
+    expect(scheduled.canDispatch).toBe(true);
+
+    const onRoad = buildTrip(rawTrip({ name: 'T', vehicle: 'V', status: 'Dispatched', trip_date: TODAY, loaded_buckets: 3 }), [], 1, TODAY);
+    expect(onRoad.canDispatch).toBe(false);
+  });
+});
+
+describe('day filter', () => {
+  const TODAY = '2026-08-22';
+  const EARLIER = '2026-08-18';
+  const feed = () =>
+    fixture({
+      generated_at: `${TODAY} 06:00:00`,
+      routes: [{ name: 'R1', vehicle: 'V9', total_km: 10, legs: [], farms: [] }],
+      trips: [
+        rawTrip({ name: 'NEW-REQ', vehicle: 'V1', status: 'Requested', trip_date: TODAY }),
+        rawTrip({ name: 'OLD-REQ', vehicle: 'V2', status: 'Requested', trip_date: EARLIER }),
+        rawTrip({ name: 'OLD-SCHED', vehicle: 'V3', status: 'Scheduled', trip_date: EARLIER, loaded_buckets: 5 }),
+        rawTrip({ name: 'OLD-ROAD', vehicle: 'V4', status: 'Dispatched', trip_date: EARLIER }),
+        rawTrip({ name: 'OLD-BACK', vehicle: 'V5', status: 'Received', trip_date: EARLIER }),
+        rawTrip({ name: 'MID-ROAD', vehicle: 'V6', status: 'Dispatched', trip_date: '2026-08-20' }),
+      ],
+    });
+
+  it("defaults to the feed's day from generated_at", () => {
+    const groups = groupTrips(feed());
+    expect(groups.requests.map((t) => t.name)).toEqual(['NEW-REQ']);
+    expect(groups.started).toEqual([]);
+    // A truck still out from an earlier day shows on today.
+    expect(groups.on_the_road.map((t) => t.name).sort()).toEqual(['MID-ROAD', 'OLD-ROAD']);
+    expect(groups.back).toEqual([]);
+  });
+
+  it("shows only the selected earlier day's trips, view-only", () => {
+    const groups = groupTrips(feed(), TODAY, EARLIER);
+    expect(groups.requests.map((t) => t.name)).toEqual(['OLD-REQ']);
+    expect(groups.started.map((t) => t.name)).toEqual(['OLD-SCHED']);
+    expect(groups.on_the_road.map((t) => t.name)).toEqual(['OLD-ROAD']);
+    expect(groups.back.map((t) => t.name)).toEqual(['OLD-BACK']);
+    for (const t of [...groups.requests, ...groups.started]) {
+      expect(t.canRelease).toBe(false);
+      expect(t.canDispatch).toBe(false);
+      expect(t.editable).toBe(false);
+    }
+  });
+
+  it("limits routes to the selected day's trips; the feed's routes are today's only", () => {
+    expect(buildRoutes(feed()).map((r) => r.vehicle)).toEqual(['V1', 'V4', 'V6', 'V9']);
+    expect(buildRoutes(feed(), TODAY, EARLIER).map((r) => r.vehicle)).toEqual(['V2', 'V3', 'V4', 'V5']);
+  });
+});
+
+describe('store actions', () => {
+  const TODAY = '2026-08-22';
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    useKarenBucketLogisticsStore.getState().reset();
+    fetchSpy = jest.spyOn(karenBucketLogisticsApi, 'fetch');
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('dispatches a loaded Draft trip from the requests group', async () => {
+    const data = fixture({
+      generated_at: `${TODAY} 06:00:00`,
+      trips: [rawTrip({ name: 'T1', vehicle: 'V1', status: 'Draft', trip_date: TODAY, loaded_buckets: 4 })],
+    });
+    fetchSpy.mockResolvedValue(data);
+    await useKarenBucketLogisticsStore.getState().load();
+    expect(useKarenBucketLogisticsStore.getState().groups.requests.map((t) => t.name)).toEqual(['T1']);
+
+    let resolveDispatch: (v: unknown) => void = () => {};
+    jest.spyOn(karenBucketLogisticsApi, 'dispatch').mockReturnValue(
+      new Promise((r) => { resolveDispatch = r; }) as never,
+    );
+    const pending = useKarenBucketLogisticsStore.getState().dispatch('T1');
+    const groups = useKarenBucketLogisticsStore.getState().groups;
+    expect(groups.requests).toEqual([]);
+    expect(groups.on_the_road.map((t) => [t.name, t.status])).toEqual([['T1', 'Dispatched']]);
+
+    resolveDispatch({ message: { status: 'success' } });
+    expect(await pending).toEqual({ kind: 'success', message: 'Truck dispatched.' });
+  });
+
+  it('refreshes in the background once data is on screen, and never overlaps loads', async () => {
+    const data = fixture({ generated_at: `${TODAY} 06:00:00` });
+    fetchSpy.mockResolvedValue(data);
+    await useKarenBucketLogisticsStore.getState().load();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    let release: (v: unknown) => void = () => {};
+    fetchSpy.mockReturnValueOnce(new Promise((r) => { release = r; }) as never);
+    const a = useKarenBucketLogisticsStore.getState().load();
+    expect(useKarenBucketLogisticsStore.getState().loading).toBe(false);
+    expect(useKarenBucketLogisticsStore.getState().refreshing).toBe(true);
+    const b = useKarenBucketLogisticsStore.getState().load();
+    const c = useKarenBucketLogisticsStore.getState().load();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    release(data);
+    await Promise.all([a, b, c]);
+    // The loads asked for mid-flight collapse into one more request.
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(useKarenBucketLogisticsStore.getState().refreshing).toBe(false);
+  });
+
+  it('keeps the data on screen when a background refresh fails', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      fixture({ generated_at: `${TODAY} 06:00:00`, trips: [rawTrip({ name: 'T1', vehicle: 'V1', status: 'Draft', trip_date: TODAY })] }),
+    );
+    await useKarenBucketLogisticsStore.getState().load();
+    fetchSpy.mockRejectedValueOnce(new Error('timeout'));
+    await useKarenBucketLogisticsStore.getState().load();
+    const st = useKarenBucketLogisticsStore.getState();
+    expect(st.error).toBeNull();
+    expect(st.groups.requests.map((t) => t.name)).toEqual(['T1']);
+  });
+});
+
+describe('setDate', () => {
+  const TODAY = '2026-08-22';
+  const EARLIER = '2026-08-18';
+  beforeEach(() => useKarenBucketLogisticsStore.getState().reset());
+  afterEach(() => jest.restoreAllMocks());
+
+  it('clears the previous day, then loads the chosen day with trip_date', async () => {
+    const fetchSpy = jest.spyOn(karenBucketLogisticsApi, 'fetch');
+    fetchSpy.mockResolvedValueOnce(
+      fixture({ generated_at: `${TODAY} 06:00:00`, trips: [rawTrip({ name: 'NEW', vehicle: 'V1', status: 'Draft', trip_date: TODAY })] }),
+    );
+    await useKarenBucketLogisticsStore.getState().load();
+    expect(fetchSpy).toHaveBeenLastCalledWith(undefined);
+    expect(useKarenBucketLogisticsStore.getState().today).toBe(TODAY);
+
+    let resolve: (v: unknown) => void = () => {};
+    fetchSpy.mockReturnValueOnce(new Promise((r) => { resolve = r; }) as never);
+    const pending = useKarenBucketLogisticsStore.getState().setDate(EARLIER);
+    let st = useKarenBucketLogisticsStore.getState();
+    expect(st.date).toBe(EARLIER);
+    expect(st.loading).toBe(true);
+    expect(st.groups.requests).toEqual([]);
+    expect(fetchSpy).toHaveBeenLastCalledWith(EARLIER);
+
+    resolve(fixture({ generated_at: `${TODAY} 07:00:00`, trips: [rawTrip({ name: 'OLD', vehicle: 'V2', status: 'Draft', trip_date: EARLIER })] }));
+    await pending;
+    st = useKarenBucketLogisticsStore.getState();
+    expect(st.date).toBe(EARLIER);
+    expect(st.groups.requests.map((t) => t.name)).toEqual(['OLD']);
+
+    fetchSpy.mockResolvedValueOnce(fixture({ generated_at: `${TODAY} 08:00:00` }));
+    await useKarenBucketLogisticsStore.getState().setDate(TODAY);
+    expect(useKarenBucketLogisticsStore.getState().date).toBeNull();
+    expect(fetchSpy).toHaveBeenLastCalledWith(undefined);
+  });
+});

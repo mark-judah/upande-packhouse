@@ -24,7 +24,7 @@ export type PackingItem = {
   mixed: number;
   downgradeTo: string | null;
   isIssued: boolean;
-  /** Replaced from a remote farm: issued once the truck brings it and it is shelved. */
+  /** Allocated at a remote farm: issued once the truck brings it and it is shelved. */
   waitingTransfer: string | null;
   /** Marked not found at its farm: never coming -- replace it, or complete the order short. */
   notFound: boolean;
@@ -59,8 +59,6 @@ export type ReplacementCandidate = {
   stemLength: string | null;
   availableQty: number | null;
   harvestDate: string | null;
-  /** The remote farm it comes from by truck; null at the sales farm. */
-  farm: string | null;
 };
 
 /** The Replace sheet for one packing-list bucket. */
@@ -69,11 +67,8 @@ export type ReplaceSheet = {
   loading: boolean;
   candidates: ReplacementCandidate[];
   neededQty: number | null;
-  /** Why nothing can be offered, when that is the answer -- or, with remote
-   *  candidates, that they come from remote farms. */
+  /** Why nothing can be offered, when that is the answer. */
   message: string | null;
-  /** Same-day order and the candidates are remote: they may not arrive in time. */
-  warning: string | null;
   submitting: boolean;
 };
 
@@ -540,7 +535,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
     if (!opl) return;
     const pendingLine = item.lines.find((l) => !l.isIssued)?.saleOrderItem;
     set({
-      replace: { item, loading: true, candidates: [], neededQty: null, message: null, warning: null, submitting: false },
+      replace: { item, loading: true, candidates: [], neededQty: null, message: null, submitting: false },
     });
     try {
       const res = await karenIssuingApi.fetchReplacementOptions({
@@ -555,7 +550,6 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
           loading: false,
           neededQty: typeof res.needed_qty === 'number' ? res.needed_qty : null,
           message: res.found ? res.message || null : res.message || 'No bucket can replace this one.',
-          warning: res.found ? res.warning || null : null,
           submitting: false,
           candidates: (res.candidates ?? []).map((c) => ({
             bucket: c.new_bucket,
@@ -563,7 +557,6 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
             stemLength: c.stem_length ?? null,
             availableQty: typeof c.available_qty === 'number' ? c.available_qty : null,
             harvestDate: c.harvest_date ?? null,
-            farm: c.remote ? c.farm ?? null : null,
           })),
         },
       });
@@ -575,7 +568,6 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
           loading: false,
           candidates: [],
           neededQty: null,
-          warning: null,
           message: mapAxiosError(err).message || 'Could not load replacements.',
           submitting: false,
         },
@@ -619,9 +611,6 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
       set({ replace: null });
       // The OPL now lists the replacement; scanning it issues it as usual.
       await get().selectOrder(opl);
-      if (res.remote_farm) {
-        return { ok: true, message: res.message || `${newBucket} requested from ${res.remote_farm}.` };
-      }
       const where = res.shelf ? ` from shelf ${res.shelf}` : '';
       return { ok: true, message: `${sheet.item.bucket} replaced. Fetch ${newBucket}${where} and scan it.` };
     } catch (err) {
