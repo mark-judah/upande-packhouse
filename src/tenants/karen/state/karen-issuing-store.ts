@@ -104,6 +104,8 @@ export type ReadyOrder = {
   notFound: number;
   shortStems: number;
   shortPct: number;
+  /** Completed short: what was issued is the order. */
+  shortAccepted: boolean;
 };
 
 type State = {
@@ -200,6 +202,7 @@ function toReadyOrder(entry: string | RawReadyOrder): ReadyOrder | null {
     notFound: Number(entry.not_found ?? 0),
     shortStems: Number(entry.short_stems ?? 0),
     shortPct: Number(entry.short_pct ?? 0),
+    shortAccepted: !!entry.short_accepted,
   };
 }
 
