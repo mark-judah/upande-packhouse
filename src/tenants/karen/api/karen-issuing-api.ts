@@ -216,6 +216,17 @@ export const karenIssuingApi = {
     });
   },
 
+  /** Pack what was issued (at least the Production Settings %, 50 by default) while the
+   *  not-found buckets wait for a replacement -- not recorded short; the team moves on.
+   *  Server Script `pack_while_waiting_replacement`. */
+  packWhileWaiting(oplName: string): Promise<{ message?: { success?: boolean; message?: string; issued_pct?: number } }> {
+    return api({
+      method: 'POST',
+      url: '/api/method/pack_while_waiting_replacement',
+      data: { opl_name: oplName },
+    });
+  },
+
   /** For a given Order Pick List, get its packing-list rows (one row per
    *  bucket allocated to THAT OPL only — never other OPLs of the same
    *  sale order). */
