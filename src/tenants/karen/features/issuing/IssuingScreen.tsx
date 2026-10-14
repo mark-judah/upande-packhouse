@@ -45,6 +45,7 @@ export function KarenIssuingScreen() {
     closeReplace,
     confirmReplace,
     completeShort,
+    packWhileWaiting,
     issuedOfflineInfo,
     markIssuedOffline,
     reset,
@@ -191,6 +192,31 @@ export function KarenIssuingScreen() {
     );
   };
 
+  // Pack what was issued now; the not-found buckets are replaced later when stock is found.
+  const [sendingToPack, setSendingToPack] = useState(false);
+  const onPackWhileWaiting = () => {
+    if (!selectedOplInfo) return;
+    showDialog(
+      'Pack while waiting?',
+      `${selectedOplInfo.name}: pack the ${100 - selectedOplInfo.shortPct}% issued now. ` +
+        `${selectedOplInfo.notFound} not-found bucket${selectedOplInfo.notFound === 1 ? '' : 's'} can be replaced later.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Pack now',
+          onPress: async () => {
+            setSendingToPack(true);
+            const res = await packWhileWaiting();
+            setSendingToPack(false);
+            if (res.ok) showSuccess(res.message);
+            else showError(res.message);
+          },
+        },
+      ],
+      { name: 'cube-outline', tone: 'info' },
+    );
+  };
+
   const onPickOrder = (next: string) => {
     if (!next || next === selectedOpl) return;
     selectOrder(next);
@@ -293,6 +319,14 @@ export function KarenIssuingScreen() {
                   ` · ${Math.round(selectedOplInfo.shortStems)} stems · short ${selectedOplInfo.shortPct}%` +
                   (selectedOplInfo.draft ? ' · still a draft' : '')}
               </Alert>
+              {selectedOplInfo.draft ? (
+                <Button
+                  label={`Pack ${100 - selectedOplInfo.shortPct}% now`}
+                  disabled={sendingToPack || completing || !readyToComplete || selectedOplInfo.shortPct > 50}
+                  loading={sendingToPack}
+                  onPress={onPackWhileWaiting}
+                />
+              ) : null}
               <Button
                 label={`Complete short (${selectedOplInfo.shortPct}%)`}
                 variant="outline"

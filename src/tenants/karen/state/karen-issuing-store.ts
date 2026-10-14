@@ -137,6 +137,7 @@ type State = {
   closeReplace: () => void;
   /** Complete the selected order without its not-found buckets (short), for packing. */
   completeShort: () => Promise<{ ok: boolean; message: string }>;
+  packWhileWaiting: () => Promise<{ ok: boolean; message: string }>;
   /** Swap the bucket for `newBucket`; the packing list reloads to show it. */
   confirmReplace: (
     newBucket: string,
@@ -588,6 +589,20 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
       return { ok: true, message: res.message || 'Completed short.' };
     } catch (err) {
       return { ok: false, message: mapAxiosError(err).message || 'Could not complete the order.' };
+    }
+  },
+
+  packWhileWaiting: async () => {
+    const opl = get().selectedOpl;
+    if (!opl) return { ok: false, message: 'Pick an order first.' };
+    try {
+      const res = (await karenIssuingApi.packWhileWaiting(opl))?.message;
+      if (!res?.success) return { ok: false, message: res?.message || 'Could not send the order to packing.' };
+      await get().loadOrders();
+      await get().selectOrder(opl);
+      return { ok: true, message: res.message || 'Sent to packing.' };
+    } catch (err) {
+      return { ok: false, message: mapAxiosError(err).message || 'Could not send the order to packing.' };
     }
   },
 
