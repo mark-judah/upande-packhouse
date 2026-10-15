@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { karenBucketLogisticsApi } from '../api/karen-bucket-logistics-api';
 import type {
+  RawBucketDetail,
   RawRoute,
   RawScheduleOrder,
   RawTransferScheduleData,
@@ -29,11 +30,41 @@ export type TripStop = {
 
 export type TripStatus = 'Draft' | 'Requested' | 'Scheduled' | 'Dispatched' | 'Received';
 
+/** Where a trip stands, from its buckets' flags (the dashboard's stage colours). */
+export type TripState = { label: string; color: string };
+
+/** Planned at a farm: what the trip carries from it. */
+export type FarmLoad = { farm: string; buckets: number };
+
+/** One (order, farm) pair on a trip: what getBucketLogisticsDetail is asked for. */
+export type OrderFarm = { opl: string; orderName: string; farm: string };
+
 export type Trip = {
   name: string;
   /** 1-based, global across all of today's trips, lowest packhouse-schedule number first. */
   sequence: number;
   vehicle: string;
+  /** The truck's trip number that day: its route run, else its place among the truck's trips. */
+  tripNo: number;
+  /** "<truck> · Trip N". */
+  title: string;
+  /** e.g. "Kapkolia → Chepsito → Kapkolia", '' without a route run. */
+  runChain: string;
+  /** When the trip was planned, and when it became Scheduled ('' until then). */
+  createdAt: string;
+  scheduledAt: string;
+  /** total/capacity as a whole-number percent, NOT clamped (over 100 = over capacity). */
+  loadPct: number;
+  /** capacity - total: negative when over capacity. */
+  freeBuckets: number;
+  loadedBuckets: number;
+  arrivedBuckets: number;
+  /** Buckets per farm, in collection order. */
+  farmLoads: FarmLoad[];
+  /** Where it stands from its buckets' flags. */
+  state: TripState;
+  /** Its (order, farm) pairs, deduped. */
+  orderFarms: OrderFarm[];
   status: TripStatus;
   capacityBuckets: number;
   totalBuckets: number;
@@ -82,6 +113,9 @@ export type Route = {
 
 type ActionOutcome = { kind: 'success' | 'error'; message: string };
 
+/** An order's buckets at a farm that no trip carries yet. */
+export type NotScheduledOrder = { opl: string; orderName: string; farm: string; buckets: number };
+
 type State = {
   /** First load only: nothing to show yet. */
   loading: boolean;
@@ -95,6 +129,10 @@ type State = {
   routes: Route[];
   /** Transfer trucks, for moving a trip to another one. */
   vehicles: RawVehicle[];
+  /** Orders with buckets at a farm on no trip yet (today only). */
+  notScheduled: NotScheduledOrder[];
+  /** The packhouse the trucks bring the buckets to. */
+  hub: string;
   /** The feed's day (server), the default and latest selectable day. */
   today: string;
   /** The day being viewed; null = today. */
@@ -250,7 +288,69 @@ export function turnaroundLabel(dispatchedAt: string, receivedAt: string): strin
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-export function buildTrip(raw: RawTrip, scheduleOrders: RawScheduleOrder[], sequence: number, today: string): Trip {
+export const DEFAULT_HUB = 'Kapkolia';
+
+/** The dashboard's stage colours (bucket_logistics.html OV_FLAGS / the farm app). */
+export const STAGE_COLOR = {
+  awaiting: '#d97706',
+  trolley: '#7c3aed',
+  loading: '#2563eb',
+  transit: '#1d4ed8',
+  arrived: '#0e7490',
+} as const;
+
+/**
+ * Where a trip stands, from its buckets' flags as the farm app reads them: on a trolley
+ * (staging), loading to the truck, in transit, arrived at the hub. A planned or
+ * requested trip nothing has moved on yet keeps its planning state.
+ */
+export function tripState(raw: RawTrip, stops: TripStop[], hub: string = DEFAULT_HUB): TripState {
+  const status = raw.status || 'Draft';
+  const bs = raw.bucket_status;
+  const total = bs?.total || 0;
+  const transit = bs?.in_transit || 0;
+  const shelved = bs?.shelved || 0;
+  const arrived = { label: `Arrived at ${hub || DEFAULT_HUB}`, color: STAGE_COLOR.arrived };
+  const inTransit = { label: 'In transit', color: STAGE_COLOR.transit };
+  if (total > 0 && shelved >= total) return arrived;
+  if (status === 'Received') return arrived;
+  if (transit + shelved > 0 && (transit + shelved >= total || status === 'Dispatched')) return inTransit;
+  if (status === 'Dispatched') return inTransit;
+  if ((bs?.loaded || 0) > 0 || transit > 0 || rawHasLoads(raw)) return { label: 'Loading to truck', color: STAGE_COLOR.loading };
+  if (stops.some((st) => st.stage.loaded > 0)) return { label: 'On trolley (Staging)', color: STAGE_COLOR.trolley };
+  if (status === 'Draft') return { label: 'Planned', color: '#737373' };
+  if (status === 'Requested') return { label: 'Truck requested', color: '#B45309' };
+  return { label: 'Awaiting transfer', color: STAGE_COLOR.awaiting };
+}
+
+function orderFarms(raw: RawTrip): OrderFarm[] {
+  const seen = new Set<string>();
+  const out: OrderFarm[] = [];
+  for (const o of raw.orders) {
+    const key = `${o.order_pick_list}|${o.farm || ''}`;
+    if (!o.order_pick_list || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ opl: o.order_pick_list, orderName: o.order_name || o.order_pick_list, farm: o.farm || '' });
+  }
+  return out;
+}
+
+/** "15 Oct, 08:24" from "YYYY-MM-DD HH:MM[:SS]" (server local time, shown as is). */
+export function dateTimeLabel(ts: string): string {
+  const [d, t] = (ts || '').trim().split(' ');
+  const [y, m, day] = (d || '').split('-').map(Number);
+  if (!y || !m || !day) return ts;
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${day} ${MONTHS[m - 1]}${t ? `, ${t.slice(0, 5)}` : ''}`;
+}
+
+export function buildTrip(
+  raw: RawTrip,
+  scheduleOrders: RawScheduleOrder[],
+  sequence: number,
+  today: string,
+  hub: string = DEFAULT_HUB,
+): Trip {
   const status = raw.status || 'Draft';
   const active = ACTIVE_STATUSES.includes(status);
   const hasLoads = rawHasLoads(raw);
@@ -259,10 +359,26 @@ export function buildTrip(raw: RawTrip, scheduleOrders: RawScheduleOrder[], sequ
   const fillPct = cap > 0 ? Math.max(0, Math.min(100, Math.round((raw.total_buckets / cap) * 100))) : 0;
   const matches = scheduleMatches(raw, scheduleOrders);
   const stops = buildStops(raw);
+  const vehicle = raw.vehicle || 'Unassigned';
+  const tripNo = raw.run || 0;
+  const total = Math.max(raw.total_buckets || 0, stops.reduce((n, st) => n + st.buckets, 0));
   return {
     name: raw.name,
     sequence,
-    vehicle: raw.vehicle || 'Unassigned',
+    vehicle,
+    tripNo,
+    title: `${vehicle} · Trip ${tripNo || 1}`,
+    runChain: raw.run_chain || '',
+    createdAt: (raw.scheduled_at || '').slice(0, 19),
+    scheduledAt:
+      status === 'Draft' || status === 'Requested' ? '' : (raw.released_at || raw.dispatched_at || '').slice(0, 19),
+    loadPct: cap > 0 ? Math.round((total / cap) * 100) : 0,
+    freeBuckets: cap - total,
+    loadedBuckets: raw.loaded_buckets || 0,
+    arrivedBuckets: raw.bucket_status?.shelved ?? raw.shelved_buckets ?? 0,
+    farmLoads: stops.map((st) => ({ farm: st.farm, buckets: st.buckets })),
+    state: tripState(raw, stops, hub),
+    orderFarms: orderFarms(raw),
     status: status as TripStatus,
     capacityBuckets: cap,
     totalBuckets: raw.total_buckets || 0,
@@ -305,12 +421,177 @@ export function groupTrips(
     .map((raw) => ({ raw, seq: bestScheduleSeq(scheduleMatches(raw, data.orders)) }))
     .sort((a, b) => a.seq - b.seq || a.raw.name.localeCompare(b.raw.name));
 
+  const hub = data.packhouse || DEFAULT_HUB;
+  const trips = ranked.map(({ raw }, i) => buildTrip(raw, data.orders, i + 1, today, hub));
+  numberTrips(trips);
+  trips.sort(byTruck);
+
   const groups: Record<TripGroup, Trip[]> = { requests: [], started: [], on_the_road: [], back: [] };
-  ranked.forEach(({ raw }, i) => {
-    const trip = buildTrip(raw, data.orders, i + 1, today);
-    groups[groupForStatus(trip.status)].push(trip);
-  });
+  for (const trip of trips) groups[groupForStatus(trip.status)].push(trip);
   return groups;
+}
+
+/** A truck's trips one after another: by truck, then day, then trip number. */
+export function byTruck(a: Trip, b: Trip): number {
+  return (
+    a.vehicle.localeCompare(b.vehicle) ||
+    a.tripDate.localeCompare(b.tripDate) ||
+    (a.tripNo || 99) - (b.tripNo || 99) ||
+    a.createdAt.localeCompare(b.createdAt) ||
+    a.name.localeCompare(b.name)
+  );
+}
+
+/** A trip without a route run is numbered by its place among the truck's trips that day. */
+function numberTrips(trips: Trip[]): void {
+  const byDay = new Map<string, Trip[]>();
+  for (const t of trips) {
+    const key = `${t.vehicle}|${t.tripDate}`;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key)!.push(t);
+  }
+  for (const list of byDay.values()) {
+    if (list.every((t) => t.tripNo)) continue;
+    const used = new Set(list.map((t) => t.tripNo).filter(Boolean));
+    let next = 1;
+    for (const t of [...list].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name))) {
+      if (t.tripNo) continue;
+      while (used.has(next)) next += 1;
+      t.tripNo = next;
+      used.add(next);
+      t.title = `${t.vehicle} · Trip ${next}`;
+    }
+  }
+}
+
+/**
+ * Pure: each order's open buckets at a farm (awaiting there or on a trolley) that no
+ * trip in the feed carries yet. A trip covers the buckets it plans or has loaded of
+ * that (order, farm). Exported for testing.
+ */
+export function buildNotScheduled(data: RawTransferScheduleData): NotScheduledOrder[] {
+  const covered = new Map<string, number>();
+  for (const t of data.trips) {
+    if (t.stale) continue;
+    for (const o of t.orders) {
+      const key = `${o.order_pick_list}|${o.farm || ''}`;
+      covered.set(key, (covered.get(key) || 0) + Math.max(o.buckets || 0, o.loaded_buckets || 0));
+    }
+  }
+  const out: NotScheduledOrder[] = [];
+  for (const o of data.orders) {
+    for (const f of o.farms || []) {
+      const left = (f.buckets || 0) - (covered.get(`${o.opl}|${f.farm}`) || 0);
+      if (left > 0) out.push({ opl: o.opl, orderName: o.order_name || o.opl, farm: f.farm, buckets: left });
+    }
+  }
+  return out.sort((a, b) => a.farm.localeCompare(b.farm) || a.orderName.localeCompare(b.orderName));
+}
+
+/** A bucket's current stage: not found wins, else the furthest stage it reached. */
+export type BucketStage =
+  | 'awaiting' | 'trolley' | 'on_truck' | 'transit' | 'arrived_hub' | 'shelved' | 'ready' | 'issued' | 'issued_offline' | 'not_found';
+
+const STAGE_ORDER: Exclude<BucketStage, 'not_found'>[] = [
+  'awaiting', 'trolley', 'on_truck', 'transit', 'arrived_hub', 'shelved', 'ready', 'issued', 'issued_offline',
+];
+
+export function bucketStage(b: RawBucketDetail): BucketStage | null {
+  if (Number(b.not_found)) return 'not_found';
+  let cur: BucketStage | null = null;
+  for (const k of STAGE_ORDER) if (Number(b[k])) cur = k;
+  return cur;
+}
+
+/** The dashboard's stage labels and colours (OV_FLAGS). */
+export function stageInfo(stage: BucketStage | null, hub: string = DEFAULT_HUB): { label: string; color: string } {
+  switch (stage) {
+    case 'awaiting': return { label: 'Awaiting Transfer', color: '#d97706' };
+    case 'trolley': return { label: 'Loaded in Trolley', color: '#7c3aed' };
+    case 'on_truck': return { label: 'Loaded on Truck', color: '#2563eb' };
+    case 'transit': return { label: 'In Transit', color: '#2563eb' };
+    case 'arrived_hub': return { label: `Arrived at ${hub || DEFAULT_HUB}`, color: '#0e7490' };
+    case 'shelved': return { label: 'Shelved', color: '#16a34a' };
+    case 'ready': return { label: 'Ready for Packing', color: '#0891b2' };
+    case 'issued': return { label: 'Issued', color: '#dc2626' };
+    case 'issued_offline': return { label: 'Issued Offline', color: '#7c3aed' };
+    case 'not_found': return { label: 'Not found', color: '#c4302b' };
+    default: return { label: '—', color: '#a3a3a3' };
+  }
+}
+
+/** One bucket on a trip's list. */
+export type TripBucket = {
+  key: string;
+  bucket: string;
+  variety: string;
+  varietyColor: string;
+  length: string;
+  stems: number;
+  orderName: string;
+  farm: string;
+  stage: BucketStage | null;
+};
+
+export type VarietySection = { variety: string; color: string; buckets: TripBucket[] };
+
+/**
+ * Pure: a trip's buckets out of its (order, farm) details. A bucket loaded on a trip
+ * belongs to that trip; one not loaded yet belongs to a trip still collecting. If the
+ * trip has no bucket of its own on record (older trips), every bucket of its pairs shows.
+ */
+export function tripBuckets(
+  details: { pair: OrderFarm; buckets: RawBucketDetail[] }[],
+  trip: { name: string; status: TripStatus } | null,
+): TripBucket[] {
+  const all = details.flatMap(({ pair, buckets }) =>
+    buckets.map((b, i) => ({ pair, b, key: `${pair.opl}|${pair.farm}|${(b.bucket || '').toUpperCase()}|${b.variety}|${b.length}|${i}` })),
+  );
+  const collecting = !trip || ACTIVE_STATUSES.includes(trip.status);
+  let mine = trip
+    ? all.filter(({ b }) => b.trip === trip.name || (!b.trip && collecting && !Number(b.transit) && !Number(b.shelved)))
+    : all.filter(({ b }) => !b.trip && !Number(b.transit) && !Number(b.shelved) && !Number(b.not_found));
+  if (trip && !all.some(({ b }) => b.trip === trip.name) && !collecting) mine = all;
+  return mine.map(({ pair, b, key }) => ({
+    key,
+    bucket: (b.bucket || '').toUpperCase() || '—',
+    variety: b.variety || '',
+    varietyColor: b.variety_color || '',
+    length: b.length || '',
+    stems: Math.round(Number(b.stems) || 0),
+    orderName: pair.orderName,
+    farm: b.farm || pair.farm,
+    stage: bucketStage(b),
+  }));
+}
+
+/** Per variety (alphabetical), each variety's buckets by stem length then order. */
+export function varietySections(buckets: TripBucket[]): VarietySection[] {
+  const map = new Map<string, TripBucket[]>();
+  for (const b of buckets) {
+    if (!map.has(b.variety)) map.set(b.variety, []);
+    map.get(b.variety)!.push(b);
+  }
+  const stem = (b: TripBucket) => parseFloat(b.length) || 0;
+  return [...map.keys()]
+    .sort((a, b) => a.localeCompare(b))
+    .map((variety) => {
+      const list = map.get(variety)!.sort(
+        (a, b) => stem(a) - stem(b) || a.orderName.localeCompare(b.orderName) || a.bucket.localeCompare(b.bucket),
+      );
+      return { variety, color: list.find((b) => b.varietyColor)?.varietyColor || '', buckets: list };
+    });
+}
+
+/** Fetch the buckets of these (order, farm) pairs and keep the trip's own. */
+export async function fetchTripBuckets(
+  pairs: OrderFarm[],
+  trip: { name: string; status: TripStatus } | null,
+): Promise<TripBucket[]> {
+  const details = await Promise.all(
+    pairs.map(async (pair) => ({ pair, buckets: (await karenBucketLogisticsApi.detail(pair.opl, pair.farm)).buckets ?? [] })),
+  );
+  return tripBuckets(details, trip);
 }
 
 /** A route's trips, as the dashboard shows them: split where the legs come back to the
@@ -462,6 +743,8 @@ export const useKarenBucketLogisticsStore = create<State>((set, get) => {
         groups: groupTrips(raw, today, day),
         routes: buildRoutes(raw, today, day),
         vehicles: raw.vehicles ?? [],
+        notScheduled: day === today ? buildNotScheduled(raw) : [],
+        hub: raw.packhouse || DEFAULT_HUB,
       });
     } catch (err) {
       if (gen !== generation) return;
@@ -483,6 +766,8 @@ export const useKarenBucketLogisticsStore = create<State>((set, get) => {
   groups: EMPTY_GROUPS,
   routes: [],
   vehicles: [],
+  notScheduled: [],
+  hub: DEFAULT_HUB,
   today: todayISO(),
   date: null,
 
@@ -513,7 +798,7 @@ export const useKarenBucketLogisticsStore = create<State>((set, get) => {
     generation += 1;
     inflight = null;
     rerun = false;
-    set({ date: next, loaded: false, refreshing: false, error: null, actioning: {}, groups: EMPTY_GROUPS, routes: [], vehicles: [] });
+    set({ date: next, loaded: false, refreshing: false, error: null, actioning: {}, groups: EMPTY_GROUPS, routes: [], vehicles: [], notScheduled: [] });
     return get().load();
   },
 
@@ -575,7 +860,7 @@ export const useKarenBucketLogisticsStore = create<State>((set, get) => {
     rerun = false;
     set({
       loading: false, refreshing: false, loaded: false, error: null, actioning: {},
-      groups: EMPTY_GROUPS, routes: [], vehicles: [], today: todayISO(), date: null,
+      groups: EMPTY_GROUPS, routes: [], vehicles: [], notScheduled: [], hub: DEFAULT_HUB, today: todayISO(), date: null,
     });
   },
   };

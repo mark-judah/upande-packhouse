@@ -30,6 +30,11 @@ export type OplOption = {
   totalBuckets: number;
   issuedPct: number;
   packedPct: number;
+  /** Stems issued of all its buckets' stems; below 100 packing stops at issuedStems. */
+  issuedStemPct: number;
+  issuedStems: number;
+  totalStems: number;
+  packedStems: number;
   /** Completed short (buckets not found): the share of stems it goes without. */
   shortPct: number;
   varietyLengths: string[];
@@ -82,6 +87,10 @@ export type PackingGuide = {
   specImage: string;
 };
 
+/** An order sent to packing before all of it was issued: packing stops at the stems
+ *  issued (the server refuses more) and the cap rises as more is issued. */
+export type IssueCap = { issuedStems: number; totalStems: number; issuedPct: number };
+
 export type PackOutcome =
   | { kind: 'success'; message?: string }
   | { kind: 'error'; message: string }
@@ -132,6 +141,8 @@ type State = {
   customerId: string;
   pickListItems: PickListLine[];
   packingGuide: PackingGuide | null;
+  /** null = fully issued (no cap). */
+  issueCap: IssueCap | null;
   /** Which pick-list line manual entry currently targets — key(itemCode,
    *  uom, stemLength). A straight box has exactly one line, so this never
    *  needs to change; a mixed bunch/box has several, and the operator
@@ -272,6 +283,44 @@ function firstIncompleteItemKey(
   return items[0] ? key(items[0].itemCode, items[0].uom, items[0].stemLength) : null;
 }
 
+/** Stems already packed on the order, across every box and variety. */
+export function packedStemsTotal(varietyStemsInBox: Record<string, Record<number, number>>): number {
+  let total = 0;
+  for (const byBox of Object.values(varietyStemsInBox)) {
+    for (const stems of Object.values(byBox)) total += stems;
+  }
+  return total;
+}
+
+/** Stems that can still be packed under the issued cap (Infinity = no cap). */
+export function issuedRoom(
+  cap: IssueCap | null,
+  varietyStemsInBox: Record<string, Record<number, number>>,
+): number {
+  if (!cap) return Infinity;
+  return Math.max(0, cap.issuedStems - packedStemsTotal(varietyStemsInBox));
+}
+
+/** The server's refusal, word for word, so the operator sees the same thing either way. */
+export function issuedCapMessage(
+  cap: IssueCap,
+  varietyStemsInBox: Record<string, Record<number, number>>,
+): string {
+  return (
+    `Only ${cap.issuedPct}% is issued — pack the rest once more stock is issued ` +
+    `(${Math.trunc(packedStemsTotal(varietyStemsInBox))} of ${Math.trunc(cap.issuedStems)} stems packed).`
+  );
+}
+
+function issueCapFrom(payload: RawPickListWithFpl): IssueCap | null {
+  const raw = payload.issued;
+  if (!raw) return null;
+  const issuedStems = toNum(raw.issued_stems, 0);
+  const totalStems = toNum(raw.total_stems, 0);
+  if (!(totalStems > 0) || issuedStems >= totalStems) return null;
+  return { issuedStems, totalStems, issuedPct: toNum(raw.issued_pct, 0) };
+}
+
 /** Normalise a value (string or list) into a clean string list. */
 function toStringList(value: string | string[] | undefined): string[] {
   const raw = Array.isArray(value) ? value : value != null ? [value] : [];
@@ -297,6 +346,10 @@ function extractPicklists(raw: RawPicklistsResponse): OplOption[] {
       totalBuckets: Number(d.total_buckets ?? 0),
       issuedPct: Number(d.issued_pct ?? 0),
       packedPct: Number(d.packed_pct ?? 0),
+      issuedStemPct: Number(d.issued_stem_pct ?? 100),
+      issuedStems: Number(d.issued_stems ?? 0),
+      totalStems: Number(d.total_stems ?? 0),
+      packedStems: Number(d.packed_stems ?? 0),
       shortPct: d.short_accepted ? Number(d.short_pct ?? 0) : 0,
       varietyLengths: toStringList(d.variety_lengths),
       schedule: Number(d.schedule ?? 0),
@@ -496,6 +549,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
   pickListItems: [],
   packingGuide: null,
   selectedItemKey: null,
+  issueCap: null,
 
   packedBunchesTally: {},
   varietyStemsInBox: {},
@@ -553,6 +607,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       packingGuide: null,
       pickListItems: [],
       selectedItemKey: null,
+      issueCap: null,
       packedBunchesTally: {},
       varietyStemsInBox: {},
       scannedBunchIds: [],
@@ -579,6 +634,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       packingGuide: null,
       pickListItems: [],
       selectedItemKey: null,
+      issueCap: null,
       packedBunchesTally: {},
       varietyStemsInBox: {},
       scannedBunchIds: [],
@@ -633,6 +689,12 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     const variety = (parsed.variety ?? '').toString();
     const bunchSize = (parsed.bunch_size ?? '').toString();
     const bunchStems = stemsPerBunch(bunchSize);
+
+    // Issued cap: an order sent to packing before all of it was issued packs no more
+    // than was issued (the server refuses it too).
+    if (state.issueCap && issuedRoom(state.issueCap, state.varietyStemsInBox) < bunchStems) {
+      return fail('warning', issuedCapMessage(state.issueCap, state.varietyStemsInBox));
+    }
 
     // Box-full guard: block a scan that would push the box past its packrate.
     if (guide && guide.packratePerBox > 0) {
@@ -696,6 +758,11 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     const pUom = (bunch.items?.[0]?.uom ?? '').toString();
     const pLength = (bunch.stem_length ?? '').toString();
     const pStems = stemsPerBunch(pUom);
+
+    if (state.issueCap && issuedRoom(state.issueCap, state.varietyStemsInBox) < pStems) {
+      set({ submitting: false });
+      return fail('warning', issuedCapMessage(state.issueCap, state.varietyStemsInBox));
+    }
 
     // The bunch must match an order line (variety + uom), at its own graded
     // length or a shorter one on that line -- never longer. See findPackTarget.
@@ -832,10 +899,16 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       varietyRemaining = Math.max(0, Math.floor((target - inBox) / perBunch));
     }
 
-    const maxBunches = Math.min(orderRemaining, boxRemaining, varietyRemaining);
+    // Cap 4 — issued: an order sent to packing before all of it was issued.
+    const issuedRemaining = Math.floor(issuedRoom(state.issueCap, state.varietyStemsInBox) / perBunch);
+
+    const maxBunches = Math.min(orderRemaining, boxRemaining, varietyRemaining, issuedRemaining);
     if (enteredQty > maxBunches) {
       if (orderRemaining === 0) {
         return fail('warning', `${item.itemCode} is already fully packed.`);
+      }
+      if (state.issueCap && maxBunches === issuedRemaining) {
+        return fail('warning', issuedCapMessage(state.issueCap, state.varietyStemsInBox));
       }
       if (maxBunches === boxRemaining && boxRemaining < orderRemaining) {
         return fail(
@@ -993,10 +1066,15 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       varietyRemaining = Math.max(0, Math.floor((target - inBox) / perBunch));
     }
 
-    const maxBunches = Math.min(orderRemaining, boxRemaining, varietyRemaining);
+    const issuedRemaining = Math.floor(issuedRoom(state.issueCap, state.varietyStemsInBox) / perBunch);
+
+    const maxBunches = Math.min(orderRemaining, boxRemaining, varietyRemaining, issuedRemaining);
     if (bunches > maxBunches) {
       if (orderRemaining === 0) {
         return fail('warning', `${item.itemCode} is already fully packed.`);
+      }
+      if (state.issueCap && maxBunches === issuedRemaining) {
+        return fail('warning', issuedCapMessage(state.issueCap, state.varietyStemsInBox));
       }
       if (maxBunches === boxRemaining && boxRemaining < orderRemaining) {
         return fail(
@@ -1098,6 +1176,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       pickListItems: [],
       packingGuide: null,
       selectedItemKey: null,
+      issueCap: null,
       packedBunchesTally: {},
       varietyStemsInBox: {},
       scannedBunchIds: [],
@@ -1158,6 +1237,7 @@ async function reloadGuide(
       selectedItemKey,
       packedBunchesTally: view.packedBunchesTally,
       varietyStemsInBox: view.varietyStemsInBox,
+      issueCap: issueCapFrom(payload),
       saleOrderId: view.saleOrderId,
       customerId: view.customerId,
     });

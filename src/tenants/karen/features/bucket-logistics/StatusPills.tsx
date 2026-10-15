@@ -34,3 +34,19 @@ const s = StyleSheet.create({
   pillTxt: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: '#fff' },
   empty: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted },
 });
+
+/** One solid stage pill: a trip's state, or a bucket's current stage. */
+export function StatePill({ label, color, small }: { label: string; color: string; small?: boolean }) {
+  return (
+    <View style={[st.pill, small ? st.small : null, { backgroundColor: color }]}>
+      <Text style={[st.txt, small ? st.txtSmall : null]} numberOfLines={1}>{label}</Text>
+    </View>
+  );
+}
+
+const st = StyleSheet.create({
+  pill: { borderRadius: borderRadius.full, paddingHorizontal: 10, paddingVertical: 3, flexShrink: 0 },
+  small: { paddingHorizontal: 7, paddingVertical: 2 },
+  txt: { fontFamily: fontFamily.semiBold, fontSize: 11, color: '#fff' },
+  txtSmall: { fontSize: 10 },
+});

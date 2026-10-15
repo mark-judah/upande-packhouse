@@ -1,4 +1,5 @@
 import { api } from '@/src/core/api/client';
+import { shiftISO, todayISO } from '@/src/core/date';
 
 // =====================================================================
 // Bucket logistics coordinator: today's transfer schedule (orders by
@@ -17,8 +18,11 @@ export type RawScheduleOrderVariety = {
 
 export type RawScheduleOrderFarm = {
   farm: string;
+  /** Open buckets: awaiting at the farm or on a trolley, not on the road yet. */
   buckets: number;
   stems: number;
+  /** In transit to the packhouse. */
+  on_road?: number;
   varieties: RawScheduleOrderVariety[];
 };
 
@@ -63,6 +67,18 @@ export type RawTripOrder = {
   loaded: number;
   in_transit: number;
   shelved: number;
+  /** Of this row's buckets, already on its truck. */
+  loaded_buckets?: number;
+};
+
+/** This trip's own buckets by stage (server `_trip_bucket_status`): loaded = on its
+ *  truck, not in transit yet; awaiting = planned, not loaded yet. */
+export type RawTripBucketStatus = {
+  awaiting: number;
+  loaded: number;
+  in_transit: number;
+  shelved: number;
+  total: number;
 };
 
 export type RawTrip = {
@@ -86,6 +102,18 @@ export type RawTrip = {
   /** Who asked (on the dashboard) for the truck to go to the farm, and when. */
   requested_by?: string;
   requested_at?: string | null;
+  /** Which run of the truck's route this trip drives (0 = none), of how many. */
+  run?: number;
+  runs?: number;
+  /** e.g. "Kapkolia → Chepsito → Kapkolia". */
+  run_chain?: string;
+  /** When the trip was planned (its creation). */
+  scheduled_at?: string | null;
+  /** When the requested truck was released to the farm. */
+  released_at?: string | null;
+  bucket_status?: RawTripBucketStatus;
+  /** Buckets of this trip shelved at the packhouse. */
+  shelved_buckets?: number;
   /** '' until dispatchBucketTrip is called. */
   dispatched_at: string;
   /** '' until receiveBucketTrip is called. */
@@ -132,6 +160,32 @@ export type RawTransferScheduleData = {
   generated_at: string;
 };
 
+/** One bucket of an order at a farm (getBucketLogisticsDetail): each stage flag is 1
+ *  once the bucket has passed it. */
+export type RawBucketDetail = {
+  bucket: string;
+  variety: string;
+  /** e.g. "43cm". */
+  length: string;
+  farm: string;
+  stems: number;
+  /** The trip that carried it, null until it is loaded on one. */
+  trip: string | null;
+  run?: number | null;
+  awaiting: number;
+  trolley: number;
+  on_truck: number;
+  transit: number;
+  arrived_hub: number;
+  shelved: number;
+  ready: number;
+  issued: number;
+  issued_offline: number;
+  not_found: number;
+  /** The variety's Variety Tree colour hex, '' if none. */
+  variety_color?: string;
+};
+
 export type RawTripActionResponse = {
   message?: { status?: string; message?: string; name?: string; trip_status?: string } | string;
 };
@@ -140,10 +194,21 @@ export const karenBucketLogisticsApi = {
   /** Today's transfer schedule: orders-by-farm, today's trips with live bucket-stage counts.
    *  `tripDate` (YYYY-MM-DD) also returns every trip of that day. */
   fetch(tripDate?: string): Promise<RawTransferScheduleData> {
+    const today = todayISO();
     return api<RawTransferScheduleData>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.getTransferScheduleData',
-      ...(tripDate ? { params: { trip_date: tripDate } } : {}),
+      // Orders delivering today or tomorrow: the ones still to be collected.
+      params: { from_date: today, to_date: shiftISO(today, 1), ...(tripDate ? { trip_date: tripDate } : {}) },
+    });
+  },
+
+  /** One order's buckets at one farm, with their stage flags. */
+  detail(opl: string, farm: string): Promise<{ buckets?: RawBucketDetail[] }> {
+    return api<{ buckets?: RawBucketDetail[] }>({
+      method: 'GET',
+      url: '/api/method/upande_packhouse.api.remote_transfer.bucket_logistics.getBucketLogisticsDetail',
+      params: { opl, farm },
     });
   },
 

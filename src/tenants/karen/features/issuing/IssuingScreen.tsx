@@ -195,13 +195,18 @@ export function KarenIssuingScreen() {
   // Pack what was issued now (half the order or more): the buckets not issued are marked
   // not found and replaced later, when stock is found; the team moves on.
   const [sendingToPack, setSendingToPack] = useState(false);
+  // The server says when (Production Settings' %, nothing on a truck); an older server
+  // that doesn't falls back to half the buckets issued.
   const canPackWhileWaiting =
-    !!selectedOplInfo && !selectedOplInfo.shortAccepted && selectedOplInfo.issuedPct >= 50 && selectedOplInfo.issuedPct < 100;
+    !!selectedOplInfo &&
+    (selectedOplInfo.packWaiting ??
+      (!selectedOplInfo.shortAccepted && selectedOplInfo.issuedPct >= 50 && selectedOplInfo.issuedPct < 100));
+  const packWaitingPct = selectedOplInfo?.issuedStemPct || selectedOplInfo?.issuedPct || 0;
   const onPackWhileWaiting = () => {
     if (!selectedOplInfo) return;
     showDialog(
       'Pack while waiting?',
-      `${selectedOplInfo.name}: pack the ${selectedOplInfo.issuedPct}% issued now. ` +
+      `${selectedOplInfo.name}: pack the ${packWaitingPct}% issued now; packing stops there until more is issued. ` +
         'The buckets not issued are marked not found and can be replaced later.',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -316,10 +321,13 @@ export function KarenIssuingScreen() {
             </Text>
           ) : null}
           {selectedOplInfo && canPackWhileWaiting ? (
-            <View style={s.shortBox}>
+            <View style={[s.shortBox, s.packWaitingBox]}>
               <Button
-                label={`Pack ${selectedOplInfo.issuedPct}% now`}
+                label={`Pack what's issued (${packWaitingPct}%)`}
                 iconLeft="cube-outline"
+                variant="outline"
+                size="sm"
+                style={s.packWaitingBtn}
                 disabled={sendingToPack || completing}
                 loading={sendingToPack}
                 onPress={onPackWhileWaiting}
@@ -669,6 +677,9 @@ const s = StyleSheet.create({
     letterSpacing: 0.4,
   },
   shortBox: { gap: spacing.sm, marginTop: spacing.sm },
+  packWaitingBtn: { alignSelf: 'flex-start' },
+  // Clear of the "Issue to team" banner below it.
+  packWaitingBox: { marginBottom: spacing.md },
   tagNotFound: {
     paddingHorizontal: 6,
     paddingVertical: 2,

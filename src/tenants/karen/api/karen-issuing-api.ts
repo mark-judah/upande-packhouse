@@ -51,6 +51,16 @@ export type RawReadyOrder = {
   issued_buckets?: number;
   total_buckets?: number;
   issued_pct?: number;
+  /** Stems issued of all its buckets' stems (not-found ones too): Pack While Waiting's basis. */
+  issued_stem_pct?: number;
+  issued_stems?: number;
+  total_stems?: number;
+  /** Unissued rows still coming by truck: Pack While Waiting waits for them. */
+  moving_rows?: number;
+  /** Production Settings: packing while waiting is offered from this issued %. */
+  pack_waiting_pct?: number;
+  /** The order can go to packing now with what is issued (pack_while_waiting_replacement's rules). */
+  pack_waiting?: boolean;
   /** The team's earlier order still to issue first (0 = none). */
   waits_for?: number;
   /** A draft listed because a farm marked buckets not found (nothing else coming). */
