@@ -1,6 +1,11 @@
 import {
+  bucketStage,
+  buildNotScheduled,
   buildRoutes,
   buildTrip,
+  dateTimeLabel,
+  tripBuckets,
+  varietySections,
   groupTrips,
   stageToPills,
   turnaroundLabel,
@@ -8,6 +13,7 @@ import {
 } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
 import { karenBucketLogisticsApi } from '@/src/tenants/karen/api/karen-bucket-logistics-api';
 import type {
+  RawBucketDetail,
   RawScheduleOrder,
   RawTransferScheduleData,
   RawTrip,
@@ -546,5 +552,130 @@ describe('setDate', () => {
     await useKarenBucketLogisticsStore.getState().setDate(TODAY);
     expect(useKarenBucketLogisticsStore.getState().date).toBeNull();
     expect(fetchSpy).toHaveBeenLastCalledWith(undefined);
+  });
+});
+
+describe('trip naming, load and state', () => {
+  const TODAY = '2026-08-22';
+
+  it('names trips "<truck> · Trip N" and lists each truck\'s trips one after another', () => {
+    const groups = groupTrips(
+      fixture({
+        generated_at: `${TODAY} 06:00:00`,
+        trips: [
+          rawTrip({ name: 'B2', vehicle: 'KBB', status: 'Scheduled', run: 2, runs: 3 }),
+          rawTrip({ name: 'A1', vehicle: 'KAA', status: 'Scheduled', scheduled_at: `${TODAY} 05:00:00` }),
+          rawTrip({ name: 'B1', vehicle: 'KBB', status: 'Scheduled', run: 1, runs: 3 }),
+          rawTrip({ name: 'A2', vehicle: 'KAA', status: 'Scheduled', scheduled_at: `${TODAY} 07:00:00` }),
+        ],
+      }),
+    );
+    expect(groups.started.map((t) => t.title)).toEqual(['KAA · Trip 1', 'KAA · Trip 2', 'KBB · Trip 1', 'KBB · Trip 2']);
+  });
+
+  it('shows capacity, free / over, loaded, arrived and per-farm buckets', () => {
+    const trip = buildTrip(
+      rawTrip({
+        name: 'T', vehicle: 'V', status: 'Scheduled', trip_date: TODAY, capacity_buckets: 10, total_buckets: 12,
+        loaded_buckets: 3, bucket_status: { awaiting: 9, loaded: 3, in_transit: 0, shelved: 0, total: 12 },
+        orders: [
+          orderRow({ order_pick_list: 'O1', farm: 'Chepsito', buckets: 9 }),
+          orderRow({ order_pick_list: 'O2', farm: 'Simotwo', buckets: 3 }),
+        ],
+      }),
+      [], 1, TODAY,
+    );
+    expect(trip.loadPct).toBe(120);
+    expect(trip.freeBuckets).toBe(-2);
+    expect(trip.loadedBuckets).toBe(3);
+    expect(trip.farmLoads).toEqual([{ farm: 'Chepsito', buckets: 9 }, { farm: 'Simotwo', buckets: 3 }]);
+    expect(trip.state.label).toBe('Loading to truck');
+  });
+
+  it('reads the trip state from its buckets, arriving at the feed\'s hub', () => {
+    const st = (over: Partial<RawTrip>) =>
+      buildTrip(rawTrip({ name: 'T', vehicle: 'V', status: 'Scheduled', trip_date: TODAY, ...over }), [], 1, TODAY, 'Hub X').state;
+    expect(st({}).label).toBe('Awaiting transfer');
+    expect(st({ orders: [orderRow({ order_pick_list: 'O', farm: 'F', buckets: 2, loaded: 1 })] }).label).toBe('On trolley (Staging)');
+    expect(st({ status: 'Dispatched', bucket_status: { awaiting: 0, loaded: 0, in_transit: 4, shelved: 0, total: 4 } }).label).toBe('In transit');
+    expect(st({ status: 'Dispatched', bucket_status: { awaiting: 0, loaded: 0, in_transit: 0, shelved: 4, total: 4 } })).toEqual({
+      label: 'Arrived at Hub X', color: '#0e7490',
+    });
+    expect(st({ status: 'Draft' }).label).toBe('Planned');
+  });
+
+  it('shows Created and, once Scheduled, when it was', () => {
+    const planned = buildTrip(rawTrip({ name: 'T', vehicle: 'V', status: 'Draft', scheduled_at: `${TODAY} 03:14:41.09` }), [], 1, TODAY);
+    expect(planned.createdAt).toBe(`${TODAY} 03:14:41`);
+    expect(planned.scheduledAt).toBe('');
+    const started = buildTrip(
+      rawTrip({ name: 'T', vehicle: 'V', status: 'Scheduled', scheduled_at: `${TODAY} 03:14:41`, released_at: `${TODAY} 04:00:00` }),
+      [], 1, TODAY,
+    );
+    expect(started.scheduledAt).toBe(`${TODAY} 04:00:00`);
+    expect(dateTimeLabel(started.scheduledAt)).toBe('22 Aug, 04:00');
+  });
+});
+
+describe('buildNotScheduled', () => {
+  it('counts each order\'s open buckets at a farm that no trip covers', () => {
+    const rows = buildNotScheduled(
+      fixture({
+        orders: [
+          scheduleOrder({ opl: 'O1', order_name: 'ORD-1', schedule: 1, farms: [
+            { farm: 'Chepsito', buckets: 5, stems: 0, varieties: [] },
+            { farm: 'Simotwo', buckets: 2, stems: 0, varieties: [] },
+          ] }),
+        ],
+        trips: [
+          rawTrip({ name: 'T', vehicle: 'V', status: 'Dispatched', orders: [orderRow({ order_pick_list: 'O1', farm: 'Chepsito', buckets: 2, loaded_buckets: 3 })] }),
+        ],
+      }),
+    );
+    expect(rows).toEqual([
+      { opl: 'O1', orderName: 'ORD-1', farm: 'Chepsito', buckets: 2 },
+      { opl: 'O1', orderName: 'ORD-1', farm: 'Simotwo', buckets: 2 },
+    ]);
+  });
+});
+
+describe('trip buckets', () => {
+  const flags = { awaiting: 0, trolley: 0, on_truck: 0, transit: 0, arrived_hub: 0, shelved: 0, ready: 0, issued: 0, issued_offline: 0, not_found: 0 };
+  const b = (over: Partial<RawBucketDetail>): RawBucketDetail => ({
+    bucket: 'x1', variety: 'Athena', length: '52cm', farm: 'F', stems: 150, trip: null, ...flags, ...over,
+  });
+  const pair = { opl: 'O1', orderName: 'ORD-1', farm: 'F' };
+
+  it('takes the furthest stage, not found first', () => {
+    expect(bucketStage(b({ awaiting: 1, trolley: 1, on_truck: 1 }))).toBe('on_truck');
+    expect(bucketStage(b({ awaiting: 1, transit: 1, not_found: 1 }))).toBe('not_found');
+    expect(bucketStage(b({}))).toBeNull();
+  });
+
+  it("keeps the trip's own buckets, and unloaded ones while it collects", () => {
+    const details = [{ pair, buckets: [
+      b({ bucket: 'a', trip: 'T1', on_truck: 1 }),
+      b({ bucket: 'b', trip: 'T2', on_truck: 1 }),
+      b({ bucket: 'c', awaiting: 1 }),
+    ] }];
+    expect(tripBuckets(details, { name: 'T1', status: 'Scheduled' }).map((x) => x.bucket)).toEqual(['A', 'C']);
+    expect(tripBuckets(details, { name: 'T1', status: 'Dispatched' }).map((x) => x.bucket)).toEqual(['A']);
+    expect(tripBuckets(details, null).map((x) => x.bucket)).toEqual(['C']);
+  });
+
+  it('groups per variety with its colour, by stem length then order', () => {
+    const list = tripBuckets(
+      [{ pair, buckets: [
+        b({ bucket: 'p2', variety: 'Pink Ice', length: '52cm', variety_color: '#FF69B4' }),
+        b({ bucket: 'p1', variety: 'Pink Ice', length: '42cm', variety_color: '#FF69B4' }),
+        b({ bucket: 'a1', variety: 'Athena' }),
+      ] }],
+      null,
+    );
+    const secs = varietySections(list);
+    expect(secs.map((x) => [x.variety, x.color, x.buckets.map((y) => y.bucket)])).toEqual([
+      ['Athena', '', ['A1']],
+      ['Pink Ice', '#FF69B4', ['P1', 'P2']],
+    ]);
   });
 });

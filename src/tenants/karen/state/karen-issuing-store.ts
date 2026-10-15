@@ -97,6 +97,16 @@ export type ReadyOrder = {
   issuedBuckets: number;
   totalBuckets: number;
   issuedPct: number;
+  /** Stems issued of all its buckets' stems, not-found ones included (the server's basis). */
+  issuedStemPct: number;
+  issuedStems: number;
+  totalStems: number;
+  /** Unissued rows still coming by truck. */
+  movingRows: number;
+  /** Production Settings: Pack While Waiting is offered from this issued %. */
+  packWaitingPct: number;
+  /** The server allows Pack While Waiting now; null = an older server that doesn't say. */
+  packWaiting: boolean | null;
   waitsFor: number;
   /** Still a draft: a farm marked buckets not found and nothing else is coming. */
   draft: boolean;
@@ -197,6 +207,12 @@ function toReadyOrder(entry: string | RawReadyOrder): ReadyOrder | null {
     issuedBuckets: Number(entry.issued_buckets ?? 0),
     totalBuckets: Number(entry.total_buckets ?? 0),
     issuedPct: Number(entry.issued_pct ?? 0),
+    issuedStemPct: Number(entry.issued_stem_pct ?? entry.issued_pct ?? 0),
+    issuedStems: Number(entry.issued_stems ?? 0),
+    totalStems: Number(entry.total_stems ?? 0),
+    movingRows: Number(entry.moving_rows ?? 0),
+    packWaitingPct: Number(entry.pack_waiting_pct ?? 50),
+    packWaiting: entry.pack_waiting == null ? null : !!entry.pack_waiting,
     waitsFor: Number(entry.waits_for ?? 0),
     draft: !!entry.draft,
     notFound: Number(entry.not_found ?? 0),
@@ -204,6 +220,18 @@ function toReadyOrder(entry: string | RawReadyOrder): ReadyOrder | null {
     shortPct: Number(entry.short_pct ?? 0),
     shortAccepted: !!entry.short_accepted,
   };
+}
+
+/** pack_while_waiting_replacement's rules, for an order's issued share after a scan:
+ *  not completed short, nothing still coming by truck, not fully issued, and at least
+ *  the Production Settings share of its stems issued. */
+export function canPackWaiting(o: ReadyOrder): boolean {
+  return (
+    !o.shortAccepted &&
+    !o.movingRows &&
+    o.issuedStems < o.totalStems &&
+    o.issuedStemPct >= o.packWaitingPct
+  );
 }
 
 export function extractOrders(raw: RawReadyOrdersResponse): ReadyOrder[] {
@@ -521,15 +549,27 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
     const nowIssued =
       !match.isIssued &&
       updated.some((it) => it.bucket === match.bucket && it.oplName === match.oplName && it.isIssued);
-    const availableOrders = nowIssued
-      ? get()
-          .availableOrders.map((o) => {
-            if (o.oplName !== match.oplName || !o.totalBuckets) return o;
-            const issuedBuckets = Math.min(o.totalBuckets, o.issuedBuckets + 1);
-            return { ...o, issuedBuckets, issuedPct: Math.round((100 * issuedBuckets) / o.totalBuckets) };
-          })
-          .sort((a, b) => Number(a.issuedPct >= 100) - Number(b.issuedPct >= 100))
-      : get().availableOrders;
+    // Stems issued by this scan, for the order's issued share (Pack While Waiting's basis).
+    const stemsNow = match.lines.reduce((sum, l) => sum + (issued.has(l.saleOrderItem) ? l.qty : 0), 0);
+    const availableOrders =
+      nowIssued || stemsNow
+        ? get()
+            .availableOrders.map((o) => {
+              if (o.oplName !== match.oplName) return o;
+              const next = { ...o };
+              if (nowIssued && o.totalBuckets) {
+                next.issuedBuckets = Math.min(o.totalBuckets, o.issuedBuckets + 1);
+                next.issuedPct = Math.round((100 * next.issuedBuckets) / o.totalBuckets);
+              }
+              if (stemsNow && o.totalStems) {
+                next.issuedStems = Math.min(o.totalStems, o.issuedStems + stemsNow);
+                next.issuedStemPct = Math.round((100 * next.issuedStems) / o.totalStems);
+                if (o.packWaiting !== null) next.packWaiting = canPackWaiting(next);
+              }
+              return next;
+            })
+            .sort((a, b) => Number(a.issuedPct >= 100) - Number(b.issuedPct >= 100))
+        : get().availableOrders;
     set({ submitting: false, packingItems: updated, lastOutcome: out, availableOrders });
     return out;
   },

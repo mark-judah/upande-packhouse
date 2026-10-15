@@ -17,6 +17,8 @@ import { ItemGroupFilter } from '@/src/core/ui/ItemGroupFilter';
 import { Screen } from '@/src/core/ui/Screen';
 import { useToast } from '@/src/core/ui/Toast';
 import {
+  issuedRoom,
+  packedStemsTotal,
   stemsPerBunch,
   useKarenPackingStore,
   type PickListLine,
@@ -88,6 +90,7 @@ export function KarenPackingScreen() {
     pickListItems,
     packingGuide,
     selectedItemKey,
+    issueCap,
     packedBunchesTally,
     varietyStemsInBox,
     currentBoxId,
@@ -261,6 +264,8 @@ export function KarenPackingScreen() {
             ]
           : []),
         ...(o.shortPct ? [{ text: `short ${o.shortPct}% · `, bold: true, color: COLORS.danger }] : []),
+        // Sent to packing before all of it was issued: packing stops at what is issued.
+        ...(o.issuedStemPct < 100 ? [{ text: `Issued ${o.issuedStemPct}% · `, bold: true, color: COLORS.warn }] : []),
         o.packedPct >= 100
           ? { text: '100% packed', bold: true, color: COLORS.success }
           : { text: `${o.packedPct}% packed` },
@@ -290,6 +295,11 @@ export function KarenPackingScreen() {
   // must be blocked from any further packing exactly like a full box.
   const boxUnderPackClosed = !!closedBoxes[currentBoxId];
   const boxClosed = boxFull || boxUnderPackClosed;
+  // Sent to packing before all of it was issued: nothing more to pack until more is issued.
+  const packedStems = packedStemsTotal(varietyStemsInBox);
+  const issuedLeft = issuedRoom(issueCap, varietyStemsInBox);
+  const issuedFull = !!issueCap && issuedLeft <= 0;
+  const scanBlocked = boxClosed || issuedFull;
 
   const announce = useCallback(
     (outcome: { kind: string; message?: string }) => {
@@ -430,8 +440,10 @@ export function KarenPackingScreen() {
       );
       boxRemaining = Math.max(0, Math.floor((packingGuide.packratePerBox - boxStems) / perBunch));
     }
-    return Math.min(orderRemaining, boxRemaining);
-  }, [standardLine, packedBunchesTally, packingGuide, varietyStemsInBox, currentBoxId, closedBoxes]);
+    // Sent to packing before all of it was issued: no more than was issued.
+    const issuedRemaining = Math.floor(issuedRoom(issueCap, varietyStemsInBox) / perBunch);
+    return Math.min(orderRemaining, boxRemaining, issuedRemaining);
+  }, [standardLine, packedBunchesTally, packingGuide, varietyStemsInBox, currentBoxId, closedBoxes, issueCap]);
 
   // A value the operator already typed is capped if the ceiling drops under it
   // (switching to a box with less room left, or a tally refresh) — the field
@@ -625,6 +637,17 @@ export function KarenPackingScreen() {
             </Text>
           </Text>
         ) : null}
+        {issueCap ? (
+          <View style={s.issuedCapRow}>
+            <View style={[s.tag, s.issuedTag]}>
+              <Text style={s.tagText}>{`ISSUED ${issueCap.issuedPct}%`}</Text>
+            </View>
+            <Text style={[s.helper, issuedFull && s.shortText]}>
+              {`${Math.trunc(packedStems)} of ${Math.trunc(issueCap.issuedStems)} issued stems packed` +
+                (issuedFull ? ' · wait for more stock to be issued' : '')}
+            </Text>
+          </View>
+        ) : null}
         {!showTable ? (
           <Text style={s.helper}>
             {picklistsLoading
@@ -726,20 +749,24 @@ export function KarenPackingScreen() {
 
       {showTable && !isStandardRoses ? (
         <Card title="Scan bunch">
-          {boxClosed ? (
+          {scanBlocked ? (
             <Alert tone="warn">
-              {boxFull
-                ? `Box ${currentBoxId} is full — pick another box to keep scanning.`
-                : `Box ${currentBoxId} is closed (under-packed) — pick another box to keep scanning.`}
+              {issuedFull && issueCap
+                ? `Only ${issueCap.issuedPct}% is issued — pack the rest once more stock is issued.`
+                : boxFull
+                  ? `Box ${currentBoxId} is full — pick another box to keep scanning.`
+                  : `Box ${currentBoxId} is closed (under-packed) — pick another box to keep scanning.`}
             </Alert>
           ) : null}
-          <View style={{ opacity: boxClosed ? 0.45 : 1 }}>
+          <View style={{ opacity: scanBlocked ? 0.45 : 1 }}>
             <ScanField
               ref={scanRef}
               onScan={onScan}
-              autoFocus={!submitting && !boxClosed}
-              editable={!submitting && !boxClosed}
-              placeholder={boxClosed ? `Box ${currentBoxId} is closed` : 'Scan bunch QR'}
+              autoFocus={!submitting && !scanBlocked}
+              editable={!submitting && !scanBlocked}
+              placeholder={
+                issuedFull ? 'Waiting for more stock to be issued' : boxClosed ? `Box ${currentBoxId} is closed` : 'Scan bunch QR'
+              }
             />
           </View>
           {submitting ? <Text style={s.helper}>Submitting…</Text> : null}
@@ -1146,6 +1173,8 @@ const s = StyleSheet.create({
   bold: { fontFamily: fontFamily.bold },
   packedDone: { fontFamily: fontFamily.bold, color: COLORS.success },
   shortText: { fontFamily: fontFamily.bold, color: COLORS.danger },
+  issuedCapRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
+  issuedTag: { backgroundColor: COLORS.warn },
   debugBtn: { width: 32, alignItems: 'center', justifyContent: 'center', padding: 4 },
   modalBackdrop: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',

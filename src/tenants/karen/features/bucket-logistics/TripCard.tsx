@@ -1,23 +1,19 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { Button } from '@/src/core/ui/Button';
 import { showDialog } from '@/src/core/ui/DialogHost';
-import { StatusPills } from './StatusPills';
-import { stageToPills, type Trip, type TripStatus } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
+import { StatePill } from './StatusPills';
+import { dateTimeLabel, type Trip } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
 
-function fillColor(pct: number): string {
-  if (pct >= 100) return COLORS.success;
-  if (pct > 0) return '#D97706';
-  return COLORS.border;
+const OVER = '#c4302b';
+
+/** The load bar: green, amber from 90% full, red over capacity. */
+function fillColor(trip: Trip): string {
+  if (trip.freeBuckets < 0) return OVER;
+  if (trip.loadPct >= 90) return '#d97706';
+  return '#16a34a';
 }
-
-const STATUS_BADGE: Record<TripStatus, { label: string; bg: string; fg: string }> = {
-  Draft: { label: 'Planned', bg: '#F5F5F5', fg: '#525252' },
-  Requested: { label: 'Truck requested', bg: '#FFFBEB', fg: '#B45309' },
-  Scheduled: { label: 'Started', bg: '#EFF6FF', fg: '#2563EB' },
-  Dispatched: { label: 'On the road', bg: '#EFF6FF', fg: '#2563EB' },
-  Received: { label: 'Completed', bg: '#F0FDF4', fg: '#166534' },
-};
 
 /** One question for a truck request: Yes releases the truck to the farm, No rejects it
  *  (the reason is asked next). */
@@ -53,6 +49,7 @@ function confirmDispatch(trip: Trip, onDispatch: (name: string) => void) {
 export function TripCard({
   trip,
   actioning,
+  onOpen,
   onDispatch,
   onReceive,
   onEdit,
@@ -61,30 +58,36 @@ export function TripCard({
 }: {
   trip: Trip;
   actioning: boolean;
+  /** Its buckets, read only. */
+  onOpen: (trip: Trip) => void;
   onRelease: (name: string) => void;
   onReject: (trip: Trip) => void;
   onDispatch: (name: string) => void;
   onReceive: (name: string) => void;
   onEdit: (trip: Trip) => void;
 }) {
-  const badge = STATUS_BADGE[trip.status];
+  const cap = trip.capacityBuckets;
+  const total = cap ? cap - trip.freeBuckets : trip.totalBuckets;
+  const over = trip.freeBuckets < 0;
+  const when = [
+    trip.createdAt ? `Created ${dateTimeLabel(trip.createdAt)}` : '',
+    trip.scheduledAt ? `Scheduled ${dateTimeLabel(trip.scheduledAt)}` : '',
+  ].filter(Boolean);
 
   return (
-    <View style={s.card}>
+    <Pressable
+      onPress={() => onOpen(trip)}
+      accessibilityRole="button"
+      accessibilityLabel={`Buckets on ${trip.title}`}
+      style={({ pressed }) => [s.card, pressed ? s.pressed : null]}
+    >
       <View style={s.hd}>
-        <Text style={s.tripNo}>TRIP {trip.sequence}</Text>
-        <View style={[s.badge, { backgroundColor: badge.bg }]}>
-          <Text style={[s.badgeTxt, { color: badge.fg }]}>{badge.label}</Text>
-        </View>
+        <Ionicons name="car" size={15} color={COLORS.text} />
+        <Text style={s.title} numberOfLines={1}>{trip.title}</Text>
+        <StatePill label={trip.state.label} color={trip.state.color} />
       </View>
-
-      <View style={s.vehicleRow}>
-        <Text style={s.vehicle} numberOfLines={1}>{trip.vehicle}</Text>
-        <Text style={s.count}>
-          {trip.totalBuckets}{trip.capacityBuckets ? ` / ${trip.capacityBuckets}` : ''} bkt
-        </Text>
-      </View>
-      {trip.scheduleContext ? <Text style={s.schedule}>{trip.scheduleContext}</Text> : null}
+      {trip.runChain ? <Text style={s.meta} numberOfLines={1}>{trip.runChain}</Text> : null}
+      {when.length ? <Text style={s.meta} numberOfLines={1}>{when.join(' · ')}</Text> : null}
       {trip.requestedBy ? (
         <Text style={s.requested}>
           Requested by {trip.requestedBy}
@@ -92,40 +95,49 @@ export function TripCard({
         </Text>
       ) : null}
 
-      <View style={s.track}>
-        <View style={[s.fill, { width: `${Math.max(trip.fillPct, 3)}%`, backgroundColor: fillColor(trip.fillPct) }]} />
+      <View style={s.kpis}>
+        <Text style={s.kpi}>Capacity <Text style={s.kpiVal}>{cap || '—'}</Text></Text>
+        <Text style={s.kpi}>
+          Buckets <Text style={s.kpiVal}>{total}</Text>
+          {cap ? <Text style={s.kpiSub}> ({trip.loadPct}%)</Text> : null}
+        </Text>
+        {cap ? (
+          <Text style={[s.kpi, over ? s.over : null]}>
+            {over ? 'Over ' : 'Free '}
+            <Text style={[s.kpiVal, over ? s.over : null]}>{Math.abs(trip.freeBuckets)}</Text>
+          </Text>
+        ) : null}
+        <Text style={s.kpi}>Loaded <Text style={s.kpiVal}>{trip.loadedBuckets}</Text></Text>
+        <Text style={s.kpi}>Arrived <Text style={s.kpiVal}>{trip.arrivedBuckets}</Text></Text>
       </View>
-
-      <StatusPills pills={trip.pills} />
-
-      <View style={s.stops}>
-        {trip.stops.map((stop, i) => (
-          <View key={stop.farm} style={s.stop}>
-            <View style={s.stopHd}>
-              <Text style={s.stopIdx}>{i + 1}</Text>
-              <Text style={s.stopFarm} numberOfLines={1}>{stop.farm}</Text>
-              <Text style={s.stopBkt}>{stop.buckets} bkt</Text>
-            </View>
-            {stop.orders.map((o, oi) => (
-              <View key={`${o.orderName}-${oi}`} style={[s.orderRow, oi % 2 ? s.orderRowAlt : null]}>
-                <Text style={s.orderName} numberOfLines={1}>
-                  {o.orderName}{o.customer ? ` · ${o.customer}` : ''}
-                </Text>
-                <Text style={s.orderBkt}>{o.buckets}</Text>
-              </View>
-            ))}
-            {stageToPills(stop.stage).length > 0 ? (
-              <View style={s.stopPills}>
-                <StatusPills pills={stageToPills(stop.stage)} />
-              </View>
-            ) : null}
-          </View>
-        ))}
-      </View>
-
-      {trip.editable ? (
-        <Button label="Change truck" onPress={() => onEdit(trip)} variant="outline" size="sm" disabled={actioning} style={s.edit} />
+      {cap ? (
+        <View style={s.track}>
+          <View style={[s.fill, { width: `${Math.min(100, Math.max(trip.loadPct, 2))}%`, backgroundColor: fillColor(trip) }]} />
+        </View>
       ) : null}
+
+      {trip.farmLoads.length ? (
+        <View style={s.farms}>
+          {trip.farmLoads.map((f) => (
+            <View key={f.farm} style={s.farmChip}>
+              <Text style={s.farmTxt} numberOfLines={1}>
+                {f.farm} <Text style={s.farmN}>{f.buckets}</Text>
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      <View style={s.foot}>
+        <Pressable onPress={() => onOpen(trip)} hitSlop={6} style={s.viewBtn} accessibilityRole="button">
+          <Ionicons name="cube-outline" size={14} color={COLORS.text} />
+          <Text style={s.viewTxt}>View buckets</Text>
+          <Ionicons name="chevron-forward" size={14} color={COLORS.text} />
+        </Pressable>
+        {trip.editable ? (
+          <Button label="Change truck" onPress={() => onEdit(trip)} variant="outline" size="sm" disabled={actioning} />
+        ) : null}
+      </View>
 
       {trip.canDispatch ? (
         <Button label="Dispatch" onPress={() => confirmDispatch(trip, onDispatch)} loading={actioning} style={s.action} />
@@ -148,7 +160,7 @@ export function TripCard({
           <Text style={s.turnaroundVal}>{trip.turnaround}</Text>
         </View>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -157,38 +169,31 @@ const s = StyleSheet.create({
     backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border,
     borderRadius: borderRadius.md, padding: spacing.md, marginBottom: spacing.sm,
   },
-  hd: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  tripNo: {
-    fontFamily: fontFamily.bold, fontSize: fontSize.xs, color: COLORS.textMuted,
-    textTransform: 'uppercase', letterSpacing: 0.6,
-  },
-  badge: { borderRadius: borderRadius.full, paddingHorizontal: 10, paddingVertical: 3 },
-  badgeTxt: { fontFamily: fontFamily.semiBold, fontSize: 11 },
-  vehicleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
-  vehicle: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: COLORS.text, flexShrink: 1 },
-  count: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: COLORS.textSecondary },
-  schedule: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 2 },
+  pressed: { opacity: 0.85 },
+  hd: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  title: { flex: 1, fontFamily: fontFamily.bold, fontSize: fontSize.md, color: COLORS.text },
+  meta: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 2 },
   requested: {
     alignSelf: 'flex-start', marginTop: 4, paddingHorizontal: 8, paddingVertical: 2, borderRadius: borderRadius.full,
     borderWidth: 1, borderColor: COLORS.border, fontFamily: fontFamily.medium, fontSize: 11, color: COLORS.textSecondary,
   },
-  track: { height: 8, borderRadius: 4, backgroundColor: COLORS.bgMuted, overflow: 'hidden', marginTop: spacing.sm },
+  kpis: { flexDirection: 'row', flexWrap: 'wrap', columnGap: spacing.md, rowGap: 2, marginTop: spacing.sm },
+  kpi: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textSecondary },
+  kpiVal: { fontFamily: fontFamily.bold, color: COLORS.text },
+  kpiSub: { color: COLORS.textMuted },
+  over: { color: OVER },
+  track: { height: 8, borderRadius: 4, backgroundColor: COLORS.bgMuted, overflow: 'hidden', marginTop: 6 },
   fill: { height: '100%', borderRadius: 4 },
-  stops: { marginTop: spacing.sm, gap: spacing.xs },
-  stop: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.border, paddingTop: spacing.xs },
-  stopHd: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  stopIdx: {
-    fontFamily: fontFamily.bold, fontSize: 10, color: COLORS.textOnPrimary, backgroundColor: COLORS.primary,
-    width: 16, height: 16, borderRadius: 8, textAlign: 'center', lineHeight: 16, overflow: 'hidden',
+  farms: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: spacing.sm },
+  farmChip: {
+    borderRadius: borderRadius.full, borderWidth: 1, borderColor: COLORS.border,
+    backgroundColor: COLORS.bgMuted, paddingHorizontal: 8, paddingVertical: 2,
   },
-  stopFarm: { flex: 1, fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },
-  stopBkt: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted },
-  orderRow: { flexDirection: 'row', justifyContent: 'space-between', paddingLeft: 22, paddingRight: 4, paddingVertical: 3, marginTop: 2, borderRadius: 4 },
-  orderRowAlt: { backgroundColor: COLORS.bgMuted },
-  edit: { marginTop: spacing.md, alignSelf: 'flex-start' },
-  orderName: { flex: 1, fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary },
-  orderBkt: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted },
-  stopPills: { paddingLeft: 22 },
+  farmTxt: { fontFamily: fontFamily.medium, fontSize: 11, color: COLORS.textSecondary },
+  farmN: { fontFamily: fontFamily.bold, color: COLORS.text },
+  foot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.sm, gap: spacing.sm },
+  viewBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4 },
+  viewTxt: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: COLORS.text },
   action: { marginTop: spacing.md },
   turnaround: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

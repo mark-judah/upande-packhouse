@@ -18,6 +18,13 @@ export type RawOplItem = {
   total_buckets?: number;
   issued_pct?: number;
   packed_pct?: number;
+  /** Stems issued of all its buckets' stems (not-found ones too). Below 100 (sent to
+   *  packing while waiting for replacements, or completed short) packing stops at
+   *  `issued_stems`. */
+  issued_stems?: number;
+  total_stems?: number;
+  issued_stem_pct?: number;
+  packed_stems?: number;
   /** Completed short: the share of stems whose buckets were not found. */
   short_pct?: number;
   short_accepted?: number;
@@ -132,6 +139,8 @@ export type RawPickListWithFpl = {
   order_pick_list?: RawOrderPickList;
   farm_pack_lists?: RawFarmPackList[];
   packing_guide?: RawPackingGuide;
+  /** Stems issued so far: below 100% packing stops at `issued_stems`. */
+  issued?: { issued_stems?: number; total_stems?: number; issued_pct?: number };
 };
 
 export type RawPickListWithFplResponse = {
