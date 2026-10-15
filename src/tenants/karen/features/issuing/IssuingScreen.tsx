@@ -44,8 +44,6 @@ export function KarenIssuingScreen() {
     openReplace,
     closeReplace,
     confirmReplace,
-    completeShort,
-    packWhileWaiting,
     issuedOfflineInfo,
     markIssuedOffline,
     reset,
@@ -123,7 +121,7 @@ export function KarenIssuingScreen() {
   // spec — operators pick the specific pick list, not a merged sale order.
   // Listed in schedule order (the server's: every team's #1, then #2 …); each shows
   // its place, and the team's next order to issue says so.
-  const doneOrders = availableOrders.filter((o) => o.issuedPct >= 100).length;
+  const doneOrders = availableOrders.filter((o) => o.issueDone).length;
   const orderOptions = filteredOrders.map((o) => {
     const varieties = (o.varietyLengths.length ? o.varietyLengths : o.varieties).join(', ');
     const parts: { text: string; bold?: boolean; semi?: boolean }[] = [];
@@ -164,66 +162,6 @@ export function KarenIssuingScreen() {
     () => availableOrders.find((o) => o.oplName === selectedOpl) ?? null,
     [availableOrders, selectedOpl],
   );
-
-  // Complete short: every bucket that is here issued, the not-found ones left out.
-  const [completing, setCompleting] = useState(false);
-  const readyToComplete = packingItems.length > 0 && packingItems.every((i) => i.isIssued || i.notFound);
-  const onCompleteShort = () => {
-    if (!selectedOplInfo) return;
-    showDialog(
-      'Complete short?',
-      `${selectedOplInfo.name}: ${selectedOplInfo.notFound} bucket${selectedOplInfo.notFound === 1 ? '' : 's'} not found ` +
-        `(${Math.round(selectedOplInfo.shortStems)} stems, ${selectedOplInfo.shortPct}%). ` +
-        'The order is recorded short and goes to packing with what was issued.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Complete short',
-          onPress: async () => {
-            setCompleting(true);
-            const res = await completeShort();
-            setCompleting(false);
-            if (res.ok) showSuccess(res.message);
-            else showError(res.message);
-          },
-        },
-      ],
-      { name: 'cut-outline', tone: 'warn' },
-    );
-  };
-
-  // Pack what was issued now (half the order or more): the buckets not issued are marked
-  // not found and replaced later, when stock is found; the team moves on.
-  const [sendingToPack, setSendingToPack] = useState(false);
-  // The server says when (Production Settings' %, nothing on a truck); an older server
-  // that doesn't falls back to half the buckets issued.
-  const canPackWhileWaiting =
-    !!selectedOplInfo &&
-    (selectedOplInfo.packWaiting ??
-      (!selectedOplInfo.shortAccepted && selectedOplInfo.issuedPct >= 50 && selectedOplInfo.issuedPct < 100));
-  const packWaitingPct = selectedOplInfo?.issuedStemPct || selectedOplInfo?.issuedPct || 0;
-  const onPackWhileWaiting = () => {
-    if (!selectedOplInfo) return;
-    showDialog(
-      'Pack while waiting?',
-      `${selectedOplInfo.name}: pack the ${packWaitingPct}% issued now; packing stops there until more is issued. ` +
-        'The buckets not issued are marked not found and can be replaced later.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Pack now',
-          onPress: async () => {
-            setSendingToPack(true);
-            const res = await packWhileWaiting();
-            setSendingToPack(false);
-            if (res.ok) showSuccess(res.message);
-            else showError(res.message);
-          },
-        },
-      ],
-      { name: 'cube-outline', tone: 'info' },
-    );
-  };
 
   const onPickOrder = (next: string) => {
     if (!next || next === selectedOpl) return;
@@ -319,36 +257,6 @@ export function KarenIssuingScreen() {
               ) : null}
               {selectedOplInfo.qty ? ` · ${selectedOplInfo.qty} stems` : ''}
             </Text>
-          ) : null}
-          {selectedOplInfo && canPackWhileWaiting ? (
-            <View style={[s.shortBox, s.packWaitingBox]}>
-              <Button
-                label={`Pack what's issued (${packWaitingPct}%)`}
-                iconLeft="cube-outline"
-                variant="outline"
-                size="sm"
-                style={s.packWaitingBtn}
-                disabled={sendingToPack || completing}
-                loading={sendingToPack}
-                onPress={onPackWhileWaiting}
-              />
-            </View>
-          ) : null}
-          {selectedOplInfo && selectedOplInfo.notFound ? (
-            <View style={s.shortBox}>
-              <Alert tone="warn">
-                {`${selectedOplInfo.notFound} bucket${selectedOplInfo.notFound === 1 ? '' : 's'} not found at the farm` +
-                  ` · ${Math.round(selectedOplInfo.shortStems)} stems · short ${selectedOplInfo.shortPct}%` +
-                  (selectedOplInfo.draft ? ' · still a draft' : '')}
-              </Alert>
-              <Button
-                label={`Complete short (${selectedOplInfo.shortPct}%)`}
-                variant="outline"
-                disabled={completing || !readyToComplete}
-                loading={completing}
-                onPress={onCompleteShort}
-              />
-            </View>
           ) : null}
           {packingLoading ? (
             <Text style={s.helper}>Loading packing list…</Text>
@@ -676,10 +584,6 @@ const s = StyleSheet.create({
     color: '#166534',
     letterSpacing: 0.4,
   },
-  shortBox: { gap: spacing.sm, marginTop: spacing.sm },
-  packWaitingBtn: { alignSelf: 'flex-start' },
-  // Clear of the "Issue to team" banner below it.
-  packWaitingBox: { marginBottom: spacing.md },
   tagNotFound: {
     paddingHorizontal: 6,
     paddingVertical: 2,

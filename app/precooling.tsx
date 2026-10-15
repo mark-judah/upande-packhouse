@@ -5,7 +5,7 @@ import { KarenPrecoolingScreen } from '@/src/tenants/karen/features/precooling/P
 export default function PrecoolingRoute() {
   const { tenant } = useTenant();
   if (tenant !== 'Karen' && tenant !== 'Demo') {
-    return <PendingScreen feature="Precooling" tenant={tenant} />;
+    return <PendingScreen feature="Staging" tenant={tenant} />;
   }
   return <KarenPrecoolingScreen />;
 }

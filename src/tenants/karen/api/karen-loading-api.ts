@@ -31,6 +31,8 @@ export type RawSalesOrderInfo = {
   boxes_allocated?: number;
   boxes_packed?: number;
   boxes_staged?: number;
+  /** Staged + loaded: what goes on the truck (newer servers). */
+  boxes_to_load?: number;
   boxes_loaded?: number;
   /** Boxes staged (in the dispatch coldstore) but not yet loaded, with
    *  where to find each one. */
@@ -47,6 +49,8 @@ export type RawLoadingPlanItem = {
   boxes_allocated?: number;
   boxes_packed?: number;
   boxes_staged?: number;
+  /** Staged + loaded: what goes on the truck (newer servers). */
+  boxes_to_load?: number;
   boxes_loaded?: number;
 };
 
@@ -58,6 +62,7 @@ export type RawLoadingTotals = {
   total_boxes_packed?: number;
   total_boxes_staged?: number;
   total_boxes_loaded?: number;
+  total_boxes_to_load?: number;
   total_stops?: number;
 };
 

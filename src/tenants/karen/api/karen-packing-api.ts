@@ -112,6 +112,19 @@ export type RawPackingGuide = {
   remaining_stems?: number;
   overall_percentage?: number;
   items?: RawPackingGuideItem[];
+  /** What goes in each box (Packing Guide rows): per box, each variety's bunches/stems. */
+  boxes?: {
+    box_number?: number | string;
+    items?: {
+      variety?: string;
+      item_name?: string;
+      colour?: string;
+      length?: string;
+      stems_per_bunch?: number | string;
+      bunches?: number | string;
+      stems?: number | string;
+    }[];
+  }[];
   /** Mixed-bunch bouquet: recipe (per-bunch colour/variety/stems) + spec + guide image. */
   is_mixed_bunch?: boolean;
   bouquet_guide?: {

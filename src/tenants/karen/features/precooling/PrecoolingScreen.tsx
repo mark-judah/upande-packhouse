@@ -172,13 +172,13 @@ export function KarenPrecoolingScreen() {
     if (outcome.kind === "success") showSuccess(outcome.message || "Saved");
     else if (outcome.kind === "warning")
       showInfo(outcome.message || "Check the scan and try again");
-    else showError(outcome.message || "Failed to record precooling");
+    else showError(outcome.message || "Failed to record staging");
     scanRef.current?.clear();
     focusWhenReady(scanRef);
   };
 
   return (
-    <Screen title="Precooling" onRefresh={loadSummary}>
+    <Screen title="Staging" onRefresh={loadSummary}>
       {/* "Boxes" sits on the card's top edge, fieldset-legend style: a
           filled pill the border runs into. */}
       <View style={s.boxesWrap}>
@@ -208,7 +208,7 @@ export function KarenPrecoolingScreen() {
       {/* One tab: a scan here puts a packed box into the precooling room.
           It leaves the room when staging scans the location and then the
           box, which marks it precooled and staged in one step. */}
-      <Card title="Scan box into precooling">
+      <Card title="Scan box into staging">
         <ScanField
           ref={scanRef}
           onScan={onScan}

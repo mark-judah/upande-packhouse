@@ -73,7 +73,20 @@ export type BouquetGuideItem = {
   length: string;
 };
 
+/** One variety's share of one box (Packing Guide row): e.g. Box 1 -- 3 Athena. */
+export type BoxContentItem = {
+  variety: string;
+  itemName: string;
+  colour: string;
+  length: string;
+  stemsPerBunch: number;
+  bunches: number;
+  stems: number;
+};
+
 export type PackingGuide = {
+  /** Per box number, what goes in it (empty for an order without a Packing Guide). */
+  boxes: Record<number, BoxContentItem[]>;
   itemGroup: string;
   isMixed: boolean;
   /** Planned box count (>= 1). */
@@ -186,6 +199,16 @@ type State = {
   setBox: (box: number) => void;
   submitScan: (raw: string) => Promise<PackOutcome>;
   submitManual: (enteredQty: number) => Promise<PackOutcome>;
+  /** Mixed bunch/box: `bunches` added to the current box in one entry, split across its varieties
+   *  in the box's ratio; without `bunches`, everything the box still needs. */
+  fillBox: (bunches?: number) => Promise<PackOutcome>;
+  /** The current box of a mixed bunch/box: bunches it holds, needs in all, and what is left per line. */
+  boxFill: () => {
+    packed: number;
+    required: number;
+    /** Per line: bunches still to go in (`bunches`), what the box takes of it and holds now. */
+    lines: { item: PickListLine; bunches: number; required: number; inBox: number }[];
+  };
   loadUnderPackReasons: () => Promise<void>;
   /** Save a chosen Under Pack Reason against the current box. */
   submitUnderPackReason: (reasonName: string) => Promise<PackOutcome>;
@@ -415,7 +438,7 @@ function buildGuideView(payload: RawPickListWithFpl): {
   const farmPackLists = payload.farm_pack_lists ?? [];
   const guideRaw = payload.packing_guide ?? {};
 
-  const pickListItems: PickListLine[] = (opl.locations ?? []).map((l) => {
+  const rawLines: PickListLine[] = (opl.locations ?? []).map((l) => {
     const itemCode = (l.item_code ?? '').toString();
     return {
       itemCode,
@@ -434,6 +457,22 @@ function buildGuideView(payload: RawPickListWithFpl): {
       itemGroup: (l.item_group ?? '').toString(),
     };
   });
+  // One line per order line (variety + bunch size + ORDER length): a longer bucket
+  // allocated or swapped in to fill it (its pick row says 72cm on a 62cm line) comes
+  // as its own location, and as a second line with the same key it was never filled
+  // -- the first one read "already fully packed" with the order still short.
+  const pickListItems: PickListLine[] = [];
+  const lineAt = new Map<string, PickListLine>();
+  for (const l of rawLines) {
+    const k = key(l.itemCode, l.uom, l.stemLength);
+    const have = lineAt.get(k);
+    if (have) have.qty += l.qty;
+    else {
+      const copy = { ...l };
+      lineAt.set(k, copy);
+      pickListItems.push(copy);
+    }
+  }
 
   // stems already packed, per variety per box
   const varietyStemsInBox: Record<string, Record<number, number>> = {};
@@ -480,7 +519,22 @@ function buildGuideView(payload: RawPickListWithFpl): {
     packedBunchesTally[key(line.itemCode, line.uom, line.stemLength)] = count;
   }
 
+  const boxes: Record<number, BoxContentItem[]> = {};
+  for (const b of guideRaw.boxes ?? []) {
+    const n = Math.trunc(toNum(b.box_number, 0));
+    if (!n) continue;
+    boxes[n] = (b.items ?? []).map((it) => ({
+      variety: (it.variety ?? '').toString(),
+      itemName: (it.item_name ?? it.variety ?? '').toString(),
+      colour: (it.colour ?? '').toString(),
+      length: (it.length ?? '').toString(),
+      stemsPerBunch: toNum(it.stems_per_bunch, 0),
+      bunches: toNum(it.bunches, 0),
+      stems: toNum(it.stems, 0),
+    }));
+  }
   const packingGuide: PackingGuide = {
+    boxes,
     itemGroup: (guideRaw.item_group ?? '').toString(),
     isMixed: guideRaw.is_mixed === true,
     plannedBoxes: plannedBoxesFrom(guideRaw.planned_boxes),
@@ -527,8 +581,11 @@ function extractBunch(raw: RawBunchResponse): { bunch: RawBunchEntry | null; err
   return { bunch: m as RawBunchEntry, errorMessage: null };
 }
 
-/** target stems per variety per box for a mixed box. */
-function targetPerVariety(guide: PackingGuide, variety: string): number {
+/** target stems per variety per box for a mixed box: that box's own Packing Guide row
+ *  when there is one, else the variety's planned stems split evenly over the boxes. */
+export function targetPerVariety(guide: PackingGuide, variety: string, box?: number): number {
+  const rows = box ? guide.boxes[box] : undefined;
+  if (rows && rows.length) return rows.filter((r) => r.variety === variety).reduce((n, r) => n + r.stems, 0);
   const item = guide.items.find((i) => i.itemCode === variety);
   if (!item || guide.plannedBoxes <= 0) return 0;
   return Math.round(item.plannedStems / guide.plannedBoxes);
@@ -711,8 +768,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     }
 
     // Strict per-variety limit for mixed boxes (+ optimistic reserve).
-    if (guide && guide.isMixed && variety) {
-      const target = targetPerVariety(guide, variety);
+    if (guide && (guide.isMixed || guide.isMixedBunch) && variety) {
+      const target = targetPerVariety(guide, variety, state.currentBoxId);
       const alreadyInBox = state.varietyStemsInBox[variety]?.[state.currentBoxId] ?? 0;
       if (alreadyInBox + bunchStems > target) {
         return fail(
@@ -792,8 +849,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     }
 
     // Re-check mixed target against the bunch's resolved variety.
-    if (guide && guide.isMixed && pVariety) {
-      const target = targetPerVariety(guide, pVariety);
+    if (guide && (guide.isMixed || guide.isMixedBunch) && pVariety) {
+      const target = targetPerVariety(guide, pVariety, state.currentBoxId);
       const alreadyInBox = state.varietyStemsInBox[pVariety]?.[state.currentBoxId] ?? 0;
       if (alreadyInBox + pStems > target) {
         set({ submitting: false });
@@ -893,8 +950,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
     // Cap 3 — mixed boxes: never exceed this variety's per-box target.
     let varietyRemaining = Infinity;
-    if (guide && guide.isMixed) {
-      const target = targetPerVariety(guide, item.itemCode);
+    if (guide && (guide.isMixed || guide.isMixedBunch)) {
+      const target = targetPerVariety(guide, item.itemCode, state.currentBoxId);
       const inBox = state.varietyStemsInBox[item.itemCode]?.[state.currentBoxId] ?? 0;
       varietyRemaining = Math.max(0, Math.floor((target - inBox) / perBunch));
     }
@@ -949,6 +1006,126 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     set({ submitting: false, lastOutcome: { kind: 'success', message: 'Packed successfully' } });
     await reloadGuide(state.selectedOpl, set, state.selectedItemKey);
     return { kind: 'success', message: 'Packed successfully' };
+  },
+
+  boxFill: () => {
+    const state = get();
+    const guide = state.packingGuide;
+    const none = { packed: 0, required: 0, lines: [] };
+    if (!guide || !(guide.isMixed || guide.isMixedBunch)) return none;
+    const box = state.currentBoxId;
+    // The box counts bunches, whatever the variety: in it now, and what its varieties need in all.
+    let packed = 0;
+    let required = 0;
+    for (const item of state.pickListItems) {
+      const perBunch = stemsPerBunch(item.uom);
+      packed += Math.floor((state.varietyStemsInBox[item.itemCode]?.[box] ?? 0) / perBunch);
+      required += Math.floor(targetPerVariety(guide, item.itemCode, box) / perBunch);
+    }
+    if (state.closedBoxes[box]) {
+      return {
+        packed,
+        required,
+        lines: state.pickListItems.map((item) => {
+          const perBunch = stemsPerBunch(item.uom);
+          return {
+            item,
+            bunches: 0,
+            required: Math.floor(targetPerVariety(guide, item.itemCode, box) / perBunch),
+            inBox: Math.floor((state.varietyStemsInBox[item.itemCode]?.[box] ?? 0) / perBunch),
+          };
+        }),
+      };
+    }
+    // Room shared by every line: the box's packrate and what is issued; each line takes its own
+    // per-box target, capped by what the order still needs of it.
+    let boxStems = Object.values(state.varietyStemsInBox).reduce((sum, byBox) => sum + (byBox[box] ?? 0), 0);
+    let issuedStems = issuedRoom(state.issueCap, state.varietyStemsInBox);
+    // Never past the most bunches the box takes, however its varieties add up.
+    let bunchRoom = required > 0 ? Math.max(0, required - packed) : Infinity;
+    const lines = state.pickListItems.map((item) => {
+      const perBunch = stemsPerBunch(item.uom);
+      const packed = Math.trunc(state.packedBunchesTally[key(item.itemCode, item.uom, item.stemLength)] ?? 0);
+      const orderRemaining = Math.max(0, Math.trunc(item.qty) - packed);
+      const target = targetPerVariety(guide, item.itemCode, box);
+      const inBox = state.varietyStemsInBox[item.itemCode]?.[box] ?? 0;
+      const varietyRemaining = Math.max(0, Math.floor((target - inBox) / perBunch));
+      const boxRemaining =
+        guide.packratePerBox > 0 ? Math.max(0, Math.floor((guide.packratePerBox - boxStems) / perBunch)) : Infinity;
+      const issuedRemaining = Math.floor(issuedStems / perBunch);
+      const bunches = Math.max(0, Math.min(orderRemaining, varietyRemaining, boxRemaining, issuedRemaining, bunchRoom));
+      bunchRoom -= bunches;
+      boxStems += bunches * perBunch;
+      issuedStems -= bunches * perBunch;
+      return { item, bunches, required: Math.floor(target / perBunch), inBox: Math.floor(inBox / perBunch) };
+    });
+    return { packed, required, lines };
+  },
+
+  fillBox: async (entered) => {
+    const state = get();
+    const fail = makeFail(set, { action: 'fillBox', opl: state.selectedOpl, box: state.currentBoxId, entered });
+    if (state.submitting) return fail('warning', 'Still submitting the previous entry — please wait.');
+    if (!state.selectedOpl) return fail('warning', 'Select an order first.');
+    if (state.closedBoxes[state.currentBoxId]) {
+      return fail('warning', `Box ${state.currentBoxId} is closed (under-packed). Switch to the next box.`);
+    }
+    const left = get().boxFill().lines.filter((f) => f.bunches > 0);
+    if (!left.length) return fail('warning', `Box ${state.currentBoxId} needs nothing more. Switch to the next box.`);
+    const room = left.reduce((n, f) => n + f.bunches, 0);
+    let fill = left;
+    if (entered !== undefined) {
+      if (!Number.isFinite(entered) || entered <= 0) return fail('warning', 'Enter the number of bunches added.');
+      if (entered > room) return fail('warning', `Box ${state.currentBoxId} has room for ${room} more bunch(es).`);
+      // Split in the box's ratio (what each variety still needs), the remainders to the largest shares.
+      const shares = left.map((f) => {
+        const exact = (entered * f.bunches) / room;
+        return { ...f, bunches: Math.floor(exact), rest: exact - Math.floor(exact) };
+      });
+      let spare = entered - shares.reduce((n, f) => n + f.bunches, 0);
+      for (const f of [...shares].sort((a, b) => b.rest - a.rest)) {
+        if (spare <= 0) break;
+        const full = left.find((l) => l.item === f.item)!.bunches;
+        if (f.bunches < full) {
+          f.bunches += 1;
+          spare -= 1;
+        }
+      }
+      fill = shares.filter((f) => f.bunches > 0);
+    }
+
+    // One entry for the whole box: every variety it still needs, in a single Farm Pack List update.
+    const items: PackListItemPayload[] = fill.map(({ item, bunches }) => ({
+      item_code: item.itemCode,
+      bunch_uom: item.uom,
+      bunch_qty: bunches,
+      source_warehouse: item.warehouse ? item.warehouse : DEFAULT_SOURCE_WAREHOUSE,
+      sales_order_id: state.saleOrderId,
+      customer_id: state.customerId,
+      custom_number_of_stems: bunches * stemsPerBunch(item.uom),
+      custom_stem_length: item.stemLength,
+      box_id: state.currentBoxId.toString(),
+      bunch_id: null,
+    }));
+    const first = fill[0].item;
+    set({ submitting: true });
+    try {
+      await karenPackingApi.createOrUpdateFarmPackList({
+        custom_farm: first.warehouse ? first.warehouse : '',
+        custom_customer: state.customerId,
+        custom_sales_order: state.saleOrderId,
+        custom_order_pick_list: state.selectedOpl,
+        items,
+      });
+    } catch (err) {
+      set({ submitting: false });
+      return fail('error', mapAxiosError(err).message || 'Packing failed.', { silent: true });
+    }
+    const bunches = fill.reduce((n, f) => n + f.bunches, 0);
+    const out: PackOutcome = { kind: 'success', message: `Box ${state.currentBoxId} filled · ${bunches} bunches` };
+    set({ submitting: false, lastOutcome: out });
+    await reloadGuide(state.selectedOpl, set, state.selectedItemKey);
+    return out;
   },
 
   loadUnderPackReasons: async () => {
@@ -1060,8 +1237,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     }
 
     let varietyRemaining = Infinity;
-    if (guide && guide.isMixed) {
-      const target = targetPerVariety(guide, item.itemCode);
+    if (guide && (guide.isMixed || guide.isMixedBunch)) {
+      const target = targetPerVariety(guide, item.itemCode, state.currentBoxId);
       const inBox = state.varietyStemsInBox[item.itemCode]?.[state.currentBoxId] ?? 0;
       varietyRemaining = Math.max(0, Math.floor((target - inBox) / perBunch));
     }

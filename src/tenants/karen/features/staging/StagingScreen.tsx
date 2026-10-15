@@ -37,14 +37,14 @@ export function KarenStagingScreen() {
     const outcome = await submitScan(raw);
     if (outcome.kind === 'success') showSuccess(outcome.message || 'Box staged successfully');
     else if (outcome.kind === 'warning') showInfo(outcome.message || 'Check the scan and try again');
-    else showError(outcome.message || 'Failed to create staging entry');
+    else showError(outcome.message || 'Failed to create precooling entry');
     scanRef.current?.clear();
     focusWhenReady(scanRef);
   };
 
   return (
-    <Screen title="Staging Entry">
-      <Card title="Staging location">
+    <Screen title="Precooling Entry">
+      <Card title="Precooling location">
         <ScanField
           ref={locRef}
           onScan={onScanLocation}
@@ -53,9 +53,9 @@ export function KarenStagingScreen() {
           placeholder="Scan dispatch coldstore location QR"
         />
         {location ? (
-          <Text style={s.locText}>Staging to: {location}</Text>
+          <Text style={s.locText}>Precooling to: {location}</Text>
         ) : (
-          <Text style={s.helper}>Scan a coldstore location QR before staging boxes.</Text>
+          <Text style={s.helper}>Scan a coldstore location QR before precooling boxes.</Text>
         )}
       </Card>
 

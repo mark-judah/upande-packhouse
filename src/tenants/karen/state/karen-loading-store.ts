@@ -32,6 +32,10 @@ export type LoadingOrder = {
   consignee: string;
   shippingAgent: string;
   totalQty: number;
+  /** What was planned (the OPL's Packing Guide boxes). */
+  boxesPlanned: number;
+  /** What goes on the truck: staged + loaded (planned on older servers). Progress and
+   *  "done" are measured against this, so 190 staged of 200 planned is done at 190/190. */
   boxesAllocated: number;
   boxesPacked: number;
   boxesStaged: number;
@@ -47,6 +51,7 @@ export type LoadingPlanItem = {
   boxType: string;
   numberOfBoxes: number;
   orders: LoadingOrder[];
+  boxesPlanned: number;
   boxesAllocated: number;
   boxesPacked: number;
   boxesStaged: number;
@@ -57,6 +62,7 @@ export type AvailablePlan = { name: string; vehicle: string };
 export type VehicleInfo = { name: string; licensePlate: string };
 
 export type LoadingTotals = {
+  totalBoxesPlanned: number;
   totalBoxesAllocated: number;
   totalBoxesPacked: number;
   totalBoxesStaged: number;
@@ -253,7 +259,8 @@ function normalise(d: RawLoadingData): LoadingData {
         consignee: (o.consignee ?? '').toString(),
         shippingAgent: (o.shipping_agent ?? '').toString(),
         totalQty: toNum(o.total_qty),
-        boxesAllocated: toNum(o.boxes_allocated),
+        boxesPlanned: toNum(o.boxes_allocated),
+        boxesAllocated: o.boxes_to_load != null ? toNum(o.boxes_to_load) : toNum(o.boxes_allocated),
         boxesPacked: toNum(o.boxes_packed),
         boxesStaged: toNum(o.boxes_staged),
         boxesLoaded: toNum(o.boxes_loaded),
@@ -262,13 +269,16 @@ function normalise(d: RawLoadingData): LoadingData {
           stagingLocation: (b.staging_location ?? '').toString(),
         })),
       })),
-      boxesAllocated: toNum(i.boxes_allocated),
+      boxesPlanned: toNum(i.boxes_allocated),
+      boxesAllocated: i.boxes_to_load != null ? toNum(i.boxes_to_load) : toNum(i.boxes_allocated),
       boxesPacked: toNum(i.boxes_packed),
       boxesStaged: toNum(i.boxes_staged),
       boxesLoaded: toNum(i.boxes_loaded),
     })),
     totals: {
-      totalBoxesAllocated: toNum(totals.total_boxes_allocated),
+      totalBoxesPlanned: toNum(totals.total_boxes_allocated),
+      totalBoxesAllocated:
+        totals.total_boxes_to_load != null ? toNum(totals.total_boxes_to_load) : toNum(totals.total_boxes_allocated),
       totalBoxesPacked: toNum(totals.total_boxes_packed),
       totalBoxesStaged: toNum(totals.total_boxes_staged),
       totalBoxesLoaded: toNum(totals.total_boxes_loaded),
