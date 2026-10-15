@@ -113,6 +113,8 @@ export function KarenPackingScreen() {
     setBox,
     submitScan,
     submitManual,
+    fillBox,
+    boxFill,
     loadUnderPackReasons,
     submitUnderPackReason,
     loadPackingBypassReasons,
@@ -230,11 +232,16 @@ export function KarenPackingScreen() {
 
   const filteredPicklists = useMemo(
     () =>
-      availablePicklists.filter(
-        (o) =>
-          (!selectedItemGroup || o.itemGroup === selectedItemGroup) &&
-          (!selectedTeam || o.team === selectedTeam),
-      ),
+      availablePicklists
+        .filter(
+          (o) =>
+            (!selectedItemGroup || o.itemGroup === selectedItemGroup) &&
+            (!selectedTeam || o.team === selectedTeam),
+        )
+        // Fully packed orders sink to the bottom (stable: the rest keep their order).
+        .map((o, i) => [o, i] as const)
+        .sort((a, b) => Number(a[0].packedPct >= 100) - Number(b[0].packedPct >= 100) || a[1] - b[1])
+        .map(([o]) => o),
     [availablePicklists, selectedItemGroup, selectedTeam],
   );
 
@@ -259,7 +266,8 @@ export function KarenPackingScreen() {
           ? [
               o.issuedPct >= 100
                 ? { text: `100% issued (${o.issuedBuckets}/${o.totalBuckets} bkt)`, bold: true, color: COLORS.success }
-                : { text: `${o.issuedPct}% issued (${o.issuedBuckets}/${o.totalBuckets} bkt)` },
+                : // Sent to packing before all of it was issued: packing stops at what is issued.
+                  { text: `${o.issuedPct}% issued (${o.issuedBuckets}/${o.totalBuckets} bkt)`, bold: true, color: COLORS.warn },
               { text: ' · ' },
             ]
           : []),
@@ -365,6 +373,16 @@ export function KarenPackingScreen() {
     }
   };
 
+  // Mixed bunch/box: the whole box in one entry, every variety at once.
+  const onFillBox = async (bunches?: number) => {
+    const outcome = await fillBox(bunches);
+    announce(outcome);
+    if (outcome.kind === 'success') {
+      setManualQty('');
+      maybeAdvanceBox();
+    }
+  };
+
   const onSubmitUnderPack = async () => {
     if (!underPackReason) return;
     const outcome = await submitUnderPackReason(underPackReason);
@@ -412,6 +430,11 @@ export function KarenPackingScreen() {
     },
     [currentBoxId, setBox],
   );
+
+  // Mixed bunch/box: the box is counted in bunches, whatever the variety.
+  const mixedBox = pickListItems.length > 1 && !!(packingGuide?.isMixed || packingGuide?.isMixedBunch);
+  const box = boxFill();
+  const boxFillBunches = box.lines.reduce((n, f) => n + f.bunches, 0);
 
   // The line manual entry currently targets — a straight box has just one
   // line, so this is always that one; a mixed bunch/box has several, and the
@@ -623,7 +646,7 @@ export function KarenPackingScreen() {
             {selectedPicklist.totalBuckets ? (
               <>
                 {' · '}
-                <Text style={selectedPicklist.issuedPct >= 100 ? s.packedDone : undefined}>
+                <Text style={selectedPicklist.issuedPct >= 100 ? s.packedDone : s.shortText}>
                   {`${selectedPicklist.issuedPct}% issued (${selectedPicklist.issuedBuckets}/${selectedPicklist.totalBuckets} buckets)`}
                 </Text>
                 {selectedPicklist.shortPct ? (
@@ -716,7 +739,33 @@ export function KarenPackingScreen() {
             />
           </View>
 
-          {packingGuide.isMixed ? (
+          {(packingGuide.isMixed || packingGuide.isMixedBunch) && (packingGuide.boxes[currentBoxId] ?? []).length ? (
+            // What this box holds, from the Packing Guide: e.g. 3 Athena, 4 Fireworks.
+            <View style={s.targetBox}>
+              <Text style={s.targetTitle}>In Box {currentBoxId}</Text>
+              {(packingGuide.boxes[currentBoxId] ?? []).map((it) => {
+                const per = it.stemsPerBunch || 1;
+                const packed = Math.floor((varietyStemsInBox[it.variety]?.[currentBoxId] ?? 0) / per);
+                const done = packed >= it.bunches;
+                return (
+                  <View key={`${it.variety}-${it.length}`} style={s.targetRow}>
+                    <MaterialCommunityIcons
+                      name={done ? 'check-circle' : 'circle-outline'}
+                      size={16}
+                      color={done ? '#16a34a' : '#4f46e5'}
+                    />
+                    <Text style={s.targetName} numberOfLines={1}>
+                      {it.bunches} {it.itemName}
+                      {it.length ? ` · ${it.length}` : ''}
+                    </Text>
+                    <Text style={[s.targetQty, done && s.targetQtyDone]}>
+                      {packed} / {it.bunches} bunches
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          ) : packingGuide.isMixed ? (
             <View style={s.targetBox}>
               <Text style={s.targetTitle}>Target per Box</Text>
               {packingGuide.items.map((it) => {
@@ -773,7 +822,41 @@ export function KarenPackingScreen() {
         </Card>
       ) : null}
 
-      {showTable && isStandardRoses && standardLine ? (
+      {/* Mixed bunch/box: what the box takes of each variety and in all, and one button that packs it. */}
+      {showTable && isStandardRoses && mixedBox ? (
+        <Card title={`Box ${currentBoxId}`}>
+          {box.lines.map((l) => (
+            <View key={lineKey(l.item)} style={s.boxLine}>
+              <Text style={s.boxVariety} numberOfLines={1}>
+                {l.item.itemCode}
+              </Text>
+              <Text style={[s.boxCount, l.inBox >= l.required && s.boxCountDone]}>
+                {l.inBox} / {l.required}
+              </Text>
+            </View>
+          ))}
+          <View style={[s.boxLine, s.boxTotal]}>
+            <Text style={s.boxVariety}>Total</Text>
+            <Text style={[s.boxCount, box.packed >= box.required && s.boxCountDone]}>
+              {box.packed} / {box.required} bunches
+            </Text>
+          </View>
+          <View style={{ height: spacing.sm }} />
+          <Button
+            label={
+              submitting
+                ? 'Packing…'
+                : boxFillBunches > 0
+                  ? `Fill box · ${boxFillBunches} bunch${boxFillBunches === 1 ? '' : 'es'}`
+                  : `Box ${currentBoxId} is full`
+            }
+            onPress={() => onFillBox()}
+            disabled={submitting || boxFillBunches === 0}
+          />
+        </Card>
+      ) : null}
+
+      {showTable && isStandardRoses && standardLine && !mixedBox ? (
         <Card title="Manual entry">
           {pickListItems.length > 1 ? (
             <>
@@ -1327,6 +1410,18 @@ const s = StyleSheet.create({
   varietyChipText: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: COLORS.text },
   varietyChipTextActive: { color: '#fff' },
   varietyChipCount: { fontFamily: fontFamily.regular, fontSize: 10, color: COLORS.textMuted },
+  boxLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+  },
+  boxTotal: { borderTopWidth: 1 },
+  boxVariety: { flex: 1, fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },
+  boxCount: { fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: COLORS.text },
+  boxCountDone: { color: '#16a34a' },
   manualVariety: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: COLORS.text },
   manualMeta: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 2 },
   manualInput: {

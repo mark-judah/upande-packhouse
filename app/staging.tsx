@@ -5,7 +5,7 @@ import { KarenStagingScreen } from '@/src/tenants/karen/features/staging/Staging
 export default function StagingRoute() {
   const { tenant } = useTenant();
   if (tenant !== 'Karen' && tenant !== 'Demo') {
-    return <PendingScreen feature="Staging" tenant={tenant} />;
+    return <PendingScreen feature="Precooling" tenant={tenant} />;
   }
   return <KarenStagingScreen />;
 }

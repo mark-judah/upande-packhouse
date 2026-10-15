@@ -105,6 +105,8 @@ export type ReadyOrder = {
   movingRows: number;
   /** Production Settings: Pack While Waiting is offered from this issued %. */
   packWaitingPct: number;
+  /** Done for the schedule: every bucket issued, not-found ones aside (issuedPct counts them). */
+  issueDone: boolean;
   /** The server allows Pack While Waiting now; null = an older server that doesn't say. */
   packWaiting: boolean | null;
   waitsFor: number;
@@ -212,6 +214,7 @@ function toReadyOrder(entry: string | RawReadyOrder): ReadyOrder | null {
     totalStems: Number(entry.total_stems ?? 0),
     movingRows: Number(entry.moving_rows ?? 0),
     packWaitingPct: Number(entry.pack_waiting_pct ?? 50),
+    issueDone: entry.issue_done == null ? Number(entry.issued_pct ?? 0) >= 100 : !!entry.issue_done,
     packWaiting: entry.pack_waiting == null ? null : !!entry.pack_waiting,
     waitsFor: Number(entry.waits_for ?? 0),
     draft: !!entry.draft,
@@ -560,6 +563,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
               if (nowIssued && o.totalBuckets) {
                 next.issuedBuckets = Math.min(o.totalBuckets, o.issuedBuckets + 1);
                 next.issuedPct = Math.round((100 * next.issuedBuckets) / o.totalBuckets);
+                if (next.issuedBuckets >= o.totalBuckets) next.issueDone = true;
               }
               if (stemsNow && o.totalStems) {
                 next.issuedStems = Math.min(o.totalStems, o.issuedStems + stemsNow);
@@ -568,7 +572,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
               }
               return next;
             })
-            .sort((a, b) => Number(a.issuedPct >= 100) - Number(b.issuedPct >= 100))
+            .sort((a, b) => Number(a.issueDone) - Number(b.issueDone))
         : get().availableOrders;
     set({ submitting: false, packingItems: updated, lastOutcome: out, availableOrders });
     return out;

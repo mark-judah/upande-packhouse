@@ -266,8 +266,9 @@ function AvailablePlans({
 function TruckSummary({ data, vehicle }: { data: LoadingData; vehicle: string }) {
   const stops = deliveryPoints(data).length;
   const loaded = data.totals.totalBoxesLoaded;
+  // To load = staged + loaded: what is going on the truck; planned = the orders' boxes.
   const allocated = data.totals.totalBoxesAllocated;
-  const plannedBoxes = data.planItems.reduce((sum, it) => sum + it.numberOfBoxes, 0);
+  const plannedBoxes = data.totals.totalBoxesPlanned;
   const progress = allocated > 0 ? Math.min(1, loaded / allocated) : 0;
 
   return (
@@ -277,7 +278,7 @@ function TruckSummary({ data, vehicle }: { data: LoadingData; vehicle: string })
         <View style={{ flex: 1 }}>
           <Text style={s.summaryTitle}>{vehicle}  •  {data.deliveryDate || '—'}</Text>
           <Text style={s.summarySub}>
-            {stops} drop-off{stops === 1 ? '' : 's'}  •  {plannedBoxes} planned  •  {loaded}/{allocated} loaded
+            {stops} drop-off{stops === 1 ? '' : 's'}  •  {plannedBoxes} box{plannedBoxes === 1 ? '' : 'es'} planned  •  {allocated} staged  •  {loaded}/{allocated} loaded
           </Text>
         </View>
       </View>
@@ -409,7 +410,7 @@ function CustomerBlock({ customer, items }: { customer: string; items: LoadingPl
                 </View>
               ) : null}
               <Text style={s.boxQty}>
-                {item.numberOfBoxes} box{item.numberOfBoxes === 1 ? '' : 'es'}
+                {item.boxesPlanned} box{item.boxesPlanned === 1 ? '' : 'es'} planned
               </Text>
               <View style={s.boxTrack}>
                 <View style={[s.boxFill, { width: `${p * 100}%` }, itemDone && s.boxFillDone]} />

@@ -61,6 +61,7 @@ export type RawReadyOrder = {
   pack_waiting_pct?: number;
   /** The order can go to packing now with what is issued (pack_while_waiting_replacement's rules). */
   pack_waiting?: boolean;
+  issue_done?: boolean;
   /** The team's earlier order still to issue first (0 = none). */
   waits_for?: number;
   /** A draft listed because a farm marked buckets not found (nothing else coming). */
