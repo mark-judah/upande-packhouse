@@ -272,8 +272,6 @@ export function KarenPackingScreen() {
             ]
           : []),
         ...(o.shortPct ? [{ text: `short ${o.shortPct}% · `, bold: true, color: COLORS.danger }] : []),
-        // Sent to packing before all of it was issued: packing stops at what is issued.
-        ...(o.issuedStemPct < 100 ? [{ text: `Issued ${o.issuedStemPct}% · `, bold: true, color: COLORS.warn }] : []),
         o.packedPct >= 100
           ? { text: '100% packed', bold: true, color: COLORS.success }
           : { text: `${o.packedPct}% packed` },
