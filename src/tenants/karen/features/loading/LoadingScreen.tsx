@@ -10,6 +10,8 @@ import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
 import { focusWhenReady } from '@/src/core/scanning/focus';
 import { useToast } from '@/src/core/ui/Toast';
 import { Button } from '@/src/core/ui/Button';
+import { Dropdown } from '@/src/core/ui/Dropdown';
+import { showDialog } from '@/src/core/ui/DialogHost';
 import { useUserStation } from '@/src/core/tenant/user-station';
 import {
   useKarenLoadingStore,
@@ -49,6 +51,9 @@ export function KarenLoadingScreen() {
     deselectVehicle,
     toggleDeliveryPoint,
     submitScan,
+    planBusy,
+    createPlan,
+    refreshPlan,
     reset,
   } = useKarenLoadingStore();
 
@@ -73,6 +78,22 @@ export function KarenLoadingScreen() {
     },
     [showSuccess, showError, showInfo],
   );
+
+  const onCreatePlan = async (vehicle: string) => {
+    announce(await createPlan(farm, vehicle));
+  };
+
+  const onRefreshPlan = () => {
+    showDialog(
+      `Refresh ${selectedPlan ?? 'plan'}?`,
+      undefined,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Refresh', onPress: async () => announce(await refreshPlan(farm)) },
+      ],
+      { name: 'refresh', tone: 'info' },
+    );
+  };
 
   const onScan = async (raw: string) => {
     const temp = parseFloat(temperature.trim());
@@ -162,7 +183,10 @@ export function KarenLoadingScreen() {
 
       {/* ── No plan chosen: show the day's loading plans (each carries its truck) ── */}
       {!selectedPlan && !vehicleLoading && data ? (
-        <AvailablePlans data={data} onPick={(planName) => selectPlan(farm, planName)} />
+        <>
+          <AvailablePlans data={data} onPick={(planName) => selectPlan(farm, planName)} />
+          <CreatePlan data={data} busy={planBusy} onCreate={onCreatePlan} />
+        </>
       ) : null}
 
       {/* ── Plan chosen but it didn't load ── */}
@@ -177,10 +201,25 @@ export function KarenLoadingScreen() {
         <>
           <TruckSummary data={data} vehicle={selectedVehicle || selectedPlan || ''} />
 
-          <Pressable style={s.changeTruck} onPress={() => deselectVehicle(farm)} hitSlop={6}>
-            <MaterialCommunityIcons name="swap-horizontal" size={16} color={COLORS.primary} />
-            <Text style={s.changeTruckText}>Change truck / plan</Text>
-          </Pressable>
+          <View style={s.planActions}>
+            <Pressable style={s.changeTruck} onPress={() => deselectVehicle(farm)} hitSlop={6}>
+              <MaterialCommunityIcons name="swap-horizontal" size={16} color={COLORS.primary} />
+              <Text style={s.changeTruckText}>Change truck / plan</Text>
+            </Pressable>
+            <Pressable
+              style={s.changeTruck}
+              onPress={planBusy ? undefined : onRefreshPlan}
+              disabled={planBusy}
+              hitSlop={6}
+            >
+              {planBusy ? (
+                <ActivityIndicator size="small" color={COLORS.primary} />
+              ) : (
+                <MaterialCommunityIcons name="refresh" size={16} color={COLORS.primary} />
+              )}
+              <Text style={s.changeTruckText}>Refresh orders</Text>
+            </Pressable>
+          </View>
 
           <Card title="Scan boxes">
             <TextInput
@@ -258,6 +297,50 @@ function AvailablePlans({
           </Pressable>
         );
       })}
+    </Card>
+  );
+}
+
+// ── Create a plan for a truck with none yet on the day ─────────────────
+function CreatePlan({
+  data,
+  busy,
+  onCreate,
+}: {
+  data: LoadingData;
+  busy: boolean;
+  onCreate: (vehicle: string) => void;
+}) {
+  const [vehicle, setVehicle] = useState<string | null>(null);
+  const planned = useMemo(() => new Set(data.availablePlans.map((p) => p.vehicle)), [data]);
+  const options = useMemo(
+    () =>
+      data.vehicles
+        .filter((v) => !planned.has(v.name))
+        .map((v) => ({ label: v.licensePlate || v.name, value: v.name })),
+    [data, planned],
+  );
+  if (options.length === 0) return null;
+  const chosen = vehicle && options.some((o) => o.value === vehicle) ? vehicle : null;
+  return (
+    <Card title="New loading plan">
+      <Dropdown
+        label="Truck"
+        value={chosen}
+        options={options}
+        placeholder="Select truck"
+        iconName="truck-outline"
+        searchable={options.length > 8}
+        disabled={busy}
+        onChange={setVehicle}
+      />
+      <Button
+        label="Create loading plan"
+        iconLeft="add-circle-outline"
+        disabled={!chosen}
+        loading={busy}
+        onPress={() => chosen && onCreate(chosen)}
+      />
     </Card>
   );
 }
@@ -442,6 +525,7 @@ const s = StyleSheet.create({
   helper: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: spacing.xs },
   inlineLoader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm },
 
+  planActions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   changeTruck: {
     flexDirection: 'row',
     alignItems: 'center',

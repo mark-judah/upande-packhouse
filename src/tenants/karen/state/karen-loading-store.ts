@@ -3,6 +3,7 @@ import { karenLoadingApi } from '../api/karen-loading-api';
 import type {
   RawLoadingData,
   RawLoadingEntryResponse,
+  RawLoadingPlanResponse,
   RawLoadingResponse,
 } from '../api/karen-loading-api';
 import { mapAxiosError } from '@/src/core/api/client';
@@ -228,6 +229,11 @@ function unwrap(
   return undefined;
 }
 
+function unwrapPlan(raw: RawLoadingPlanResponse) {
+  const m = raw?.message;
+  return m && typeof m === 'object' ? m : undefined;
+}
+
 function normalise(d: RawLoadingData): LoadingData {
   const totals = d.totals ?? {};
   return {
@@ -322,6 +328,8 @@ type State = {
   selectedDate: string;
 
   submitting: boolean;
+  /** Creating or refreshing a loading plan. */
+  planBusy: boolean;
   lastOutcome: LoadOutcome | null;
 
   /** Initial load: vehicle list + available plans (no plan scope). */
@@ -336,6 +344,10 @@ type State = {
   deselectVehicle: (farm: string) => Promise<void>;
   toggleDeliveryPoint: (deliveryPoint: string) => void;
   submitScan: (farm: string, raw: string, temperature: number) => Promise<LoadOutcome>;
+  /** Create the day's plan for a truck (or open the one it already has). */
+  createPlan: (farm: string, vehicle: string) => Promise<LoadOutcome>;
+  /** Re-fetch the chosen plan's rows from the day's pick lists. */
+  refreshPlan: (farm: string) => Promise<LoadOutcome>;
   reset: () => void;
 };
 
@@ -403,6 +415,7 @@ export const useKarenLoadingStore = create<State>((set, get) => ({
   expandedDeliveryPoint: null,
   selectedDate: tomorrowISO(),
   submitting: false,
+  planBusy: false,
   lastOutcome: null,
 
   loadInitial: async (farm) => {
@@ -477,6 +490,46 @@ export const useKarenLoadingStore = create<State>((set, get) => ({
     return { kind: 'success', message: result.message };
   },
 
+  createPlan: async (farm, vehicle) => {
+    if (!vehicle) return { kind: 'warning', message: 'Select a truck.' };
+    set({ planBusy: true });
+    let result: ReturnType<typeof unwrapPlan>;
+    try {
+      result = unwrapPlan(await karenLoadingApi.createLoadingPlan(farm, vehicle, get().selectedDate));
+    } catch (err) {
+      set({ planBusy: false });
+      return { kind: 'error', message: mapAxiosError(err).message || 'Failed to create the loading plan.' };
+    }
+    set({ planBusy: false });
+    const name = result?.data?.name;
+    if (!result || (result.status !== 'success' && result.status !== 'exists') || !name) {
+      return { kind: 'error', message: result?.message || 'Failed to create the loading plan.' };
+    }
+    await get().selectPlan(farm, name);
+    return result.status === 'exists'
+      ? { kind: 'warning', message: result.message || `${name} already exists.` }
+      : { kind: 'success', message: result.message };
+  },
+
+  refreshPlan: async (farm) => {
+    const plan = get().selectedPlan;
+    if (!plan) return { kind: 'warning', message: 'Please select a loading plan first.' };
+    set({ planBusy: true });
+    let result: ReturnType<typeof unwrapPlan>;
+    try {
+      result = unwrapPlan(await karenLoadingApi.refreshLoadingPlan(plan));
+    } catch (err) {
+      set({ planBusy: false });
+      return { kind: 'error', message: mapAxiosError(err).message || 'Failed to refresh the loading plan.' };
+    }
+    set({ planBusy: false });
+    if (!result || result.status !== 'success') {
+      return { kind: 'error', message: result?.message || 'Failed to refresh the loading plan.' };
+    }
+    await fetchData(farm, '', 'silent', set, get().selectedDate, plan);
+    return { kind: 'success', message: result.message };
+  },
+
   reset: () =>
     set({
       loading: false,
@@ -488,6 +541,7 @@ export const useKarenLoadingStore = create<State>((set, get) => ({
       expandedDeliveryPoint: null,
       selectedDate: tomorrowISO(),
       submitting: false,
+      planBusy: false,
       lastOutcome: null,
     }),
 }));

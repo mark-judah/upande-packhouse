@@ -112,6 +112,25 @@ export type RawLoadingEntryResponse = {
   message?: { status?: string; message?: string } | string;
 };
 
+// =====================================================================
+// createLoadingPlan / refreshLoadingPlan — build a truck's Loading Plan
+// for a delivery date from the orders' pick lists (the desk's "Fetch
+// Orders"), or re-fetch an existing plan's rows. status "exists" = that
+// truck already has a plan for the date (data.name is it).
+// =====================================================================
+export type RawLoadingPlanSummary = {
+  name?: string;
+  delivery_date?: string;
+  location?: string;
+  vehicle?: string;
+  items?: number;
+};
+export type RawLoadingPlanResponse = {
+  message?:
+    | { status?: 'success' | 'exists' | 'error' | string; message?: string; data?: RawLoadingPlanSummary }
+    | string;
+};
+
 export const karenLoadingApi = {
   /** Loading data for a farm on a delivery date; pass an empty `vehicle` for the
    *  vehicle list + available plans, or a license plate for its plan.
@@ -138,6 +157,30 @@ export const karenLoadingApi = {
       method: 'POST',
       url: '/api/method/upande_packhouse.mobile.api.createLoadingEntry',
       data: { data: payload },
+    });
+  },
+
+  /** Create the station's Loading Plan for a truck on a delivery date. */
+  createLoadingPlan(
+    farm: string,
+    vehicle: string,
+    deliveryDate?: string,
+  ): Promise<RawLoadingPlanResponse> {
+    const data: Record<string, string> = { farm, vehicle };
+    if (deliveryDate) data.delivery_date = deliveryDate;
+    return api<RawLoadingPlanResponse>({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.mobile.api.createLoadingPlan',
+      data,
+    });
+  },
+
+  /** Re-fetch a Loading Plan's rows from the day's pick lists. */
+  refreshLoadingPlan(plan: string): Promise<RawLoadingPlanResponse> {
+    return api<RawLoadingPlanResponse>({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.mobile.api.refreshLoadingPlan',
+      data: { plan },
     });
   },
 };
