@@ -374,7 +374,7 @@ export function PackhouseDashboard() {
               </View>
             ))
           ) : (
-            <Text style={s.helperEmpty}>No orders for {selectedTeam} on this delivery date.</Text>
+            <Text style={s.helperEmpty}>No orders for {selectedTeam || 'any team'} on this delivery date.</Text>
           )}
         </CollapsibleSection>
       ) : isEmpty ? (

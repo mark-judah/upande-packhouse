@@ -11,7 +11,19 @@ const TRIP_BADGE: Record<TripStatus, { label: string; fg: string }> = {
   Received: { label: 'Completed', fg: '#166534' },
 };
 
-export function RouteCard({ route }: { route: Route }) {
+/** `dayLabel`: the selected day, e.g. "today", "yesterday", "Sat 17 Oct". */
+function TripLine({ trip }: { trip: { name: string; status: TripStatus } | null }) {
+  return trip ? (
+    <Text style={[s.tripTxt, { color: TRIP_BADGE[trip.status]?.fg ?? COLORS.textSecondary }]}>
+      {TRIP_BADGE[trip.status]?.label ?? trip.status} · {trip.name}
+    </Text>
+  ) : (
+    <Text style={s.tripTxtMuted}>No trip built yet</Text>
+  );
+}
+
+export function RouteCard({ route, dayLabel }: { route: Route; dayLabel: string }) {
+  const perRun = route.hasRoute && route.runsKnown;
   return (
     <View style={s.card}>
       <View style={s.hd}>
@@ -23,33 +35,36 @@ export function RouteCard({ route }: { route: Route }) {
         route.runs.map((farms, r) => {
           const stops = [route.hub, ...farms, route.hub];
           return (
-            <View key={r} style={s.chain}>
-              <Text style={s.runLbl}>Trip {r + 1}</Text>
-              {stops.map((stop, i) => (
-                <View key={`${stop}-${i}`} style={s.chainItem}>
-                  {i > 0 ? <Ionicons name="arrow-forward" size={12} color={COLORS.textMuted} style={s.arrow} /> : null}
-                  <Text style={s.chainStop} numberOfLines={1}>{stop}</Text>
+            <View key={r}>
+              <View style={s.chain}>
+                <Text style={s.runLbl}>Trip {r + 1}</Text>
+                {stops.map((stop, i) => (
+                  <View key={`${stop}-${i}`} style={s.chainItem}>
+                    {i > 0 ? <Ionicons name="arrow-forward" size={12} color={COLORS.textMuted} style={s.arrow} /> : null}
+                    <Text style={s.chainStop} numberOfLines={1}>{stop}</Text>
+                  </View>
+                ))}
+              </View>
+              {perRun ? (
+                <View style={s.runTrip}>
+                  <TripLine trip={route.runTrips[r] ?? null} />
                 </View>
-              ))}
+              ) : null}
             </View>
           );
         })
       ) : (
         <View style={s.noRoute}>
           <Ionicons name="warning-outline" size={14} color="#D97706" />
-          <Text style={s.noRouteTxt}>No route set for today</Text>
+          <Text style={s.noRouteTxt}>No route set for {dayLabel}</Text>
         </View>
       )}
 
-      <View style={s.tripRow}>
-        {route.trip ? (
-          <Text style={[s.tripTxt, { color: TRIP_BADGE[route.trip.status].fg }]}>
-            {TRIP_BADGE[route.trip.status].label} · {route.trip.name}
-          </Text>
-        ) : (
-          <Text style={s.tripTxtMuted}>No trip built yet</Text>
-        )}
-      </View>
+      {perRun ? null : (
+        <View style={s.tripRow}>
+          <TripLine trip={route.trip} />
+        </View>
+      )}
     </View>
   );
 }
@@ -73,6 +88,7 @@ const s = StyleSheet.create({
     marginTop: spacing.sm, paddingTop: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.border,
   },
+  runTrip: { marginTop: 2 },
   tripTxt: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs },
   tripTxtMuted: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted },
 });

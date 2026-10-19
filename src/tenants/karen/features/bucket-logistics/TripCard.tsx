@@ -129,7 +129,7 @@ export function TripCard({
       ) : null}
 
       <View style={s.foot}>
-        <Pressable onPress={() => onOpen(trip)} hitSlop={6} style={s.viewBtn} accessibilityRole="button">
+        <Pressable onPress={() => onOpen(trip)} hitSlop={6} style={s.viewBtn}>
           <Ionicons name="cube-outline" size={14} color={COLORS.text} />
           <Text style={s.viewTxt}>View buckets</Text>
           <Ionicons name="chevron-forward" size={14} color={COLORS.text} />

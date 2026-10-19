@@ -7,6 +7,7 @@ import type {
   RawTransferScheduleData,
   RawTrip,
   RawTripActionResponse,
+  RawTripNumbers,
   RawVehicle,
 } from '../api/karen-bucket-logistics-api';
 import { mapAxiosError } from '@/src/core/api/client';
@@ -37,7 +38,7 @@ export type TripState = { label: string; color: string };
 export type FarmLoad = { farm: string; buckets: number };
 
 /** One (order, farm) pair on a trip: what getBucketLogisticsDetail is asked for. */
-export type OrderFarm = { opl: string; orderName: string; farm: string };
+export type OrderFarm = { opl: string; orderName: string; farm: string; riding?: number };
 
 export type Trip = {
   name: string;
@@ -109,6 +110,10 @@ export type Route = {
   totalKm: number;
   hasRoute: boolean;
   trip: { name: string; status: TripStatus } | null;
+  /** Per run (same order as `runs`): the trip driving it, null if none. */
+  runTrips: ({ name: string; status: TripStatus } | null)[];
+  /** The server said which trip drives each run. */
+  runsKnown: boolean;
 };
 
 type ActionOutcome = { kind: 'success' | 'error'; message: string };
@@ -164,6 +169,12 @@ export function feedToday(data: Pick<RawTransferScheduleData, 'generated_at'>): 
 
 function rawHasLoads(raw: RawTrip): boolean {
   return !!raw.loading || (raw.loaded_buckets || 0) > 0;
+}
+
+/** The trip's server numbers (trip_numbers), null when the feed carries none. */
+function tripNumbers(raw: RawTrip): RawTripNumbers | null {
+  const n = raw.numbers;
+  return n && Object.keys(n).length ? n : null;
 }
 
 /** The feed also carries up to a week of earlier, never-received trips. Only the
@@ -307,16 +318,25 @@ export const STAGE_COLOR = {
 export function tripState(raw: RawTrip, stops: TripStop[], hub: string = DEFAULT_HUB): TripState {
   const status = raw.status || 'Draft';
   const bs = raw.bucket_status;
-  const total = bs?.total || 0;
-  const transit = bs?.in_transit || 0;
-  const shelved = bs?.shelved || 0;
+  const n = tripNumbers(raw);
+  const total = (n ? n.total : bs?.total) || 0;
+  const transit = (n ? n.transit : bs?.in_transit) || 0;
+  const shelved = (n ? n.shelved : bs?.shelved ?? raw.shelved_buckets) || 0;
+  const loaded = (n ? n.loaded : bs?.loaded) || 0;
   const arrived = { label: `Arrived at ${hub || DEFAULT_HUB}`, color: STAGE_COLOR.arrived };
   const inTransit = { label: 'In transit', color: STAGE_COLOR.transit };
   if (total > 0 && shelved >= total) return arrived;
-  if (status === 'Received') return arrived;
+  if (status === 'Received') {
+    const onTruck = (n ? n.on_truck : raw.loaded_buckets) || 0;
+    if (!raw.dispatched_at && onTruck + transit === 0) return { label: 'Closed — never left', color: '#737373' };
+    // Still on the truck or on the road: not arrived yet, whatever arrived_at says.
+    if (loaded + transit > 0) return { label: 'Arriving', color: STAGE_COLOR.transit };
+    if (shelved > 0 || raw.arrived_at) return arrived;
+    return { label: 'Ended', color: '#737373' };
+  }
   if (transit + shelved > 0 && (transit + shelved >= total || status === 'Dispatched')) return inTransit;
   if (status === 'Dispatched') return inTransit;
-  if ((bs?.loaded || 0) > 0 || transit > 0 || rawHasLoads(raw)) return { label: 'Loading to truck', color: STAGE_COLOR.loading };
+  if (loaded > 0 || transit > 0 || rawHasLoads(raw)) return { label: 'Loading to truck', color: STAGE_COLOR.loading };
   if (stops.some((st) => st.stage.loaded > 0)) return { label: 'On trolley (Staging)', color: STAGE_COLOR.trolley };
   if (status === 'Draft') return { label: 'Planned', color: '#737373' };
   if (status === 'Requested') return { label: 'Truck requested', color: '#B45309' };
@@ -328,9 +348,19 @@ function orderFarms(raw: RawTrip): OrderFarm[] {
   const out: OrderFarm[] = [];
   for (const o of raw.orders) {
     const key = `${o.order_pick_list}|${o.farm || ''}`;
-    if (!o.order_pick_list || seen.has(key)) continue;
+    if (!o.order_pick_list) continue;
+    if (seen.has(key)) {
+      const prev = out.find((p) => p.opl === o.order_pick_list && p.farm === (o.farm || ''));
+      if (prev && o.riding) prev.riding = Math.max(prev.riding || 0, o.riding);
+      continue;
+    }
     seen.add(key);
-    out.push({ opl: o.order_pick_list, orderName: o.order_name || o.order_pick_list, farm: o.farm || '' });
+    out.push({
+      opl: o.order_pick_list,
+      orderName: o.order_name || o.order_pick_list,
+      farm: o.farm || '',
+      ...(o.riding ? { riding: o.riding } : {}),
+    });
   }
   return out;
 }
@@ -355,13 +385,14 @@ export function buildTrip(
   const active = ACTIVE_STATUSES.includes(status);
   const hasLoads = rawHasLoads(raw);
   const earlier = !!raw.trip_date && raw.trip_date < today;
-  const cap = raw.capacity_buckets || 0;
-  const fillPct = cap > 0 ? Math.max(0, Math.min(100, Math.round((raw.total_buckets / cap) * 100))) : 0;
+  const n = tripNumbers(raw);
+  const cap = (n?.capacity ?? raw.capacity_buckets) || 0;
   const matches = scheduleMatches(raw, scheduleOrders);
   const stops = buildStops(raw);
   const vehicle = raw.vehicle || 'Unassigned';
   const tripNo = raw.run || 0;
-  const total = Math.max(raw.total_buckets || 0, stops.reduce((n, st) => n + st.buckets, 0));
+  const total = n?.buckets ?? Math.max(raw.total_buckets || 0, stops.reduce((sum, st) => sum + st.buckets, 0));
+  const fillPct = cap > 0 ? Math.max(0, Math.min(100, Math.round(((n?.buckets ?? raw.total_buckets) / cap) * 100))) : 0;
   return {
     name: raw.name,
     sequence,
@@ -374,14 +405,14 @@ export function buildTrip(
       status === 'Draft' || status === 'Requested' ? '' : (raw.released_at || raw.dispatched_at || '').slice(0, 19),
     loadPct: cap > 0 ? Math.round((total / cap) * 100) : 0,
     freeBuckets: cap - total,
-    loadedBuckets: raw.loaded_buckets || 0,
-    arrivedBuckets: raw.bucket_status?.shelved ?? raw.shelved_buckets ?? 0,
+    loadedBuckets: (n?.on_truck ?? raw.loaded_buckets) || 0,
+    arrivedBuckets: (n?.shelved ?? raw.bucket_status?.shelved ?? raw.shelved_buckets) || 0,
     farmLoads: stops.map((st) => ({ farm: st.farm, buckets: st.buckets })),
     state: tripState(raw, stops, hub),
     orderFarms: orderFarms(raw),
     status: status as TripStatus,
     capacityBuckets: cap,
-    totalBuckets: raw.total_buckets || 0,
+    totalBuckets: (n?.buckets ?? raw.total_buckets) || 0,
     totalStems: raw.total_stems || 0,
     fillPct,
     stops,
@@ -389,7 +420,7 @@ export function buildTrip(
     scheduleContext: buildScheduleContext(matches),
     dispatchedAt: raw.dispatched_at || '',
     receivedAt: raw.received_at || '',
-    turnaround: turnaroundLabel(raw.dispatched_at, raw.received_at),
+    turnaround: turnaroundLabel(raw.dispatched_at || '', raw.received_at || ''),
     editable: active && !earlier && !raw.stale && !hasLoads,
     tripDate: raw.trip_date || '',
     notes: raw.notes || '',
@@ -529,6 +560,8 @@ export type TripBucket = {
   length: string;
   stems: number;
   orderName: string;
+  /** Other orders on the trip this shared bucket also serves. */
+  ridingOrders: string[];
   farm: string;
   stage: BucketStage | null;
 };
@@ -552,17 +585,33 @@ export function tripBuckets(
     ? all.filter(({ b }) => b.trip === trip.name || (!b.trip && collecting && !Number(b.transit) && !Number(b.shelved)))
     : all.filter(({ b }) => !b.trip && !Number(b.transit) && !Number(b.shelved) && !Number(b.not_found));
   if (trip && !all.some(({ b }) => b.trip === trip.name) && !collecting) mine = all;
-  return mine.map(({ pair, b, key }) => ({
-    key,
-    bucket: (b.bucket || '').toUpperCase() || '—',
-    variety: b.variety || '',
-    varietyColor: b.variety_color || '',
-    length: b.length || '',
-    stems: Math.round(Number(b.stems) || 0),
-    orderName: pair.orderName,
-    farm: b.farm || pair.farm,
-    stage: bucketStage(b),
-  }));
+  // A bucket several orders share is listed once, on its lead order (the one not riding).
+  const byId = new Map<string, (typeof mine)[number][]>();
+  const order: string[] = [];
+  mine.forEach((m, i) => {
+    const id = (m.b.bucket || '').toUpperCase() || `#${i}`;
+    if (!byId.has(id)) { byId.set(id, []); order.push(id); }
+    byId.get(id)!.push(m);
+  });
+  return order.map((id) => {
+    const hits = byId.get(id)!;
+    const lead = hits.find((m) => !m.pair.riding) ?? hits[0];
+    const { pair, b, key } = lead;
+    const ridingOrders = [...new Set(hits.filter((m) => m !== lead).map((m) => m.pair.orderName))]
+      .filter((o) => o !== pair.orderName);
+    return {
+      key,
+      bucket: (b.bucket || '').toUpperCase() || '—',
+      variety: b.variety || '',
+      varietyColor: b.variety_color || '',
+      length: b.length || '',
+      stems: Math.round(Number(b.stems) || 0),
+      orderName: pair.orderName,
+      ridingOrders,
+      farm: b.farm || pair.farm,
+      stage: bucketStage(b),
+    };
+  });
 }
 
 /** Per variety (alphabetical), each variety's buckets by stem length then order. */
@@ -624,8 +673,8 @@ export function buildRoutes(
   day: string = today,
 ): Route[] {
   const trips = data.trips.filter((t) => isShown(t, today, day));
-  // The feed's routes are always today's.
-  const routes = day === today ? data.routes : [];
+  // Routes dated for the day; undated ones are today's.
+  const routes = (data.routes || []).filter((r) => (r.route_date ? r.route_date === day : day === today));
   const tripByVehicle = new Map<string, RawTrip>();
   for (const t of trips) {
     if (t.vehicle && !tripByVehicle.has(t.vehicle)) tripByVehicle.set(t.vehicle, t);
@@ -641,6 +690,14 @@ export function buildRoutes(
       const raw = routes.find((r) => r.vehicle === vehicle) || null;
       const trip = tripByVehicle.get(vehicle) || null;
       const { hub, runs } = raw ? routeRuns(raw) : { hub: '', runs: [] };
+      // The server's runs of this route, each with the trip driving it.
+      const vRuns = raw
+        ? ((data.vehicles || []).find((v) => v.name === vehicle)?.runs || []).filter((r) => r.route === raw.name)
+        : [];
+      const runTrips = runs.map((_run, i) => {
+        const r = vRuns.find((x) => x.run === i + 1);
+        return r?.trip ? { name: r.trip, status: (r.trip_status || 'Draft') as TripStatus } : null;
+      });
       return {
         vehicle,
         hub,
@@ -648,11 +705,15 @@ export function buildRoutes(
         totalKm: raw ? raw.total_km : 0,
         hasRoute: !!raw,
         trip: trip ? { name: trip.name, status: (trip.status || 'Draft') as TripStatus } : null,
+        runTrips,
+        runsKnown: vRuns.length > 0,
       };
     });
 }
 
-function unwrapAction(raw: RawTripActionResponse | undefined): { status?: string; message?: string } {
+type ActionResult = { status?: string; message?: string; already?: number; trip_status?: string };
+
+function unwrapAction(raw: RawTripActionResponse | undefined): ActionResult {
   const m = raw?.message;
   if (!m) return {};
   if (typeof m === 'string') {
@@ -702,12 +763,24 @@ export async function moveTrip(
       set({ actioning: { ...get().actioning, [name]: false } });
       return { kind: 'error', message: result.message || 'Action failed.' };
     }
+    if (result.already) {
+      // The trip was already past this step: put it where the server says it is.
+      const status = (result.trip_status || newStatus) as TripStatus;
+      const g = get().groups;
+      const cur = (Object.keys(g) as TripGroup[]).find((k) => g[k].some((t) => t.name === name));
+      const t = cur ? g[cur].find((x) => x.name === name) : undefined;
+      if (cur && t) {
+        const rest = { ...g, [cur]: g[cur].filter((x) => x.name !== name) };
+        const dest = groupForStatus(status);
+        set({ groups: { ...rest, [dest]: [...rest[dest], { ...t, status }] } });
+      }
+    }
     set({ actioning: { ...get().actioning, [name]: false } });
     // The optimistic move above doesn't know the server-set dispatched_at/received_at
     // timestamp yet (needed for turnaround time) — refresh in the background to pick
     // it up. Not awaited: the success outcome shouldn't wait on this round-trip.
     get().load();
-    return { kind: 'success', message: successMessage };
+    return { kind: 'success', message: (result.already && result.message) || successMessage };
   } catch (err) {
     await get().load();
     set({ actioning: { ...get().actioning, [name]: false } });

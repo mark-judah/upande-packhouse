@@ -352,7 +352,8 @@ function TruckSummary({ data, vehicle }: { data: LoadingData; vehicle: string })
   // To load = staged + loaded: what is going on the truck; planned = the orders' boxes.
   const allocated = data.totals.totalBoxesAllocated;
   const plannedBoxes = data.totals.totalBoxesPlanned;
-  const progress = allocated > 0 ? Math.min(1, loaded / allocated) : 0;
+  const target = allocated || plannedBoxes;
+  const progress = target > 0 ? Math.min(1, loaded / target) : 0;
 
   return (
     <View style={s.summary}>
@@ -361,7 +362,7 @@ function TruckSummary({ data, vehicle }: { data: LoadingData; vehicle: string })
         <View style={{ flex: 1 }}>
           <Text style={s.summaryTitle}>{vehicle}  •  {data.deliveryDate || '—'}</Text>
           <Text style={s.summarySub}>
-            {stops} drop-off{stops === 1 ? '' : 's'}  •  {plannedBoxes} box{plannedBoxes === 1 ? '' : 'es'} planned  •  {allocated} staged  •  {loaded}/{allocated} loaded
+            {stops} drop-off{stops === 1 ? '' : 's'}  •  {plannedBoxes} box{plannedBoxes === 1 ? '' : 'es'} planned  •  {allocated} staged  •  {loaded}/{target} loaded
           </Text>
         </View>
       </View>
@@ -388,6 +389,7 @@ function DropOff({
 }) {
   const summary = summaryForDeliveryPoint(data, deliveryPoint);
   const done = summary.isFullyLoaded;
+  const stopTarget = summary.totalAllocated || summary.totalBoxes;
   const customers = useMemo(
     () => customersAtDeliveryPoint(data, deliveryPoint),
     [data, deliveryPoint],
@@ -408,14 +410,16 @@ function DropOff({
             {deliveryPoint || '—'}
           </Text>
           <Text style={s.stopMeta}>
-            {summary.customerCount} customer{summary.customerCount === 1 ? '' : 's'}  •  {summary.totalBoxes} boxes
+            {summary.customerCount} customer{summary.customerCount === 1 ? '' : 's'}  •  {summary.totalBoxes} box{summary.totalBoxes === 1 ? '' : 'es'}
           </Text>
         </View>
-        <View style={[s.badge, done ? s.badgeDone : s.badgePending]}>
-          <Text style={[s.badgeText, done && s.badgeTextDone]}>
-            {done ? 'DONE' : `${summary.totalLoaded}/${summary.totalAllocated}`}
-          </Text>
-        </View>
+        {done || stopTarget > 0 ? (
+          <View style={[s.badge, done ? s.badgeDone : s.badgePending]}>
+            <Text style={[s.badgeText, done && s.badgeTextDone]}>
+              {done ? 'DONE' : `${summary.totalLoaded}/${stopTarget}`}
+            </Text>
+          </View>
+        ) : null}
         <MaterialCommunityIcons
           name={expanded ? 'chevron-up' : 'chevron-down'}
           size={20}
@@ -438,12 +442,26 @@ function DropOff({
   );
 }
 
+/** Planned boxes, counted once per order pick list (rows of one OPL each carry its total). */
+function plannedBoxes(items: LoadingPlanItem[]): number {
+  const seen = new Map<string, number>();
+  let rest = 0;
+  for (const it of items) {
+    if (it.orders.length === 0) rest += it.boxesPlanned;
+    for (const o of it.orders) if (!seen.has(o.orderPickList)) seen.set(o.orderPickList, o.boxesPlanned);
+  }
+  let n = rest;
+  for (const v of seen.values()) n += v;
+  return n;
+}
+
 function CustomerBlock({ customer, items }: { customer: string; items: LoadingPlanItem[] }) {
   // Dedupe by Sales Order, not a raw per-row sum — a customer can have
   // several rows at one stop (one per box type / a position split) that
   // all carry the same underlying order(s).
   const { allocated: totalAllocated, loaded: totalLoaded } = sumOrderTotals(items);
   const done = totalAllocated > 0 && totalLoaded >= totalAllocated;
+  const custTarget = totalAllocated || plannedBoxes(items);
 
   return (
     <View style={s.custBlock}>
@@ -458,12 +476,13 @@ function CustomerBlock({ customer, items }: { customer: string; items: LoadingPl
         </Text>
         {done ? (
           <MaterialCommunityIcons name="check-circle" size={16} color="#16a34a" />
-        ) : (
-          <Text style={s.custCount}>{totalLoaded}/{totalAllocated}</Text>
-        )}
+        ) : custTarget > 0 ? (
+          <Text style={s.custCount}>{totalLoaded}/{custTarget}</Text>
+        ) : null}
       </View>
       {items.map((item, i) => {
-        const p = item.boxesAllocated > 0 ? Math.min(1, item.boxesLoaded / item.boxesAllocated) : 0;
+        const target = item.boxesAllocated || item.boxesPlanned;
+        const p = target > 0 ? Math.min(1, item.boxesLoaded / target) : 0;
         const itemDone = isItemFullyLoaded(item);
         // Order name + variety (or mix name, for a mixed box/bunch) behind
         // this row — usually one OPL, but the last row of a stop can absorb
@@ -498,7 +517,7 @@ function CustomerBlock({ customer, items }: { customer: string; items: LoadingPl
               <View style={s.boxTrack}>
                 <View style={[s.boxFill, { width: `${p * 100}%` }, itemDone && s.boxFillDone]} />
               </View>
-              <Text style={s.boxCount}>{item.boxesLoaded}/{item.boxesAllocated}</Text>
+              {target > 0 ? <Text style={s.boxCount}>{item.boxesLoaded}/{target}</Text> : null}
             </View>
             {orderLines.length > 0 ? (
               <Text style={s.boxOrderName} numberOfLines={1}>{orderLines.join(', ')}</Text>
