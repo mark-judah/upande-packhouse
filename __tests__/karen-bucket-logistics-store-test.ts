@@ -303,7 +303,10 @@ describe('buildRoutes', () => {
     });
     const routes = buildRoutes(data);
     expect(routes).toEqual([
-      { vehicle: 'KAA 999Z', hub: '', runs: [], totalKm: 0, hasRoute: false, trip: { name: 'TRIP-1', status: 'Draft' } },
+      {
+        vehicle: 'KAA 999Z', hub: '', runs: [], totalKm: 0, hasRoute: false,
+        trip: { name: 'TRIP-1', status: 'Draft' }, runTrips: [], runsKnown: false,
+      },
     ]);
   });
 
@@ -451,6 +454,49 @@ describe('day filter', () => {
   });
 });
 
+describe('routes for the selected day', () => {
+  it("labels each run with the trip the server says drives it", () => {
+    // KDG 076V on 2026-10-18: runs 1 and 2 driven, run 3 had no trip.
+    const leg = (from_farm: string, to_farm: string) => ({ leg: '', from_farm, to_farm, distance_km: 1 });
+    const name = 'BLR-2026-10-18-KDG 076V';
+    const feed = fixture({
+      generated_at: '2026-10-19 06:00:00',
+      routes: [{
+        name, vehicle: 'KDG 076V', route_date: '2026-10-18', total_km: 22.16, farms: [],
+        legs: [leg('Kapkolia', 'Torongo'), leg('Torongo', 'Kapkolia'), leg('Kapkolia', 'Torongo'), leg('Torongo', 'Kapkolia'), leg('Kapkolia', 'Chepsito'), leg('Chepsito', 'Kapkolia')],
+      }],
+      vehicles: [{
+        name: 'KDG 076V', capacity_buckets: 108,
+        runs: [
+          { route: name, run: 1, runs: 3, stops: ['Torongo'], trip: 'BRT-2026-10-18-89054', trip_status: 'Received' },
+          { route: name, run: 2, runs: 3, stops: ['Torongo'], trip: 'BRT-2026-10-18-89056', trip_status: 'Received' },
+          { route: name, run: 3, runs: 3, stops: ['Chepsito'], trip: null, trip_status: null },
+        ],
+      }],
+    });
+    const [r] = buildRoutes(feed, '2026-10-19', '2026-10-18');
+    expect(r.runs).toEqual([['Torongo'], ['Torongo'], ['Chepsito']]);
+    expect(r.runsKnown).toBe(true);
+    expect(r.runTrips).toEqual([
+      { name: 'BRT-2026-10-18-89054', status: 'Received' },
+      { name: 'BRT-2026-10-18-89056', status: 'Received' },
+      null,
+    ]);
+  });
+
+  it("takes a route dated for the selected day, never another day's", () => {
+    const feed = fixture({
+      generated_at: '2026-08-22 06:00:00',
+      routes: [
+        { name: 'R0', vehicle: 'V0', route_date: '2026-08-21', total_km: 5, legs: [], farms: [] },
+        { name: 'R1', vehicle: 'V1', route_date: '2026-08-22', total_km: 5, legs: [], farms: [] },
+      ],
+    });
+    expect(buildRoutes(feed, '2026-08-22', '2026-08-21').map((r) => [r.vehicle, r.hasRoute])).toEqual([['V0', true]]);
+    expect(buildRoutes(feed).map((r) => [r.vehicle, r.hasRoute])).toEqual([['V1', true]]);
+  });
+});
+
 describe('store actions', () => {
   const TODAY = '2026-08-22';
   let fetchSpy: jest.SpyInstance;
@@ -515,6 +561,32 @@ describe('store actions', () => {
     const st = useKarenBucketLogisticsStore.getState();
     expect(st.error).toBeNull();
     expect(st.groups.requests.map((t) => t.name)).toEqual(['T1']);
+  });
+});
+
+describe('already-done trip actions', () => {
+  const TODAY = '2026-10-19';
+  beforeEach(() => useKarenBucketLogisticsStore.getState().reset());
+  afterEach(() => jest.restoreAllMocks());
+
+  it("shows the server's message and files the trip under its real status", async () => {
+    const fetchSpy = jest.spyOn(karenBucketLogisticsApi, 'fetch');
+    const feed = fixture({
+      generated_at: `${TODAY} 06:00:00`,
+      trips: [rawTrip({ name: 'BRT-2026-10-18-89059', vehicle: 'KTCB 443K', status: 'Scheduled', trip_date: TODAY, loaded_buckets: 4 })],
+    });
+    fetchSpy.mockResolvedValueOnce(feed);
+    await useKarenBucketLogisticsStore.getState().load();
+    // The refresh after the action never resolves, so the groups show what moveTrip left.
+    fetchSpy.mockReturnValue(new Promise(() => {}) as never);
+    jest.spyOn(karenBucketLogisticsApi, 'dispatch').mockResolvedValueOnce({
+      message: { status: 'success', already: 1, trip_status: 'Received', message: 'Already received.', name: 'BRT-2026-10-18-89059' },
+    });
+    const out = await useKarenBucketLogisticsStore.getState().dispatch('BRT-2026-10-18-89059');
+    expect(out).toEqual({ kind: 'success', message: 'Already received.' });
+    const g = useKarenBucketLogisticsStore.getState().groups;
+    expect(g.on_the_road).toEqual([]);
+    expect(g.back.map((t) => [t.name, t.status])).toEqual([['BRT-2026-10-18-89059', 'Received']]);
   });
 });
 
@@ -604,6 +676,46 @@ describe('trip naming, load and state', () => {
     expect(st({ status: 'Draft' }).label).toBe('Planned');
   });
 
+  it('closes a trip that ended without leaving, and arrives only once buckets did', () => {
+    const st = (over: Partial<RawTrip>) =>
+      buildTrip(rawTrip({ name: 'T', vehicle: 'V', status: 'Received', trip_date: TODAY, ...over }), [], 1, TODAY, 'Hub X').state.label;
+    expect(st({ loaded_buckets: 0, received_at: `${TODAY} 00:01:00` })).toBe('Closed — never left');
+    expect(st({ dispatched_at: `${TODAY} 08:00:00`, received_at: `${TODAY} 10:00:00` })).toBe('Ended');
+    expect(st({ dispatched_at: `${TODAY} 08:00:00`, arrived_at: `${TODAY} 09:30:00` })).toBe('Arrived at Hub X');
+    expect(st({ numbers: { total: 6, shelved: 2, on_truck: 6 } })).toBe('Arrived at Hub X');
+  });
+
+  it('reads a received trip with buckets still on the road as arriving, not arrived', () => {
+    // BRT-2026-10-18-89058 right after End Trip: arrived_at set, its 39 buckets still in transit.
+    const st = (over: Partial<RawTrip>) =>
+      buildTrip(rawTrip({ name: 'BRT-2026-10-18-89058', vehicle: 'KAS 866Q', status: 'Received', trip_date: TODAY, ...over }), [], 1, TODAY, 'Kapkolia').state.label;
+    const base = {
+      dispatched_at: `${TODAY} 21:52:31`, received_at: `${TODAY} 21:52:45`, arrived_at: `${TODAY} 21:52:45`,
+      loaded_buckets: 39, shelved_buckets: 0,
+    };
+    expect(st({ ...base, numbers: { buckets: 39, total: 39, loaded: 0, transit: 39, shelved: 0, on_truck: 39 } })).toBe('Arriving');
+    expect(st({ ...base, numbers: { buckets: 39, total: 39, loaded: 0, transit: 0, shelved: 39, on_truck: 39 } })).toBe('Arrived at Kapkolia');
+    expect(st({ ...base, numbers: { buckets: 39, total: 39, loaded: 0, transit: 1, shelved: 38, on_truck: 39 } })).toBe('Arriving');
+    expect(st({ dispatched_at: null, received_at: `${TODAY} 00:01:00`, numbers: { buckets: 108, total: 0, on_truck: 0 } })).toBe('Closed — never left');
+  });
+
+  it("counts the card from the server's trip numbers when it sends them", () => {
+    const trip = buildTrip(
+      rawTrip({
+        name: 'T', vehicle: 'V', status: 'Dispatched', trip_date: TODAY, capacity_buckets: 10, total_buckets: 3,
+        loaded_buckets: 1, shelved_buckets: 0,
+        numbers: { capacity: 20, buckets: 15, on_truck: 12, shelved: 4, transit: 8, total: 15, free: 5 },
+      }),
+      [], 1, TODAY,
+    );
+    expect(trip.capacityBuckets).toBe(20);
+    expect(trip.totalBuckets).toBe(15);
+    expect(trip.freeBuckets).toBe(5);
+    expect(trip.loadPct).toBe(75);
+    expect(trip.loadedBuckets).toBe(12);
+    expect(trip.arrivedBuckets).toBe(4);
+  });
+
   it('shows Created and, once Scheduled, when it was', () => {
     const planned = buildTrip(rawTrip({ name: 'T', vehicle: 'V', status: 'Draft', scheduled_at: `${TODAY} 03:14:41.09` }), [], 1, TODAY);
     expect(planned.createdAt).toBe(`${TODAY} 03:14:41`);
@@ -661,6 +773,28 @@ describe('trip buckets', () => {
     expect(tripBuckets(details, { name: 'T1', status: 'Scheduled' }).map((x) => x.bucket)).toEqual(['A', 'C']);
     expect(tripBuckets(details, { name: 'T1', status: 'Dispatched' }).map((x) => x.bucket)).toEqual(['A']);
     expect(tripBuckets(details, null).map((x) => x.bucket)).toEqual(['C']);
+  });
+
+  it('lists a bucket two orders share once, on its lead order', () => {
+    // BRT-2026-10-15-89042: 67ZUXE serves TEST 1610 #06 and rides for FRAN-01893; the card says 18.
+    const T = { name: 'BRT-2026-10-15-89042', status: 'Dispatched' as const };
+    const lead = { opl: 'OPL-2026-00063', orderName: 'TEST 1610 #06', farm: 'Chepsito' };
+    const rider = { opl: 'OPL-2026-02300', orderName: 'FRAN-01893', farm: 'Chepsito', riding: 1 };
+    const own = Array.from({ length: 17 }, (_, i) => b({ bucket: `b${i}`, trip: T.name, on_truck: 1 }));
+    const shared = b({ bucket: '67zuxe', trip: T.name, on_truck: 1 });
+    const list = tripBuckets(
+      [
+        { pair: rider, buckets: [shared] },
+        { pair: { opl: 'O1', orderName: 'ORD-1', farm: 'Chepsito' }, buckets: own },
+        { pair: lead, buckets: [shared] },
+      ],
+      T,
+    );
+    expect(list).toHaveLength(18);
+    const one = list.filter((x) => x.bucket === '67ZUXE');
+    expect(one).toHaveLength(1);
+    expect(one[0].orderName).toBe('TEST 1610 #06');
+    expect(one[0].ridingOrders).toEqual(['FRAN-01893']);
   });
 
   it('groups per variety with its colour, by stem length then order', () => {

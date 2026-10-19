@@ -76,7 +76,7 @@ export function Dropdown({
             name={iconName}
             size={18}
             color={COLORS.textMuted}
-            style={{ marginLeft: spacing.md }}
+            style={{ marginLeft: spacing.md, marginRight: spacing.sm }}
           />
         ) : null}
         <Text

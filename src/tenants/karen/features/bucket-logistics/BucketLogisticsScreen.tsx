@@ -5,6 +5,7 @@ import { useFocusEffect } from 'expo-router';
 import { Screen } from '@/src/core/ui/Screen';
 import { Segmented } from '@/src/core/ui/Segmented';
 import { DateSelector } from '@/src/core/ui/DateSelector';
+import { formatDayLabel } from '@/src/core/date';
 import { useToast } from '@/src/core/ui/Toast';
 import { showDialog } from '@/src/core/ui/DialogHost';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
@@ -39,6 +40,12 @@ function isHistory(t: Trip, day: string): boolean {
   return t.tripDate === day || t.dispatchedAt.startsWith(day) || t.receivedAt.startsWith(day);
 }
 
+/** "today" / "yesterday" / "Sat 17 Oct", for use mid-sentence. */
+function dayPhrase(day: string): string {
+  const label = formatDayLabel(day);
+  return /^(Today|Yesterday|Tomorrow)$/.test(label) ? label.toLowerCase() : label;
+}
+
 function farmTotals(rows: NotScheduledOrder[]): { farm: string; buckets: number }[] {
   const m = new Map<string, number>();
   for (const r of rows) m.set(r.farm, (m.get(r.farm) || 0) + r.buckets);
@@ -52,6 +59,7 @@ export function KarenBucketLogisticsScreen() {
     load, setDate, dispatch, release, reject, receive, saveEdit, reset,
   } = useKarenBucketLogisticsStore();
   const day = date ?? today;
+  const dayLabel = dayPhrase(day);
   const [editing, setEditing] = useState<Trip | null>(null);
   const [rejecting, setRejecting] = useState<Trip | null>(null);
   const [listing, setListing] = useState<BucketListTarget | null>(null);
@@ -189,9 +197,9 @@ export function KarenBucketLogisticsScreen() {
 
       {tab === 'routes' ? (
         !loading && routes.length === 0 ? (
-          <Text style={s.empty}>No trucks planned for today yet.</Text>
+          <Text style={s.empty}>No trucks planned for {dayLabel}.</Text>
         ) : (
-          routes.map((route) => <RouteCard key={route.vehicle} route={route} />)
+          routes.map((route) => <RouteCard key={route.vehicle} route={route} dayLabel={dayLabel} />)
         )
       ) : tab === 'requests' ? (
         <>
@@ -210,7 +218,7 @@ export function KarenBucketLogisticsScreen() {
         <>
           {truckChips}
           {!loading && totalTrips === 0 && waitingN === 0 ? (
-            <Text style={s.empty}>No bucket request trips yet today.</Text>
+            <Text style={s.empty}>No bucket request trips {day === today ? 'yet today' : `for ${dayLabel}`}.</Text>
           ) : (
             <>
               <View style={s.section}>

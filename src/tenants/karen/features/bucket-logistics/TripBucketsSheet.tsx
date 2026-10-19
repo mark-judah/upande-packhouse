@@ -73,7 +73,7 @@ function BucketList({ target, hub, onClose }: Props & { target: BucketListTarget
                 >
                   <View style={s.rowMain}>
                     <Text style={s.bucket} numberOfLines={1}>{b.bucket} ({b.stems})</Text>
-                    <Text style={s.meta} numberOfLines={1}>{b.length}({b.orderName})</Text>
+                    <Text style={s.meta} numberOfLines={1}>{b.length}({[b.orderName, ...b.ridingOrders].join(' + ')})</Text>
                   </View>
                   <StatePill label={stage.label} color={stage.color} small />
                 </View>
