@@ -2,6 +2,21 @@ import { create } from 'zustand';
 import { authRepository } from './repository';
 import { storage, StorageKeys } from '@/src/core/storage';
 import * as Biometric from '@/src/core/biometric';
+import { reportInstall } from '@/src/core/version/install-register';
+import { setLoginServer } from './server-change';
+import { instanceKey, knownInstances } from './known-instances';
+import { consumeInstanceSwitched, restartForInstance } from './restart';
+
+/** How long a switching sign-in waits for its register report before restarting. */
+const LOGIN_REPORT_WAIT_MS = 3000;
+/** How long to wait for a requested reload to take this JS down. */
+const RELOAD_GRACE_MS = 5000;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([p, sleep(ms).then(() => null)]);
+}
 
 type AuthState = {
   status: 'idle' | 'loading' | 'success' | 'error';
@@ -28,9 +43,13 @@ type AuthState = {
   >;
   setBiometricEnabled: (on: boolean) => Promise<void>;
   unlock: () => void;
-  /** Soft logout — clear the in-memory session view but keep cookie +
-   *  biometric flag so the user can sign back in with biometrics. */
+  /** Soft logout of the live instance only — its session cookie goes, the
+   *  password + biometric flag stay so the user can sign back in with
+   *  biometrics. */
   logout: () => Promise<void>;
+  /** Sign out and move the login screen to another server. One server at a
+   *  time: nothing of this one is kept for it. */
+  changeServer: (url: string) => Promise<void>;
   /** Hard logout — wipe everything. Used on 401 / "Forget device". */
   forgetDevice: () => Promise<void>;
   hasRole: (role: string) => boolean;
@@ -61,8 +80,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       storage.get(StorageKeys.instanceUrl),
       storage.get(StorageKeys.biometricEnabled),
     ]);
+    const justSwitched = await consumeInstanceSwitched(instanceUrl);
     const biometricEnabled = bioFlag === '1';
-    const biometricLocked = hasSession && biometricEnabled && Biometric.isModuleAvailable();
+    // The start right after a sign-in to another server (this one) was signed in a moment ago.
+    const biometricLocked =
+      hasSession && biometricEnabled && !justSwitched && Biometric.isModuleAvailable();
     set({
       hasSession,
       hydrated: true,
@@ -79,6 +101,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ status: 'loading', error: null });
     const result = await authRepository.login(email, password, url);
     if (result.ok) {
+      if (result.switched) {
+        // Signed in to a different instance than the one live before: start
+        // the app over before anything routes, so no screen mounts against the
+        // new server with the previous one's stores. The sign-in report goes
+        // first (briefly) so the register sees this login.
+        await withTimeout(reportInstall({ reason: 'login', user: email }), LOGIN_REPORT_WAIT_MS);
+        if (await restartForInstance(result.instanceUrl)) {
+          // The reload tears this JS down; carry on in place only if it never comes.
+          await sleep(RELOAD_GRACE_MS);
+          // Still here: the restart never came, so its skip-lock flag goes too.
+          await storage.remove(StorageKeys.instanceSwitched).catch(() => {});
+        }
+      } else {
+        reportInstall({ reason: 'login', user: email });
+      }
       set({
         status: 'success',
         fullName: result.fullName,
@@ -130,12 +167,33 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   unlock: () => set({ biometricLocked: false }),
 
   logout: async () => {
+    // The server's session goes; the password stays for biometric sign-in.
+    // Roles go too: the next person to sign in may not hold them.
+    await Promise.all([storage.remove(StorageKeys.cookie), storage.remove(StorageKeys.userRoles)]);
     set({
       status: 'idle',
       error: null,
       hasSession: false,
+      roles: [],
       biometricLocked: false,
     });
+  },
+
+  changeServer: async (url) => {
+    const known = (await knownInstances.list()).find((k) => instanceKey(k.url) === instanceKey(url));
+    await setLoginServer(known?.url ?? url, known?.email ?? get().email);
+    set({
+      status: 'idle',
+      error: null,
+      fullName: null,
+      instanceUrl: null,
+      hasSession: false,
+      roles: [],
+      biometricLocked: false,
+    });
+    // Every store and open request belonged to the old server: start over, at
+    // login. Signed out, so the biometric lock is never skipped for it.
+    await restartForInstance();
   },
 
   forgetDevice: async () => {

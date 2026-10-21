@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import * as Updates from 'expo-updates';
 import { Screen } from '@/src/core/ui/Screen';
 import { Card } from '@/src/core/ui/Card';
@@ -14,6 +15,7 @@ import { compareVersions } from '@/src/core/updates/releases';
 import { APP_VERSION, getServerVersions } from '@/src/core/version';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { displayName, needsRealName } from '@/src/core/auth/roles-api';
+import { ServerDialog } from '@/src/core/auth/ServerSection';
 
 export default function SettingsScreen() {
   const fullName = useAuthStore((s) => s.fullName);
@@ -25,7 +27,9 @@ export default function SettingsScreen() {
   const setBiometricEnabled = useAuthStore((s) => s.setBiometricEnabled);
   const logout = useAuthStore((s) => s.logout);
   const forgetDevice = useAuthStore((s) => s.forgetDevice);
+  const isSystemManager = useAuthStore((s) => s.roles.includes('System Manager'));
   const { showSuccess, showError } = useToast();
+  const [serverDialog, setServerDialog] = useState(false);
 
   const [moduleReady] = useState(() => Biometric.isModuleAvailable());
   const [hardwareReady, setHardwareReady] = useState(false);
@@ -113,11 +117,11 @@ export default function SettingsScreen() {
     <Screen title="Settings">
       <Card>
         <View style={s.avatarRow}>
-          <View style={s.avatar}>
+          <Pressable style={s.avatar} onLongPress={() => setServerDialog(true)} delayLongPress={2000}>
             <Text style={s.avatarInitials}>
               {(name || '?').slice(0, 1).toUpperCase()}
             </Text>
-          </View>
+          </Pressable>
           <View style={{ flex: 1 }}>
             <Text style={s.userName}>{name || 'Signed in'}</Text>
             {email ? <Text style={s.userEmail}>{email}</Text> : null}
@@ -159,6 +163,20 @@ export default function SettingsScreen() {
         <ApkUpdateSection />
       </Card>
 
+      {isSystemManager ? (
+        <Card>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push('/devices' as never)}
+            style={({ pressed }) => [s.row, pressed && { opacity: 0.7 }]}
+          >
+            <Ionicons name="phone-portrait-outline" size={20} color={COLORS.textSecondary} />
+            <Text style={[s.rowLabel, { flex: 1 }]}>Devices</Text>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+          </Pressable>
+        </Card>
+      ) : null}
+
       <Card title="Session">
         <Button label="Sign out" variant="outline" onPress={onSignOut} />
         <View style={{ height: spacing.sm }} />
@@ -170,6 +188,7 @@ export default function SettingsScreen() {
           iconLeft="trash-outline"
         />
       </Card>
+      <ServerDialog visible={serverDialog} onClose={() => setServerDialog(false)} />
     </Screen>
   );
 }

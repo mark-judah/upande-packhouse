@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -15,6 +16,7 @@ import { DrawerItemsProvider } from '@/src/core/ui/drawer-items-context';
 import { useAuthStore } from '@/src/core/auth/store';
 import { useNetworkStore } from '@/src/core/network/store';
 import { reportVersionIfDue } from '@/src/core/version';
+import { reportInstall } from '@/src/core/version/install-register';
 import { getDrawerFor } from '@/src/composition/drawer-resolver';
 import { UpdateProvider } from '@/src/core/updates/UpdateProvider';
 
@@ -38,6 +40,7 @@ export default function RootLayout() {
   const hasSession = useAuthStore((s) => s.hasSession);
   const hydrated = useAuthStore((s) => s.hydrated);
   const biometricLocked = useAuthStore((s) => s.biometricLocked);
+  const email = useAuthStore((s) => s.email);
   const initNetwork = useNetworkStore((s) => s.init);
 
   const segments = useSegments();
@@ -55,6 +58,16 @@ export default function RootLayout() {
   useEffect(() => {
     if (hydrated && hasSession && !biometricLocked) reportVersionIfDue();
   }, [hydrated, hasSession, biometricLocked]);
+
+  // Device register: once per launch, then (throttled) each return to the foreground.
+  useEffect(() => {
+    if (!hydrated || !hasSession || biometricLocked) return;
+    reportInstall({ reason: 'launch', user: email });
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') reportInstall({ reason: 'foreground', user: email });
+    });
+    return () => sub.remove();
+  }, [hydrated, hasSession, biometricLocked, email]);
 
   // Auth gate: route to login → biometric-lock → home based on state.
   useEffect(() => {
