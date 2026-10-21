@@ -19,6 +19,7 @@ import { storage, StorageKeys } from '@/src/core/storage';
 import { useDrawerItems } from './drawer-items-context';
 import { APP_NAME, APP_VERSION } from '@/src/core/version';
 import type { DrawerItem } from '@/src/core/tenant/types';
+import { ServerDialog } from '@/src/core/auth/ServerSection';
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -76,12 +77,19 @@ export function SideMenu({
     }
   }, [visible, drawerWidth, slide]);
 
-  const closeWithAnim = () => {
+  const closeWithAnim = (afterClose?: () => void) => {
     Animated.timing(slide, { toValue: -drawerWidth, duration: 200, useNativeDriver: true })
-      .start(() => onClose());
+      .start(() => {
+        onClose();
+        afterClose?.();
+      });
   };
 
   const items = useDrawerItems();
+
+  // Outside the drawer's Modal, so it stays open once the drawer has closed.
+  const [serverDialog, setServerDialog] = useState(false);
+  const onAvatarLongPress = () => closeWithAnim(() => setServerDialog(true));
 
   const go = (route: string) => {
     closeWithAnim();
@@ -116,98 +124,101 @@ export function SideMenu({
       .toUpperCase() || '?';
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="none"
-      onRequestClose={closeWithAnim}
-      statusBarTranslucent
-      navigationBarTranslucent
-      hardwareAccelerated
-    >
-      <View style={s.overlay}>
-        <Pressable style={s.backdrop} onPress={closeWithAnim} />
-        <Animated.View
-          style={[
-            s.drawer,
-            { width: drawerWidth, transform: [{ translateX: slide }] },
-          ]}
-        >
-          <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'bottom']}>
-            <ScrollView
-              contentContainerStyle={[s.scroll, { paddingTop: insets.top > 0 ? spacing.md : spacing.lg }]}
-              bounces={false}
-              showsVerticalScrollIndicator={false}
-            >
-              <View style={s.header}>
-                <View style={s.avatar}>
-                  <Text style={s.avatarText}>{initials}</Text>
-                </View>
-                <Text style={s.name} numberOfLines={1}>
-                  {fullName || email || 'User'}
-                </Text>
-                {email ? <Text style={s.email} numberOfLines={1}>{email}</Text> : null}
-                {(tenant || instanceUrl) ? (
-                  <Text style={s.meta} numberOfLines={1}>
-                    {tenant ?? ''}
-                    {tenant && instanceUrl ? ' · ' : ''}
-                    {instanceUrl ? instanceUrl.replace(/^https?:\/\//, '') : ''}
+    <>
+      <Modal
+        visible={visible}
+        transparent
+        animationType="none"
+        onRequestClose={() => closeWithAnim()}
+        statusBarTranslucent
+        navigationBarTranslucent
+        hardwareAccelerated
+      >
+        <View style={s.overlay}>
+          <Pressable style={s.backdrop} onPress={() => closeWithAnim()} />
+          <Animated.View
+            style={[
+              s.drawer,
+              { width: drawerWidth, transform: [{ translateX: slide }] },
+            ]}
+          >
+            <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'bottom']}>
+              <ScrollView
+                contentContainerStyle={[s.scroll, { paddingTop: insets.top > 0 ? spacing.md : spacing.lg }]}
+                bounces={false}
+                showsVerticalScrollIndicator={false}
+              >
+                <View style={s.header}>
+                  <Pressable style={s.avatar} onLongPress={onAvatarLongPress} delayLongPress={2000}>
+                    <Text style={s.avatarText}>{initials}</Text>
+                  </Pressable>
+                  <Text style={s.name} numberOfLines={1}>
+                    {fullName || email || 'User'}
                   </Text>
-                ) : null}
-              </View>
+                  {email ? <Text style={s.email} numberOfLines={1}>{email}</Text> : null}
+                  {(tenant || instanceUrl) ? (
+                    <Text style={s.meta} numberOfLines={1}>
+                      {tenant ?? ''}
+                      {tenant && instanceUrl ? ' · ' : ''}
+                      {instanceUrl ? instanceUrl.replace(/^https?:\/\//, '') : ''}
+                    </Text>
+                  ) : null}
+                </View>
 
-              <View style={s.nav}>
-                {items.length === 0 ? (
-                  <Text style={s.empty}>No screens configured for this tenant.</Text>
-                ) : (
-                  items.map((item) => (
-                    <Pressable
-                      key={item.route}
-                      style={({ pressed }) => [s.navItem, pressed && s.navItemPressed]}
-                      onPress={() => go(item.route)}
-                    >
-                      <Ionicons
-                        name={ROUTE_ICONS[item.route] ?? 'apps-outline'}
-                        size={20}
-                        color={item.comingSoon ? COLORS.textMuted : COLORS.textSecondary}
-                      />
-                      <Text style={[s.navLabel, item.comingSoon && s.navLabelMuted]}>
-                        {item.label}
-                      </Text>
-                      {item.comingSoon ? (
-                        <Text style={s.comingSoonBadge}>Coming soon</Text>
-                      ) : null}
-                    </Pressable>
-                  ))
-                )}
-              </View>
+                <View style={s.nav}>
+                  {items.length === 0 ? (
+                    <Text style={s.empty}>No screens configured for this tenant.</Text>
+                  ) : (
+                    items.map((item) => (
+                      <Pressable
+                        key={item.route}
+                        style={({ pressed }) => [s.navItem, pressed && s.navItemPressed]}
+                        onPress={() => go(item.route)}
+                      >
+                        <Ionicons
+                          name={ROUTE_ICONS[item.route] ?? 'apps-outline'}
+                          size={20}
+                          color={item.comingSoon ? COLORS.textMuted : COLORS.textSecondary}
+                        />
+                        <Text style={[s.navLabel, item.comingSoon && s.navLabelMuted]}>
+                          {item.label}
+                        </Text>
+                        {item.comingSoon ? (
+                          <Text style={s.comingSoonBadge}>Coming soon</Text>
+                        ) : null}
+                      </Pressable>
+                    ))
+                  )}
+                </View>
 
-              <View style={s.footer}>
-                <Pressable style={s.footerRow} onPress={onConfigure} hitSlop={4}>
-                  <View style={[s.badge, { backgroundColor: '#F4F4F5' }]}>
-                    <Ionicons name="hardware-chip-outline" size={15} color={COLORS.text} />
-                  </View>
-                  <Text style={s.footerText}>Configure station</Text>
-                </Pressable>
-                <Pressable style={s.footerRow} onPress={onSettings} hitSlop={4}>
-                  <View style={[s.badge, { backgroundColor: '#EEF2FF' }]}>
-                    <Ionicons name="cog-outline" size={15} color="#6366F1" />
-                  </View>
-                  <Text style={s.footerText}>Settings</Text>
-                </Pressable>
-                <Pressable style={s.footerRow} onPress={onLogout} hitSlop={4}>
-                  <View style={[s.badge, { backgroundColor: '#FEF2F2' }]}>
-                    <Ionicons name="log-out-outline" size={15} color={COLORS.danger} />
-                  </View>
-                  <Text style={[s.footerText, { color: COLORS.danger }]}>Sign Out</Text>
-                </Pressable>
-                <Text style={s.version}>{APP_NAME} v{APP_VERSION}</Text>
-              </View>
-            </ScrollView>
-          </SafeAreaView>
-        </Animated.View>
-      </View>
-    </Modal>
+                <View style={s.footer}>
+                  <Pressable style={s.footerRow} onPress={onConfigure} hitSlop={4}>
+                    <View style={[s.badge, { backgroundColor: '#F4F4F5' }]}>
+                      <Ionicons name="hardware-chip-outline" size={15} color={COLORS.text} />
+                    </View>
+                    <Text style={s.footerText}>Configure station</Text>
+                  </Pressable>
+                  <Pressable style={s.footerRow} onPress={onSettings} hitSlop={4}>
+                    <View style={[s.badge, { backgroundColor: '#EEF2FF' }]}>
+                      <Ionicons name="cog-outline" size={15} color="#6366F1" />
+                    </View>
+                    <Text style={s.footerText}>Settings</Text>
+                  </Pressable>
+                  <Pressable style={s.footerRow} onPress={onLogout} hitSlop={4}>
+                    <View style={[s.badge, { backgroundColor: '#FEF2F2' }]}>
+                      <Ionicons name="log-out-outline" size={15} color={COLORS.danger} />
+                    </View>
+                    <Text style={[s.footerText, { color: COLORS.danger }]}>Sign Out</Text>
+                  </Pressable>
+                  <Text style={s.version}>{APP_NAME} v{APP_VERSION}</Text>
+                </View>
+              </ScrollView>
+            </SafeAreaView>
+          </Animated.View>
+        </View>
+      </Modal>
+      <ServerDialog visible={serverDialog} onClose={() => setServerDialog(false)} />
+    </>
   );
 }
 

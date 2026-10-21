@@ -3,6 +3,7 @@ import { api } from '@/src/core/api/client';
 import { loginRequest, probeBaseUrl } from './api';
 import { fetchCurrentUserRoles } from './roles-api';
 import { knownInstances } from './known-instances';
+import { clearServerData, isOtherServer } from './server-change';
 
 /** The stock /api/method/login response's `full_name` is computed as
  *  `first_name + last_name` server-side (frappe/auth.py), which reads as an
@@ -25,7 +26,8 @@ async function fetchRealFullName(email: string): Promise<string | null> {
 }
 
 export type LoginOutcome =
-  | { ok: true; fullName: string; instanceUrl: string; roles: string[] }
+  /** `switched`: the app was on another server before this login. */
+  | { ok: true; fullName: string; instanceUrl: string; roles: string[]; switched: boolean }
   | { ok: false; error: string };
 
 function extractSidCookie(setCookie: string | null): string | null {
@@ -48,6 +50,9 @@ export const authRepository = {
       const cookie = extractSidCookie(res.setCookie);
       if (!cookie) return { ok: false, error: 'Login succeeded but no session cookie was returned' };
       let fullName = res.body.full_name || email;
+      // Another server's leftovers (station, roles, …) go before this one's are written.
+      const switched = await isOtherServer(fullUrl);
+      if (switched) await clearServerData();
       await Promise.all([
         storage.set(StorageKeys.cookie, cookie),
         storage.set(StorageKeys.instanceUrl, fullUrl),
@@ -77,13 +82,15 @@ export const authRepository = {
 
       // Fetch roles in the background. Failure is non-fatal — login still succeeds.
       let roles: string[] = [];
+      // The previous account's roles never stand in for this one's.
+      await storage.remove(StorageKeys.userRoles).catch(() => {});
       try {
         roles = await fetchCurrentUserRoles();
         await storage.set(StorageKeys.userRoles, JSON.stringify(roles));
       } catch {
         // ignore — UI will treat missing roles as "no special permissions"
       }
-      return { ok: true, fullName, instanceUrl: fullUrl, roles };
+      return { ok: true, fullName, instanceUrl: fullUrl, roles, switched };
     }
 
     if (res.status === 401) {
