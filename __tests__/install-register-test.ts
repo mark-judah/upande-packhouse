@@ -18,6 +18,8 @@ jest.mock('@/src/core/version', () => ({
   },
 }));
 jest.mock('expo-updates', () => ({ runtimeVersion: '101.1' }));
+let mockAndroidId: string | null = null;
+jest.mock('@/src/core/version/device-key', () => ({ androidId: () => mockAndroidId }));
 
 type Register = typeof import('@/src/core/version/install-register');
 
@@ -34,6 +36,7 @@ beforeEach(() => {
   mockApi.mockReset().mockResolvedValue({ message: { tracked: true } });
   mockStore.clear();
   mockVersion = '1.1.15';
+  mockAndroidId = null;
 });
 
 describe('reportInstall', () => {
@@ -77,6 +80,25 @@ describe('reportInstall', () => {
     await reg.reportInstall({ reason: 'foreground', user: 'a@x.com' });
     expect(mockApi).toHaveBeenCalledTimes(1);
     expect(mockApi.mock.calls[0][0].data.reason).toBe('foreground');
+  });
+
+  it('sends the Android ID as the device key', async () => {
+    mockAndroidId = 'a1b2c3d4e5f60718';
+    await load().reportInstall({ reason: 'login', user: 'a@x.com' });
+    expect(mockApi.mock.calls[0][0].data).toHaveProperty('device_key', 'a1b2c3d4e5f60718');
+  });
+
+  it('sends a null device key when there is no Android ID', async () => {
+    await load().reportInstall({ reason: 'login' });
+    expect(mockApi.mock.calls[0][0].data).toHaveProperty('device_key', null);
+  });
+
+  it('remembers the row the server filed the device under', async () => {
+    mockApi.mockResolvedValue({ message: { tracked: true, install_id: 'older-row-id' } });
+    const reg = load();
+    expect(await reg.getRegisteredRowId()).toBeNull();
+    await reg.reportInstall({ reason: 'login', user: 'a@x.com' });
+    expect(await reg.getRegisteredRowId()).toBe('older-row-id');
   });
 
   it('never rejects when the server fails', async () => {

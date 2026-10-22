@@ -3,6 +3,19 @@ import { api } from '@/src/core/api/client';
 /** What the server says about one device's build, against that app's latest. */
 export type InstallStatus = 'current' | 'behind_ota' | 'needs_apk' | 'ahead' | 'dormant' | 'unknown';
 
+/** One account that has used a device, on its own last version. */
+export type InstallUser = {
+  user: string;
+  full_name: string;
+  app_version: string | null;
+  runtime_version: string | null;
+  first_seen: string | null;
+  last_seen: string | null;
+  logins: number;
+  launches: number;
+};
+
+/** One physical device: its latest report and every account that used it. */
 export type InstallRow = {
   install_id: string;
   app: string;
@@ -26,6 +39,11 @@ export type InstallRow = {
   status: InstallStatus;
   /** The server's own words for what to install next; empty when nothing. */
   update_to: string;
+  /** Whether the device sends a hardware key (one row however often its install id changes). */
+  keyed: boolean;
+  /** Last seen first. */
+  users: InstallUser[];
+  user_count: number;
 };
 
 export type InstallsReply = {

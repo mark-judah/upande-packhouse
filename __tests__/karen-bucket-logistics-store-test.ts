@@ -7,11 +7,13 @@ import {
   tripBuckets,
   varietySections,
   groupTrips,
+  minimumLoadLine,
   stageToPills,
+  tripActionOutcome,
   turnaroundLabel,
   useKarenBucketLogisticsStore,
 } from '@/src/tenants/karen/state/karen-bucket-logistics-store';
-import { karenBucketLogisticsApi } from '@/src/tenants/karen/api/karen-bucket-logistics-api';
+import { dispatchPayload, karenBucketLogisticsApi } from '@/src/tenants/karen/api/karen-bucket-logistics-api';
 import type {
   RawBucketDetail,
   RawScheduleOrder,
@@ -811,5 +813,81 @@ describe('trip buckets', () => {
       ['Athena', '', ['A1']],
       ['Pink Ice', '#FF69B4', ['P1', 'P2']],
     ]);
+  });
+});
+
+describe('dispatch below the minimum load', () => {
+  const TODAY = '2026-10-22';
+  const REFUSAL = {
+    status: 'error',
+    reason: 'below_minimum',
+    loaded: 12,
+    capacity: 40,
+    needed: 40,
+    pct: 100,
+    message: 'KTCB 443K has 12 of 40 buckets.',
+  };
+  beforeEach(() => useKarenBucketLogisticsStore.getState().reset());
+  afterEach(() => jest.restoreAllMocks());
+
+  it('maps below_minimum to a prompt with the numbers', () => {
+    const out = tripActionOutcome(REFUSAL, 'Truck dispatched.');
+    expect(out).toEqual({
+      kind: 'below_minimum',
+      message: REFUSAL.message,
+      belowMinimum: { loaded: 12, capacity: 40, needed: 40, pct: 100, message: REFUSAL.message },
+    });
+    if (out.kind !== 'below_minimum') throw new Error('expected below_minimum');
+    expect(minimumLoadLine(out.belowMinimum)).toBe('12 of 40 on the truck — it leaves at 40');
+  });
+
+  it("falls back to the server's message when the numbers are missing", () => {
+    const out = tripActionOutcome({ status: 'error', reason: 'below_minimum', message: 'Too light.' }, 'ok');
+    if (out.kind !== 'below_minimum') throw new Error('expected below_minimum');
+    expect(out.belowMinimum).toEqual({ loaded: 0, capacity: 0, needed: 0, pct: 0, message: 'Too light.' });
+    expect(minimumLoadLine(out.belowMinimum)).toBe('Too light.');
+  });
+
+  it('keeps other refusals as errors and success as success', () => {
+    expect(tripActionOutcome({ status: 'error', message: 'Trip is not planned.' }, 'ok')).toEqual({
+      kind: 'error',
+      message: 'Trip is not planned.',
+    });
+    expect(tripActionOutcome({ status: 'error' }, 'ok')).toEqual({ kind: 'error', message: 'Action failed.' });
+    expect(tripActionOutcome({ status: 'success', below_minimum: 1 }, 'Truck dispatched.')).toEqual({
+      kind: 'success',
+      message: 'Truck dispatched.',
+    });
+  });
+
+  it('sends the reason only when it is non-empty', () => {
+    expect(dispatchPayload('T1')).toEqual({ name: 'T1' });
+    expect(dispatchPayload('T1', '   ')).toEqual({ name: 'T1' });
+    expect(dispatchPayload('T1', ' Rain at the farm ')).toEqual({ name: 'T1', reason: 'Rain at the farm' });
+  });
+
+  it('returns the prompt from the store, then resends with the reason', async () => {
+    const fetchSpy = jest.spyOn(karenBucketLogisticsApi, 'fetch');
+    fetchSpy.mockResolvedValue(
+      fixture({
+        generated_at: `${TODAY} 06:00:00`,
+        trips: [rawTrip({ name: 'T1', vehicle: 'V1', status: 'Draft', trip_date: TODAY, loaded_buckets: 12 })],
+      }),
+    );
+    await useKarenBucketLogisticsStore.getState().load();
+    const api = jest
+      .spyOn(karenBucketLogisticsApi, 'dispatch')
+      .mockResolvedValueOnce({ message: REFUSAL })
+      .mockResolvedValueOnce({ message: { status: 'success', below_minimum: 1 } });
+
+    const first = await useKarenBucketLogisticsStore.getState().dispatch('T1');
+    expect(first.kind).toBe('below_minimum');
+    expect(api).toHaveBeenLastCalledWith('T1', undefined);
+    // Refused: the reload puts the trip back where it was.
+    expect(useKarenBucketLogisticsStore.getState().groups.requests.map((t) => t.name)).toEqual(['T1']);
+
+    const second = await useKarenBucketLogisticsStore.getState().dispatch('T1', 'Rain at the farm');
+    expect(api).toHaveBeenLastCalledWith('T1', 'Rain at the farm');
+    expect(second).toEqual({ kind: 'success', message: 'Truck dispatched.' });
   });
 });

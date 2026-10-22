@@ -224,18 +224,39 @@ export type RawBucketDetail = {
   variety_color?: string;
 };
 
-export type RawTripActionResponse = {
-  message?:
-    | {
-        status?: string;
-        message?: string;
-        name?: string;
-        /** 1 when the trip was already past this step (e.g. "Already received."). */
-        already?: number;
-        trip_status?: string;
-      }
-    | string;
+/** A trip action's reply. dispatchBucketTrip refuses a truck under its minimum load with
+ *  `reason: 'below_minimum'` and the numbers; resending with a non-empty `reason`
+ *  overrides it (the server records the reason). */
+export type RawTripActionMessage = {
+  status?: string;
+  message?: string;
+  name?: string;
+  /** 1 when the trip was already past this step (e.g. "Already received."). */
+  already?: number;
+  trip_status?: string;
+  /** Names a refusal, e.g. `below_minimum`. */
+  reason?: 'below_minimum' | string;
+  /** below_minimum: buckets on the truck now. */
+  loaded?: number;
+  /** below_minimum: the truck's capacity in buckets. */
+  capacity?: number;
+  /** below_minimum: the bucket count it leaves at without a reason. */
+  needed?: number;
+  /** below_minimum: the minimum load as a percent of capacity (100 unless partial loads are allowed). */
+  pct?: number;
+  /** Success: 1 when it left under its minimum load (sent with a reason). */
+  below_minimum?: 0 | 1 | number;
 };
+
+export type RawTripActionResponse = {
+  message?: RawTripActionMessage | string;
+};
+
+/** dispatchBucketTrip's body: the trip, plus the reason when sending it under its minimum load. */
+export function dispatchPayload(name: string, reason?: string): { name: string; reason?: string } {
+  const r = reason?.trim();
+  return { name, ...(r ? { reason: r } : {}) };
+}
 
 export const karenBucketLogisticsApi = {
   /** Today's transfer schedule: orders-by-farm, today's trips with live bucket-stage counts.
@@ -259,12 +280,12 @@ export const karenBucketLogisticsApi = {
     });
   },
 
-  /** Mark a planned trip as sent out. */
-  dispatch(name: string): Promise<RawTripActionResponse> {
+  /** Mark a planned trip as sent out; `reason` sends it under its minimum load. */
+  dispatch(name: string, reason?: string): Promise<RawTripActionResponse> {
     return api<RawTripActionResponse>({
       method: 'POST',
       url: '/api/method/upande_packhouse.mobile.api.dispatchBucketTrip',
-      data: { name },
+      data: dispatchPayload(name, reason),
     });
   },
 
