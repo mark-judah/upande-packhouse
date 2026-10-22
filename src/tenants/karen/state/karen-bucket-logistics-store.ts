@@ -6,6 +6,7 @@ import type {
   RawScheduleOrder,
   RawTransferScheduleData,
   RawTrip,
+  RawTripActionMessage,
   RawTripActionResponse,
   RawTripNumbers,
   RawVehicle,
@@ -116,7 +117,12 @@ export type Route = {
   runsKnown: boolean;
 };
 
-type ActionOutcome = { kind: 'success' | 'error'; message: string };
+/** The truck is under its minimum load: the numbers the server sent back. */
+export type BelowMinimum = { loaded: number; capacity: number; needed: number; pct: number; message: string };
+
+export type ActionOutcome =
+  | { kind: 'success' | 'error'; message: string }
+  | { kind: 'below_minimum'; message: string; belowMinimum: BelowMinimum };
 
 /** An order's buckets at a farm that no trip carries yet. */
 export type NotScheduledOrder = { opl: string; orderName: string; farm: string; buckets: number };
@@ -148,7 +154,8 @@ type State = {
   setDate: (date: string) => Promise<void>;
   /** Put a planned trip on another truck; its buckets stay as planned. */
   saveEdit: (trip: Trip, vehicle: string) => Promise<ActionOutcome>;
-  dispatch: (name: string) => Promise<ActionOutcome>;
+  /** Send a planned trip out; `reason` sends it under its minimum load. */
+  dispatch: (name: string, reason?: string) => Promise<ActionOutcome>;
   /** Confirm a requested truck has been released to the farm. */
   release: (name: string) => Promise<ActionOutcome>;
   /** Reject a truck request with a reason: back to the scheduler. */
@@ -711,7 +718,7 @@ export function buildRoutes(
     });
 }
 
-type ActionResult = { status?: string; message?: string; already?: number; trip_status?: string };
+type ActionResult = RawTripActionMessage;
 
 function unwrapAction(raw: RawTripActionResponse | undefined): ActionResult {
   const m = raw?.message;
@@ -724,6 +731,43 @@ function unwrapAction(raw: RawTripActionResponse | undefined): ActionResult {
     }
   }
   return m;
+}
+
+function num(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** A trip action's reply as an outcome: `below_minimum` carries the truck's numbers so
+ *  the screen can ask for a reason and resend; every other refusal is the server's message. */
+export function tripActionOutcome(
+  result: RawTripActionMessage,
+  successMessage: string,
+  failMessage = 'Action failed.',
+): ActionOutcome {
+  if (result.status === 'success') return { kind: 'success', message: (result.already && result.message) || successMessage };
+  if (result.reason === 'below_minimum') {
+    const message = result.message || 'The truck is below its minimum load.';
+    return {
+      kind: 'below_minimum',
+      message,
+      belowMinimum: {
+        loaded: num(result.loaded),
+        capacity: num(result.capacity),
+        needed: num(result.needed),
+        pct: num(result.pct),
+        message,
+      },
+    };
+  }
+  return { kind: 'error', message: result.message || failMessage };
+}
+
+/** The numbers line of the minimum-load dialog; the server's message when the numbers are missing. */
+export function minimumLoadLine(info: BelowMinimum): string {
+  return info.capacity > 0 && info.needed > 0
+    ? `${info.loaded} of ${info.capacity} on the truck — it leaves at ${info.needed}`
+    : info.message;
 }
 
 /** Optimistically move a trip (from whichever group holds it) to `to`, then run the
@@ -761,7 +805,7 @@ export async function moveTrip(
     if (result.status !== 'success') {
       await get().load();
       set({ actioning: { ...get().actioning, [name]: false } });
-      return { kind: 'error', message: result.message || 'Action failed.' };
+      return tripActionOutcome(result, successMessage);
     }
     if (result.already) {
       // The trip was already past this step: put it where the server says it is.
@@ -780,7 +824,7 @@ export async function moveTrip(
     // timestamp yet (needed for turnaround time) — refresh in the background to pick
     // it up. Not awaited: the success outcome shouldn't wait on this round-trip.
     get().load();
-    return { kind: 'success', message: (result.already && result.message) || successMessage };
+    return tripActionOutcome(result, successMessage);
   } catch (err) {
     await get().load();
     set({ actioning: { ...get().actioning, [name]: false } });
@@ -875,8 +919,8 @@ export const useKarenBucketLogisticsStore = create<State>((set, get) => {
     return get().load();
   },
 
-  dispatch: (name) =>
-    moveTrip(get, set, name, 'on_the_road', 'Dispatched', karenBucketLogisticsApi.dispatch, 'Truck dispatched.'),
+  dispatch: (name, reason) =>
+    moveTrip(get, set, name, 'on_the_road', 'Dispatched', (n) => karenBucketLogisticsApi.dispatch(n, reason), 'Truck dispatched.'),
 
   release: async (name) => {
     set({ actioning: { ...get().actioning, [name]: true } });

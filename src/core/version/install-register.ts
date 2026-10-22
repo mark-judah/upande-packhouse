@@ -5,6 +5,7 @@ import { api } from '@/src/core/api/client';
 import { storage, StorageKeys } from '@/src/core/storage';
 import { instanceKey } from '@/src/core/auth/known-instances';
 import { APP_VERSION } from '@/src/core/version';
+import { androidId } from '@/src/core/version/device-key';
 
 /**
  * The device register: which handhelds run this app, and which build each
@@ -12,14 +13,25 @@ import { APP_VERSION } from '@/src/core/version';
  * side is `upande_quality.mobile.mobile_app.register_install`, one register for
  * every Upande mobile app (told apart by `app`, a Mobile App record).
  *
- * Sent: a random install id, platform, brand / model, OS version, app and
- * runtime versions, and whether it is a real device. No IP, location or
- * hardware id — the server records the IP it observes.
+ * Sent: a random install id, a hardware device key, platform, brand / model,
+ * OS version, app and runtime versions, and whether it is a real device. No IP
+ * or location — the server records the IP it observes.
+ *
+ * The device key is the Android ID (`device-key.ts`, from React Native's own
+ * PlatformConstants module; this build has no expo-application); null off
+ * Android. It keeps
+ * one physical device on one server row however often its install id is
+ * re-minted, and tells apart identical scanners that model and build cannot.
+ * There is no SHA-256 in this app's dependencies, so it is sent raw; the server
+ * stores only SHA-256 hex of "upande-device:" + the id, never the id itself.
  *
  * This build has no expo-secure-store / expo-device (adding them needs a new
  * APK), so the install id lives in AsyncStorage under its own key, outside
  * `StorageKeys`: signing out (`clearExcept`) keeps the same device row, only an
- * uninstall mints a new one. Device facts come from `Platform.constants`.
+ * uninstall mints a new one. Device facts come from `Platform.constants`. The
+ * server answers with the row the report was filed under (another install id
+ * when the device key matched an older row); that is kept per server for the
+ * Devices screen's "this device".
  *
  * Nothing here is visible: every failure resolves to null.
  */
@@ -30,6 +42,7 @@ const KEY_INSTALL_ID = 'upande_install_id_v1';
 const KEY_LAST_REPORT = 'upande_install_reported_at_v1';
 const KEY_LAST_USER = 'upande_install_reported_user_v1';
 const KEY_LAST_VERSION = 'upande_install_reported_version_v1';
+const KEY_ROW_ID = 'upande_install_row_id_v1';
 
 const ENDPOINT = '/api/method/upande_quality.mobile.mobile_app.register_install';
 
@@ -49,6 +62,7 @@ export type InstallFacts = {
   app_version: string;
   runtime_version: string | null;
   is_physical_device: 0 | 1;
+  device_key: string | null;
 };
 
 let loggedOnce = false;
@@ -111,7 +125,21 @@ export function deviceFacts(): InstallFacts {
     app_version: APP_VERSION,
     runtime_version: runtimeVersion(),
     is_physical_device: emulator ? 0 : 1,
+    device_key: androidId(),
   };
+}
+
+async function rowIdKey(): Promise<string> {
+  return `${KEY_ROW_ID}:${instanceKey(await storage.get(StorageKeys.instanceUrl).catch(() => null))}`;
+}
+
+/** The server row this device was last filed under on the current server, or null. */
+export async function getRegisteredRowId(): Promise<string | null> {
+  try {
+    return (await storage.get(await rowIdKey())) || null;
+  } catch {
+    return null;
+  }
 }
 
 let reportedLaunchThisProcess = false;
@@ -177,7 +205,7 @@ export function reportInstall({ reason = 'launch', user }: { reason?: InstallRea
       const installId = await getInstallId();
       if (!installId) return null;
 
-      const result = await api({
+      const result = await api<{ message?: { install_id?: string } }>({
         method: 'POST',
         url: ENDPOINT,
         data: { install_id: installId, app: APP_NAME_FOR_REGISTER, reason, ...facts },
@@ -188,6 +216,7 @@ export function reportInstall({ reason = 'launch', user }: { reason?: InstallRea
         storage.set(keyLastReport, String(now)).catch(() => {}),
         storage.set(keyLastVersion, `${facts.app_version}|${facts.runtime_version ?? ''}`).catch(() => {}),
         account ? storage.set(keyLastUser, account).catch(() => {}) : null,
+        result?.message?.install_id ? storage.set(`${KEY_ROW_ID}:${server}`, result.message.install_id).catch(() => {}) : null,
       ]);
       return result;
     } catch (err) {

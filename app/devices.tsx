@@ -16,12 +16,13 @@ import {
   type InstallsReply,
   type InstallStatus,
 } from '@/src/core/version/devices-api';
-import { APP_NAME_FOR_REGISTER, getInstallId } from '@/src/core/version/install-register';
+import { APP_NAME_FOR_REGISTER, getInstallId, getRegisteredRowId } from '@/src/core/version/install-register';
 import { COLORS, borderRadius, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
 /**
- * The device register: each install of the apps, who uses it, which build it
- * runs and what the server says it should update to. System Managers only.
+ * The device register: each device running this app, the build it runs, every
+ * account that has used it (each on its own last version) and what the server
+ * says it should update to. System Managers only.
  * A row's status and "update to" are the server's; nothing is worked out here.
  *
  * Timestamps come in the site's timezone without an offset, so "x ago" is
@@ -57,7 +58,18 @@ function ago(ts: string | null | undefined, serverNow: string | null | undefined
 }
 
 function matches(r: InstallRow, q: string): boolean {
-  const hay = [r.full_name, r.user, r.device_name, r.device_brand, r.device_model, r.app_version, r.ip_address, r.app]
+  const hay = [
+    r.full_name,
+    r.user,
+    r.device_name,
+    r.device_brand,
+    r.device_model,
+    r.os_version,
+    r.app_version,
+    r.ip_address,
+    r.app,
+    ...(r.users ?? []).flatMap((u) => [u.full_name, u.user, u.app_version]),
+  ]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
@@ -84,10 +96,12 @@ function DevicesRegister() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [myInstallId, setMyInstallId] = useState<string | null>(null);
+  const [myRowId, setMyRowId] = useState<string | null>(null);
   const seq = useRef(0);
 
   useEffect(() => {
     getInstallId().then(setMyInstallId).catch(() => {});
+    getRegisteredRowId().then(setMyRowId).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -196,7 +210,7 @@ function DevicesRegister() {
         {error && data ? <Text style={s.errorText}>{error}</Text> : null}
         {!shown.length && !loading ? <Text style={s.empty}>No devices</Text> : null}
         {shown.map((r) => (
-          <DeviceRow key={r.install_id} row={r} serverNow={data?.server_time} mine={r.install_id === myInstallId} />
+          <DeviceRow key={r.install_id} row={r} serverNow={data?.server_time} mine={r.install_id === myInstallId || r.install_id === myRowId} />
         ))}
         {hasMore ? (
           <Button
@@ -228,6 +242,10 @@ function DeviceRow({ row, serverNow, mine }: { row: InstallRow; serverNow?: stri
   const [open, setOpen] = useState(false);
   const model = [row.device_brand, row.device_model].filter(Boolean).join(' ') || 'Unknown device';
   const name = row.device_name && row.device_name !== row.device_model ? row.device_name : model;
+  const os = `${row.platform ?? ''} ${row.os_version ?? ''}`.trim();
+  const users = row.users ?? [];
+  const userCount = row.user_count ?? users.length;
+  const lastUser = row.full_name || row.user || 'No user';
   return (
     <Pressable onPress={() => setOpen((o) => !o)} style={({ pressed }) => [s.row, pressed && { opacity: 0.8 }]}>
       <Ionicons
@@ -237,11 +255,16 @@ function DeviceRow({ row, serverNow, mine }: { row: InstallRow; serverNow?: stri
       />
       <View style={s.flex}>
         <Text style={s.rowTitle} numberOfLines={1}>
-          {row.full_name || row.user || 'No user'}
+          {name}
           {mine ? '  (this device)' : ''}
         </Text>
         <Text style={s.rowMeta} numberOfLines={1}>
-          {name} · {row.app} {row.app_version || '?'} · {ago(row.last_seen, serverNow)}
+          {os ? `${os} · ` : ''}
+          {row.app} {row.app_version || '?'} · {ago(row.last_seen, serverNow)}
+        </Text>
+        <Text style={s.rowMeta} numberOfLines={1}>
+          {lastUser}
+          {userCount > 1 ? ` · ${userCount} users` : ''}
         </Text>
         {row.update_to ? (
           <Text style={s.updateTo} numberOfLines={2}>
@@ -250,10 +273,19 @@ function DeviceRow({ row, serverNow, mine }: { row: InstallRow; serverNow?: stri
         ) : null}
         {open ? (
           <View style={s.details}>
-            <Detail label="User" value={row.user || '—'} />
+            {users.map((u) => (
+              <View key={u.user} style={s.detailRow}>
+                <Text style={s.userName} numberOfLines={1}>
+                  {u.full_name || u.user}
+                </Text>
+                <Text style={s.userVersion} numberOfLines={1}>
+                  {u.app_version || '?'} · {ago(u.last_seen, serverNow)}
+                </Text>
+              </View>
+            ))}
+            {users.length ? <View style={s.gap} /> : null}
             <Detail label="Model" value={model} />
-            <Detail label="OS" value={`${row.platform ?? ''} ${row.os_version ?? ''}`.trim() || '—'} />
-            <Detail label="Runtime" value={row.runtime_version || '—'} />
+            <Detail label="OS" value={os || '—'} />
             {row.previous_app_version ? (
               <Detail
                 label="Upgraded"
@@ -329,6 +361,8 @@ const s = StyleSheet.create({
   detailRow: { flexDirection: 'row', gap: spacing.sm },
   detailLabel: { width: 80, fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted },
   detailValue: { flex: 1, fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textSecondary },
+  userName: { flex: 1, fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.text },
+  userVersion: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary },
   empty: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.sm,
