@@ -91,29 +91,13 @@ export function KarenBucketLogisticsScreen() {
       const vehicle = Object.values(g).flat().find((t) => t.name === name)?.vehicle ?? name;
       const outcome = await dispatch(name);
       if (outcome.kind === 'success') showSuccess(outcome.message);
-      // Under the truck's minimum load: ask why before it goes (or it stays here).
-      else if (outcome.kind === 'below_minimum') setMinLoad({ name, vehicle, info: outcome.belowMinimum, reason: '' });
+      else if (outcome.kind === 'below_minimum') setMinLoad({ name, vehicle, info: outcome.belowMinimum });
       else showError(outcome.message);
     },
     [dispatch, showSuccess, showError],
   );
 
-  const handleSendAnyway = useCallback(
-    async (reason: string) => {
-      if (!minLoad) return;
-      const outcome = await dispatch(minLoad.name, reason);
-      if (outcome.kind === 'success') {
-        setMinLoad(null);
-        showSuccess(outcome.message);
-      } else if (outcome.kind === 'below_minimum') {
-        setMinLoad({ ...minLoad, info: outcome.belowMinimum, reason });
-        showError(outcome.message);
-      } else showError(outcome.message);
-    },
-    [minLoad, dispatch, showSuccess, showError],
-  );
-
-  const handleRelease = useCallback(
+const handleRelease = useCallback(
     async (name: string) => {
       const outcome = await release(name);
       if (outcome.kind === 'success') showSuccess(outcome.message);
@@ -296,9 +280,7 @@ export function KarenBucketLogisticsScreen() {
       <MinimumLoadDialog
         key={minLoad ? `${minLoad.name}:${minLoad.info.loaded}:${minLoad.info.needed}` : 'none'}
         prompt={minLoad}
-        sending={!!(minLoad && actioning[minLoad.name])}
         onClose={() => setMinLoad(null)}
-        onSend={handleSendAnyway}
       />
 
       <TripBucketsSheet target={listing} hub={hub} onClose={() => setListing(null)} />
