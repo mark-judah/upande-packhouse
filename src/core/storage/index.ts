@@ -24,6 +24,8 @@ export const StorageKeys = {
   apkUpdateCheck: 'apk_update_check',
   /** Dispatch: the location last picked (Loading Plan > Location, e.g. Ravine / Karen). */
   dispatchLocation: 'dispatch_location',
+  /** Dispatch: seal numbers typed per truck and delivery date (the last week's). */
+  dispatchSeals: 'dispatch_seals',
   // The server (instanceKey) a switched sign-in landed on, for the relaunch
   // that follows: the biometric lock is skipped once, on that server only.
   instanceSwitched: 'instance_switched',

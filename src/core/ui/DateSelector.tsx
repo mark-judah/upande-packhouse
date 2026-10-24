@@ -14,6 +14,7 @@ export function DateSelector({
   resetTo,
   resetLabel = 'Today',
   compact = false,
+  showDate = false,
 }: {
   value: string;
   onChange: (iso: string) => void;
@@ -27,6 +28,8 @@ export function DateSelector({
    *  caption over the date between them. For cards where the stepper is
    *  secondary. */
   compact?: boolean;
+  /** Compact only: the YYYY-MM-DD date next to the day label ("Tomorrow · 2026-10-25"). */
+  showDate?: boolean;
 }) {
   const reset = resetTo ?? todayISO();
   const atMax = maxDate != null && value >= maxDate;
@@ -50,6 +53,7 @@ export function DateSelector({
             </Text>
             <Text style={s.dateTextCompact} numberOfLines={1}>
               {formatDayLabel(value)}
+              {showDate && formatDayLabel(value) !== value ? `  ·  ${value}` : ''}
             </Text>
           </View>
         ) : (

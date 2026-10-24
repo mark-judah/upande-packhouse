@@ -3,7 +3,7 @@ import { karenDispatchApi } from '../api/karen-dispatch-api';
 import type { RawDispatchTruck, RawLoadedOrdersResponse, RawMissingBox, RawRebuildResponse } from '../api/karen-dispatch-api';
 import { mapAxiosError } from '@/src/core/api/client';
 import { storage, StorageKeys } from '@/src/core/storage';
-import { tomorrowISO } from '@/src/core/date';
+import { shiftISO, todayISO, tomorrowISO } from '@/src/core/date';
 
 export type LoadedOrder = {
   salesOrder: string;
@@ -53,7 +53,9 @@ function mapTrucks(rows: RawDispatchTruck[] | undefined): DispatchTruck[] {
       dispatched: !!t.dispatched,
       sealNumber: (t.seal_number ?? '').toString(),
     }))
-    .filter((t) => t.vehicle && t.boxesLoaded > 0);
+    .filter((t) => t.vehicle && t.boxesLoaded > 0)
+    // Trucks still to leave first; the ones already dispatched go to the end.
+    .sort((a, b) => Number(a.dispatched) - Number(b.dispatched));
 }
 
 export type DispatchOutcome =
@@ -98,12 +100,37 @@ type State = {
 
   loadOrders: () => Promise<void>;
   setSealNumberInput: (v: string) => void;
+  /** Keeps the typed seal for this truck and delivery date. */
+  rememberSeal: () => Promise<void>;
   /** Confirms dispatch for the day -- a one-time action once `dispatched`
    *  is true. */
   save: () => Promise<DispatchOutcome>;
   setDate: (date: string) => Promise<void>;
   reset: () => void;
 };
+
+// Seal numbers typed for a truck on a delivery date, so going back to that truck
+// (or reopening the app) finds it again: { "<date>|<truck or location>": seal }.
+type SealMemo = Record<string, string>;
+
+async function readSeals(): Promise<SealMemo> {
+  try {
+    return JSON.parse((await storage.get(StorageKeys.dispatchSeals)) || '{}') as SealMemo;
+  } catch {
+    return {};
+  }
+}
+
+async function writeSeals(memo: SealMemo): Promise<void> {
+  // Only the last week's dates are worth keeping.
+  const cutoff = shiftISO(todayISO(), -7);
+  const kept = Object.fromEntries(Object.entries(memo).filter(([k]) => k.slice(0, 10) >= cutoff));
+  await storage.set(StorageKeys.dispatchSeals, JSON.stringify(kept)).catch(() => {});
+}
+
+function sealKey(date: string, vehicle: string, location: string): string {
+  return `${date}|${vehicle || location}`;
+}
 
 function unwrap<T extends { status?: string; message?: string; data?: unknown }>(
   raw: { message?: T | string } | undefined,
@@ -139,6 +166,15 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
   vehicle: '',
 
   setSealNumberInput: (v) => set({ sealNumberInput: v }),
+
+  rememberSeal: async () => {
+    const { selectedDate, vehicle, location, sealNumberInput } = get();
+    const seal = sealNumberInput.trim();
+    if (!seal) return;
+    const memo = await readSeals();
+    memo[sealKey(selectedDate, vehicle, location)] = seal;
+    await writeSeals(memo);
+  },
 
   setLocation: async (location) => {
     if (location === get().location) return;
@@ -219,6 +255,13 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
         // background refresh -- only seed it once there's nothing typed yet.
         sealNumberInput: get().sealNumberInput || savedSealNumber,
       });
+      // Nothing typed yet: the seal remembered for this truck and date, if any.
+      if (!get().sealNumberInput && !data.dispatched) {
+        const remembered = (await readSeals())[sealKey(get().selectedDate, vehicle, location)];
+        if (remembered && get().vehicle === vehicle && get().location === location && !get().sealNumberInput) {
+          set({ sealNumberInput: remembered });
+        }
+      }
     } catch (err) {
       set({
         loading: false,
