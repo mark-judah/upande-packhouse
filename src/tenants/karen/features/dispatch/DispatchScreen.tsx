@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Screen } from '@/src/core/ui/Screen';
@@ -41,6 +41,9 @@ export function KarenDispatchScreen() {
     locations,
     setLocation,
     initLocation,
+    trucks,
+    vehicle,
+    setVehicle,
   } = useKarenDispatchStore();
   const { showSuccess, showError } = useToast();
   const { station } = useUserStation();
@@ -73,7 +76,7 @@ export function KarenDispatchScreen() {
     const ords = `${orders.length} order${orders.length === 1 ? '' : 's'}`;
     showDialog(
       'Confirm dispatch?',
-      `${ords} · ${boxes} for ${deliveryDate || selectedDate}, seal ${sealNumberInput.trim()}. ` +
+      `${vehicle ? `${vehicle}: ` : ''}${ords} · ${boxes} for ${deliveryDate || selectedDate}, seal ${sealNumberInput.trim()}. ` +
         'Once confirmed, dispatch is final and cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
@@ -111,12 +114,47 @@ export function KarenDispatchScreen() {
         />
       </Card>
 
+      {trucks.length > 0 ? (
+        <Card title="Truck">
+          {trucks.map((t) => {
+            const active = t.vehicle === vehicle;
+            return (
+              <TouchableOpacity
+                key={t.vehicle}
+                style={[s.truckRow, active && s.truckRowActive]}
+                onPress={() => void setVehicle(t.vehicle)}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons
+                  name={active ? 'radiobox-marked' : 'radiobox-blank'}
+                  size={20}
+                  color={active ? COLORS.text : COLORS.textMuted}
+                />
+                <MaterialCommunityIcons name="truck-outline" size={20} color={COLORS.text} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.truckName}>{t.vehicle}</Text>
+                  <Text style={s.truckSub} numberOfLines={1}>
+                    {t.boxesLoaded} box{t.boxesLoaded === 1 ? '' : 'es'} loaded
+                    {t.loadingPlan ? `  ·  ${t.loadingPlan}` : ''}
+                  </Text>
+                </View>
+                {t.dispatched ? (
+                  <View style={s.truckGone}>
+                    <Text style={s.truckGoneText}>Dispatched</Text>
+                  </View>
+                ) : null}
+              </TouchableOpacity>
+            );
+          })}
+        </Card>
+      ) : null}
+
       {dispatched ? (
         <Card>
           <View style={s.dispatchedBanner}>
             <MaterialCommunityIcons name="check-circle" size={22} color="#16a34a" />
             <View style={{ flex: 1 }}>
-              <Text style={s.dispatchedTitle}>Dispatched</Text>
+              <Text style={s.dispatchedTitle}>Dispatched{vehicle ? ` · ${vehicle}` : ''}</Text>
               <Text style={s.helper}>
                 Seal number {savedSealNumber || '—'} · {totalBoxes} box{totalBoxes === 1 ? '' : 'es'} loaded
               </Text>
@@ -128,9 +166,7 @@ export function KarenDispatchScreen() {
       {!dispatched && missingBoxes.length > 0 ? (
         <Card title="Boxes not loaded">
           <Text style={s.missingHelper}>
-            {missingBoxes.length} staged box{missingBoxes.length === 1 ? '' : 'es'} for this delivery date{' '}
-            {missingBoxes.length === 1 ? 'has' : 'have'} not been loaded onto the truck yet. Dispatch is
-            blocked until every staged box is loaded.
+            Load the {missingBoxes.length} box{missingBoxes.length === 1 ? '' : 'es'} to dispatch
           </Text>
           <View style={{ height: spacing.sm }} />
           {missingBoxes.map((b) => (
@@ -140,16 +176,18 @@ export function KarenDispatchScreen() {
                 <Text style={s.missingBoxName} numberOfLines={1}>
                   Box {b.boxNumber} · {b.customer || '—'}
                 </Text>
-                <Text style={s.missingBoxSub} numberOfLines={1}>
-                  {[b.orderPickList, b.deliveryPoint].filter(Boolean).join('  ·  ')}
-                </Text>
-              </View>
-              {b.stagingLocation ? (
-                <View style={s.missingLocationTag}>
-                  <MaterialCommunityIcons name="map-marker-outline" size={12} color="#92400e" />
-                  <Text style={s.missingLocationText} numberOfLines={1}>{b.stagingLocation}</Text>
+                <View style={s.missingSubRow}>
+                  <MaterialCommunityIcons name="map-marker-outline" size={13} color="#92400e" />
+                  <Text style={s.missingLocationText} numberOfLines={1}>
+                    {b.stagingLocation || 'No location'}
+                  </Text>
+                  {b.deliveryPoint ? (
+                    <Text style={s.missingBoxSub} numberOfLines={1}>
+                      ·  {b.deliveryPoint}
+                    </Text>
+                  ) : null}
                 </View>
-              ) : null}
+              </View>
             </View>
           ))}
         </Card>
@@ -163,11 +201,7 @@ export function KarenDispatchScreen() {
           </Text>
           {deliveryDate ? <Text style={s.date}>{deliveryDate}</Text> : null}
         </View>
-        <Text style={s.helper}>
-          {loading
-            ? 'Loading…'
-            : 'What the day’s orders require vs what has actually been loaded onto the truck.'}
-        </Text>
+        {loading ? <Text style={s.helper}>Loading…</Text> : null}
 
         <View style={{ height: spacing.sm }} />
         <View style={s.tableHead}>
@@ -179,7 +213,8 @@ export function KarenDispatchScreen() {
         {!loading && orders.length === 0 ? (
           <Text style={s.helper}>No orders planned for this delivery date.</Text>
         ) : (
-          orders.map((o) => {
+          <ScrollView style={s.orderList} nestedScrollEnabled showsVerticalScrollIndicator>
+          {orders.map((o) => {
             const complete = o.boxesRequired > 0 && o.boxesLoaded >= o.boxesRequired;
             const short = o.boxesRequired > 0 && o.boxesLoaded < o.boxesRequired;
             return (
@@ -200,13 +235,12 @@ export function KarenDispatchScreen() {
                 </View>
               </View>
             );
-          })
+          })}
+          </ScrollView>
         )}
       </Card>
 
       <Card title="Seal number">
-        <Text style={s.helper}>The seal number on the truck, recorded once at dispatch.</Text>
-        <View style={{ height: spacing.sm }} />
         <TextInput
           value={sealNumberInput}
           onChangeText={setSealNumberInput}
@@ -220,11 +254,6 @@ export function KarenDispatchScreen() {
 
       {!dispatched ? (
         <Card title="Confirm dispatch">
-          <Text style={s.helper}>
-            This is a one-time confirmation, not a form you can resave — once confirmed, dispatch
-            for this date is final and cannot be edited again.
-          </Text>
-          <View style={{ height: spacing.sm }} />
           <Button
             label={saving ? 'Confirming…' : 'Confirm dispatch'}
             onPress={onConfirmPress}
@@ -232,11 +261,8 @@ export function KarenDispatchScreen() {
           />
           {missingBoxes.length > 0 ? (
             <Text style={s.blockedHint}>
-              {missingBoxes.length} box{missingBoxes.length === 1 ? '' : 'es'} still need loading before you
-              can confirm dispatch.
+              Load the {missingBoxes.length} box{missingBoxes.length === 1 ? '' : 'es'} to dispatch
             </Text>
-          ) : !sealNumberInput.trim() ? (
-            <Text style={s.blockedHint}>Enter the seal number before confirming.</Text>
           ) : null}
         </Card>
       ) : null}
@@ -249,6 +275,22 @@ export function KarenDispatchScreen() {
 }
 
 const s = StyleSheet.create({
+  truckRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.xs,
+  },
+  truckRowActive: { borderColor: COLORS.text, backgroundColor: COLORS.bg },
+  truckName: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: COLORS.text },
+  truckSub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary, marginTop: 2 },
+  truckGone: { backgroundColor: '#dcfce7', borderRadius: borderRadius.full, paddingHorizontal: 8, paddingVertical: 3 },
+  truckGoneText: { fontFamily: fontFamily.semiBold, fontSize: 10, color: '#166534' },
   filterLabel: {
     fontFamily: fontFamily.medium,
     fontSize: fontSize.sm,
@@ -265,6 +307,7 @@ const s = StyleSheet.create({
   summary: { fontFamily: fontFamily.bold, fontSize: fontSize.md, color: COLORS.text },
   date: { fontFamily: fontFamily.medium, fontSize: fontSize.xs, color: COLORS.textMuted },
 
+  orderList: { maxHeight: 320 },
   tableHead: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -313,20 +356,9 @@ const s = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   missingBoxName: { fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: COLORS.text },
-  missingBoxSub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary, marginTop: 1 },
-  missingLocationTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: '#fffbeb',
-    borderWidth: 1,
-    borderColor: '#fde68a',
-    borderRadius: borderRadius.full,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    maxWidth: 130,
-  },
-  missingLocationText: { fontFamily: fontFamily.semiBold, fontSize: 10, color: '#92400e', flexShrink: 1 },
+  missingSubRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  missingBoxSub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textSecondary, flexShrink: 1 },
+  missingLocationText: { fontFamily: fontFamily.semiBold, fontSize: fontSize.xs, color: '#92400e', flexShrink: 1 },
 
   sealInput: {
     borderWidth: 1,

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { karenDispatchApi } from '../api/karen-dispatch-api';
-import type { RawLoadedOrdersResponse, RawMissingBox, RawRebuildResponse } from '../api/karen-dispatch-api';
+import type { RawDispatchTruck, RawLoadedOrdersResponse, RawMissingBox, RawRebuildResponse } from '../api/karen-dispatch-api';
 import { mapAxiosError } from '@/src/core/api/client';
 import { storage, StorageKeys } from '@/src/core/storage';
 import { tomorrowISO } from '@/src/core/date';
@@ -36,6 +36,26 @@ function mapMissingBoxes(rows: RawMissingBox[] | undefined): MissingBox[] {
   }));
 }
 
+export type DispatchTruck = {
+  vehicle: string;
+  loadingPlan: string;
+  boxesLoaded: number;
+  dispatched: boolean;
+  sealNumber: string;
+};
+
+function mapTrucks(rows: RawDispatchTruck[] | undefined): DispatchTruck[] {
+  return (rows ?? [])
+    .map((t) => ({
+      vehicle: (t.vehicle ?? '').toString(),
+      loadingPlan: (t.loading_plan ?? '').toString(),
+      boxesLoaded: Number(t.boxes_loaded ?? 0),
+      dispatched: !!t.dispatched,
+      sealNumber: (t.seal_number ?? '').toString(),
+    }))
+    .filter((t) => t.vehicle && t.boxesLoaded > 0);
+}
+
 export type DispatchOutcome =
   | { kind: 'success'; message: string }
   | { kind: 'error'; message: string };
@@ -67,6 +87,12 @@ type State = {
   /** Locations to choose from (the server's Loading Plan options). */
   locations: string[];
   setLocation: (location: string) => Promise<void>;
+  /** The trucks with boxes loaded for the location's orders. */
+  trucks: DispatchTruck[];
+  /** The truck being dispatched: only its boxes show and confirming sends only it.
+   *  '' while the location has no truck with boxes loaded. */
+  vehicle: string;
+  setVehicle: (vehicle: string) => Promise<void>;
   /** The station's location; on a device with no station, the one remembered. */
   initLocation: (farm: string) => Promise<void>;
 
@@ -109,13 +135,21 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
   lastOutcome: null,
   location: '',
   locations: ['Ravine', 'Karen'],
+  trucks: [],
+  vehicle: '',
 
   setSealNumberInput: (v) => set({ sealNumberInput: v }),
 
   setLocation: async (location) => {
     if (location === get().location) return;
     storage.set(StorageKeys.dispatchLocation, location).catch(() => {});
-    set({ location, orders: [], totalBoxes: 0, totalRequired: 0, sealNumberInput: '', savedSealNumber: '', dispatched: false, missingBoxes: [] });
+    set({ location, vehicle: '', trucks: [], orders: [], totalBoxes: 0, totalRequired: 0, sealNumberInput: '', savedSealNumber: '', dispatched: false, missingBoxes: [] });
+    await get().loadOrders();
+  },
+
+  setVehicle: async (vehicle) => {
+    if (vehicle === get().vehicle) return;
+    set({ vehicle, orders: [], totalBoxes: 0, totalRequired: 0, sealNumberInput: '', savedSealNumber: '', dispatched: false, missingBoxes: [] });
     await get().loadOrders();
   },
 
@@ -141,11 +175,24 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
     set({ loading: true });
     try {
       const location = get().location;
-      const raw: RawLoadedOrdersResponse = await karenDispatchApi.fetchLoadedOrders(get().selectedDate, location || undefined);
-      // A reply for a location the operator has since switched off is dropped.
-      if (get().location !== location) return;
+      const vehicle = get().vehicle;
+      const raw: RawLoadedOrdersResponse = await karenDispatchApi.fetchLoadedOrders(
+        get().selectedDate,
+        location || undefined,
+        vehicle || undefined,
+      );
+      // A reply for a location or truck the operator has since switched off is dropped.
+      if (get().location !== location || get().vehicle !== vehicle) return;
       const msg = unwrap(raw);
       const data = msg?.data ?? {};
+      const trucks = mapTrucks(data.trucks);
+      if (!trucks.some((t) => t.vehicle === vehicle) && trucks.length) {
+        // No truck picked yet (or it has nothing loaded): the first still to leave.
+        const pick = trucks.find((t) => !t.dispatched) ?? trucks[0];
+        set({ trucks, vehicle: pick.vehicle, sealNumberInput: '', savedSealNumber: '' });
+        await get().loadOrders();
+        return;
+      }
       const orders: LoadedOrder[] = (data.orders ?? []).map((o) => ({
         salesOrder: (o.sales_order ?? '').toString(),
         orderName: (o.order_name ?? o.sales_order ?? '').toString(),
@@ -164,6 +211,7 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
         totalRequired: orders.reduce((sum, o) => sum + o.boxesRequired, 0),
         deliveryDate: (data.delivery_date ?? '').toString(),
         ...(Array.isArray(data.locations) && data.locations.length ? { locations: data.locations } : {}),
+        trucks,
         dispatched: !!data.dispatched,
         savedSealNumber,
         missingBoxes: mapMissingBoxes(data.missing_boxes),
@@ -189,6 +237,7 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
         get().selectedDate,
         get().sealNumberInput.trim(),
         get().location || undefined,
+        get().vehicle || undefined,
       );
       const msg = unwrap(raw);
       if (msg?.status === 'error') {
@@ -233,5 +282,7 @@ export const useKarenDispatchStore = create<State>((set, get) => ({
       missingBoxes: [],
       lastOutcome: null,
       location: '',
+      trucks: [],
+      vehicle: '',
     }),
 }));

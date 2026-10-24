@@ -5,6 +5,7 @@ import { previewPdf, writeBase64PdfToFile } from '@/src/core/pdf/pdfDownload';
 import { SavedBoxLabelsSheet } from '@/src/core/pdf/SavedBoxLabelsSheet';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
 import { focusWhenReady } from '@/src/core/scanning/focus';
+import { followDevHost } from '@/src/core/api/dev-host';
 import { storage, StorageKeys } from '@/src/core/storage';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { Button } from '@/src/core/ui/Button';
@@ -171,7 +172,7 @@ export function KarenPackingScreen() {
         if (!baseUrl) throw new Error('No instance URL');
         const uri = specImage.startsWith('http')
           ? specImage
-          : baseUrl.replace(/\/$/, '') + encodeURI(specImage);
+          : followDevHost(baseUrl).replace(/\/$/, '') + encodeURI(specImage);
 
         const res = await fetch(uri, { headers: cookie ? { Cookie: cookie } : undefined });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

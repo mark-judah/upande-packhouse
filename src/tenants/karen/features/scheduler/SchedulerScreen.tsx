@@ -135,8 +135,8 @@ export function KarenSchedulerScreen() {
         renderItem={({ item }) => <OrderRow order={item} />}
         ListHeaderComponent={header}
         ListEmptyComponent={
-          loading ? null : orders.length === 0 ? (
-            error ? null : (
+          loading ? undefined : orders.length === 0 ? (
+            error ? undefined : (
               <Card><Text style={s.helper}>No orders for this delivery date.</Text></Card>
             )
           ) : (
