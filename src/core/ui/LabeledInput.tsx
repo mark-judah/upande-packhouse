@@ -1,5 +1,5 @@
 import { forwardRef } from 'react';
-import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { StyleSheet, Text, TextInput, View, type TextInputInstance, type TextInputProps } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
@@ -11,7 +11,7 @@ type Props = TextInputProps & {
   iconName?: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
 };
 
-export const LabeledInput = forwardRef<TextInput, Props>(function LabeledInput(
+export const LabeledInput = forwardRef<TextInputInstance, Props>(function LabeledInput(
   { label, iconName, style, ...rest },
   ref,
 ) {

@@ -2,6 +2,7 @@ import axios, { isAxiosError, type AxiosInstance, type AxiosRequestConfig } from
 import { storage, StorageKeys } from '@/src/core/storage';
 import { recordNetwork } from '@/src/core/debug/debugLogStore';
 import { attachStartTime, elapsed, logError, logRequest, logResponse, safeBody } from './log';
+import { followDevHost } from './dev-host';
 
 let client: AxiosInstance | null = null;
 
@@ -10,7 +11,7 @@ function buildClient(): AxiosInstance {
   instance.interceptors.request.use(async (config) => {
     const baseUrl = await storage.get(StorageKeys.instanceUrl);
     const cookie = await storage.get(StorageKeys.cookie);
-    if (baseUrl) config.baseURL = baseUrl;
+    if (baseUrl) config.baseURL = followDevHost(baseUrl);
     config.headers = config.headers ?? {};
     if (cookie) (config.headers as Record<string, string>).Cookie = cookie;
     if (!config.headers['Content-Type']) {

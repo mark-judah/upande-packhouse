@@ -1,12 +1,50 @@
 import { create } from 'zustand';
 import { karenStagingApi } from '../api/karen-staging-api';
-import type { RawStagingResponse } from '../api/karen-staging-api';
+import type { RawColdstoreData, RawStagingResponse } from '../api/karen-staging-api';
 import { mapAxiosError } from '@/src/core/api/client';
 
 export type StageOutcome =
   | { kind: 'success'; message?: string }
   | { kind: 'error'; message: string }
   | { kind: 'warning'; message: string };
+
+export type ColdstoreBox = {
+  boxLabel: string;
+  boxNumber: number;
+  customer: string;
+  salesOrder: string;
+  spot: string;
+  /** When it reached the spot, as epoch ms on the server's clock. */
+  sinceMs: number;
+};
+
+export type ColdstoreGroup = { deliveryPoint: string; boxes: ColdstoreBox[] };
+
+/** "2026-10-24 11:27:49.645940" (server local time) -> epoch ms, both sides read alike. */
+function parseServerTime(v?: string): number {
+  if (!v) return 0;
+  const t = Date.parse(v.replace(' ', 'T').slice(0, 23));
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function mapColdstore(data: RawColdstoreData | undefined): { groups: ColdstoreGroup[]; skewMs: number } {
+  const now = parseServerTime(data?.now);
+  return {
+    // Phone clock minus server clock, so "time there" ticks on the phone but measures on the server.
+    skewMs: now ? Date.now() - now : 0,
+    groups: (data?.delivery_points ?? []).map((g) => ({
+      deliveryPoint: (g.delivery_point ?? '').toString(),
+      boxes: (g.boxes ?? []).map((b) => ({
+        boxLabel: (b.box_label ?? '').toString(),
+        boxNumber: Number(b.box_number ?? 0),
+        customer: (b.customer ?? '').toString(),
+        salesOrder: (b.sales_order ?? '').toString(),
+        spot: (b.staging_location ?? '').toString(),
+        sinceMs: parseServerTime(b.since),
+      })),
+    })),
+  };
+}
 
 type State = {
   submitting: boolean;
@@ -17,6 +55,11 @@ type State = {
   setLocation: (raw: string) => void;
   /** Parse a scanned box QR, stage it at the current location, return the outcome. */
   submitScan: (raw: string) => Promise<StageOutcome>;
+  /** Boxes in the coldstore by drop-off point, with their spot and time there. */
+  coldstore: ColdstoreGroup[];
+  coldstoreSkewMs: number;
+  coldstoreLoading: boolean;
+  loadColdstore: (location?: string) => Promise<void>;
   reset: () => void;
 };
 
@@ -71,6 +114,20 @@ export const useKarenStagingStore = create<State>((set, get) => ({
   submitting: false,
   lastOutcome: null,
   location: '',
+  coldstore: [],
+  coldstoreSkewMs: 0,
+  coldstoreLoading: false,
+
+  loadColdstore: async (location) => {
+    set({ coldstoreLoading: true });
+    try {
+      const res = await karenStagingApi.fetchColdstoreBoxes(location);
+      const { groups, skewMs } = mapColdstore(res?.message);
+      set({ coldstore: groups, coldstoreSkewMs: skewMs, coldstoreLoading: false });
+    } catch {
+      set({ coldstoreLoading: false });
+    }
+  },
 
   setLocation: (raw) => {
     const loc = extractLocation(raw);

@@ -1,5 +1,5 @@
 import { forwardRef } from 'react';
-import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { StyleSheet, Text, TextInput, View, type TextInputInstance, type TextInputProps } from 'react-native';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
 type Props = TextInputProps & {
@@ -7,7 +7,7 @@ type Props = TextInputProps & {
   error?: string | null;
 };
 
-export const Input = forwardRef<TextInput, Props>(function Input(
+export const Input = forwardRef<TextInputInstance, Props>(function Input(
   { label, error, style, ...rest },
   ref,
 ) {

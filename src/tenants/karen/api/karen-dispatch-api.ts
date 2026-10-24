@@ -27,11 +27,23 @@ export type RawMissingBox = {
   staging_location?: string;
 };
 
+/** One of the location's trucks for the day: what was loaded on it and whether it left. */
+export type RawDispatchTruck = {
+  vehicle?: string;
+  loading_plan?: string;
+  boxes_loaded?: number;
+  dispatched?: boolean;
+  seal_number?: string;
+};
+
 export type RawLoadedOrdersData = {
   delivery_date?: string;
   /** The location the data is for, and the locations to choose from (Loading Plan). */
   location?: string;
   locations?: string[];
+  /** The truck the data is for ('' = the whole location), and the location's trucks. */
+  vehicle?: string;
+  trucks?: RawDispatchTruck[];
   loading_sheet?: string | null;
   loading_sheet_status?: string;
   /** True once this date's Loading Sheet has been confirmed Departed --
@@ -65,7 +77,7 @@ export type RawRebuildResponse = {
 export const karenDispatchApi = {
   /** Orders that have been loaded (from the day's Loading Sheet), by order name.
    *  `deliveryDate` optional — server defaults to tomorrow (matches loading). */
-  fetchLoadedOrders(deliveryDate?: string, location?: string): Promise<RawLoadedOrdersResponse> {
+  fetchLoadedOrders(deliveryDate?: string, location?: string, vehicle?: string): Promise<RawLoadedOrdersResponse> {
     return api<RawLoadedOrdersResponse>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.fetchDispatchLoadedOrders',
@@ -73,6 +85,8 @@ export const karenDispatchApi = {
         ...(deliveryDate ? { delivery_date: deliveryDate } : {}),
         // Only that location's orders (its Loading Plans) and its own departure.
         ...(location ? { location } : {}),
+        // Only that truck: its orders, the boxes loaded on it and its own departure.
+        ...(vehicle ? { vehicle } : {}),
       },
     });
   },
@@ -84,6 +98,7 @@ export const karenDispatchApi = {
     deliveryDate: string | undefined,
     sealNumber: string,
     location?: string,
+    vehicle?: string,
   ): Promise<RawRebuildResponse> {
     return api<RawRebuildResponse>({
       method: 'POST',
@@ -93,6 +108,8 @@ export const karenDispatchApi = {
         seal_number: sealNumber,
         // Dispatches only this location's orders; the other location confirms its own.
         ...(location ? { location } : {}),
+        // Dispatches only this truck; the location's other trucks confirm their own.
+        ...(vehicle ? { vehicle } : {}),
       },
     });
   },

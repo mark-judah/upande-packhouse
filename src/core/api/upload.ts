@@ -1,4 +1,5 @@
 import { storage, StorageKeys } from '@/src/core/storage';
+import { followDevHost } from './dev-host';
 
 /** Returned by Frappe's /api/method/upload_file on success. */
 export type UploadedFile = {
@@ -21,8 +22,9 @@ export async function uploadImage(
   localUri: string,
   fileName?: string,
 ): Promise<UploadedFile> {
-  const baseUrl = await storage.get(StorageKeys.instanceUrl);
-  if (!baseUrl) throw new Error('Instance URL is not configured.');
+  const saved = await storage.get(StorageKeys.instanceUrl);
+  if (!saved) throw new Error('Instance URL is not configured.');
+  const baseUrl = followDevHost(saved);
   const cookie = await storage.get(StorageKeys.cookie);
 
   const form = new FormData();
