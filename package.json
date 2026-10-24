@@ -1,7 +1,7 @@
 {
   "name": "upande-packhouse",
   "main": "expo-router/entry",
-  "version": "1.1.19",
+  "version": "1.2.0",
   "scripts": {
     "start": "expo start --go --port 8088",
     "start:dev": "APP_VARIANT=development expo start --dev-client --port 8088",
