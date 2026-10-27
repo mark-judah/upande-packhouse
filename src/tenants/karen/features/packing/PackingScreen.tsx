@@ -73,6 +73,9 @@ export function KarenPackingScreen() {
   const [boxLabelsError, setBoxLabelsError] = useState<string | null>(null);
   const [labelWidthMm, setLabelWidthMm] = useState(DEFAULT_BOX_LABEL_WIDTH_MM);
   const [labelHeightMm, setLabelHeightMm] = useState(DEFAULT_BOX_LABEL_HEIGHT_MM);
+  // null until formats load; then the server's default unless the operator picks another.
+  const [labelFormat, setLabelFormat] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
   // Saved label PDFs, for the OPL they were read for.
   const [savedFor, setSavedFor] = useState<{ opl: string; entries: SavedBoxLabels[] } | null>(null);
   const [savedLabelsSheetOpen, setSavedLabelsSheetOpen] = useState(false);
@@ -105,6 +108,10 @@ export function KarenPackingScreen() {
     packingBypassReasonsLoading,
     bypassSubmitting,
     boxLabelsGenerating,
+    boxLabelFormats,
+    boxLabelDefaultFormat,
+    boxLabelFormatsLoading,
+    loadBoxLabelFormats,
     loadPicklists,
     setDate,
     setItemGroup,
@@ -538,14 +545,65 @@ export function KarenPackingScreen() {
     return out;
   }, [showTable, packingGuide, pickListItems]);
 
-  const onGenerateBoxLabels = async () => {
+  // Load the print formats when the dialog opens, and preselect the server's
+  // default unless the operator already chose one that is still offered.
+  useEffect(() => {
+    if (boxLabelsOpen) loadBoxLabelFormats();
+  }, [boxLabelsOpen, loadBoxLabelFormats]);
+  useEffect(() => {
+    setLabelFormat((cur) =>
+      cur && boxLabelFormats.includes(cur) ? cur : boxLabelDefaultFormat ?? boxLabelFormats[0] ?? null,
+    );
+  }, [boxLabelFormats, boxLabelDefaultFormat]);
+
+  const boxLabelFormatOptions = useMemo(
+    () =>
+      boxLabelFormats.map((f) => ({
+        label: f,
+        value: f,
+        sublabel: f === boxLabelDefaultFormat ? 'Default' : undefined,
+      })),
+    [boxLabelFormats, boxLabelDefaultFormat],
+  );
+
+  const labelSizeMm = () => {
     const width = parseFloat(labelWidthMm);
     const height = parseFloat(labelHeightMm);
+    return {
+      widthMm: Number.isFinite(width) && width > 0 ? width : undefined,
+      heightMm: Number.isFinite(height) && height > 0 ? height : undefined,
+    };
+  };
+
+  // One sample label (the first box) in the chosen format and size, so it can
+  // be checked before the whole order is printed. Opened in the OS preview
+  // sheet like the full PDF, but kept out of Saved Labels and the dialog stays
+  // open, ready to adjust and print.
+  const onPreviewBoxLabel = async () => {
     setBoxLabelsError(null);
-    const outcome = await generateBoxLabels(
-      Number.isFinite(width) && width > 0 ? width : undefined,
-      Number.isFinite(height) && height > 0 ? height : undefined,
-    );
+    setPreviewing(true);
+    try {
+      const outcome = await generateBoxLabels({
+        ...labelSizeMm(),
+        printFormat: labelFormat ?? undefined,
+        preview: true,
+      });
+      if (!outcome.success) {
+        setBoxLabelsError(outcome.message);
+        return;
+      }
+      const path = await writeBase64PdfToFile(outcome.base64, outcome.filename);
+      await previewPdf(path);
+    } catch (err) {
+      setBoxLabelsError(err instanceof Error ? err.message : 'Could not open the PDF preview.');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const onGenerateBoxLabels = async () => {
+    setBoxLabelsError(null);
+    const outcome = await generateBoxLabels({ ...labelSizeMm(), printFormat: labelFormat ?? undefined });
     if (!outcome.success) {
       setBoxLabelsError(outcome.message);
       return;
@@ -1160,6 +1218,17 @@ export function KarenPackingScreen() {
           <Text style={s.modalHint}>
             Consolidates every box packed so far on this Order Pick List into one PDF.
           </Text>
+          {boxLabelFormatOptions.length > 0 ? (
+            <Dropdown
+              label="Print format"
+              value={labelFormat}
+              options={boxLabelFormatOptions}
+              placeholder={boxLabelFormatsLoading ? 'Loading…' : 'Select print format'}
+              iconName="file-document-outline"
+              onChange={setLabelFormat}
+              disabled={boxLabelsGenerating || previewing}
+            />
+          ) : null}
           <View style={s.modalRow}>
             <View style={s.modalInput}>
               <Input
@@ -1185,11 +1254,21 @@ export function KarenPackingScreen() {
             </View>
           ) : null}
           <Button
+            label="Preview sample"
+            variant="outline"
+            onPress={onPreviewBoxLabel}
+            loading={previewing}
+            disabled={boxLabelsGenerating || previewing}
+            iconLeft="eye-outline"
+            style={{ alignSelf: 'stretch', marginTop: spacing.sm }}
+          />
+          <Button
             label="Generate"
             onPress={onGenerateBoxLabels}
-            loading={boxLabelsGenerating}
+            loading={boxLabelsGenerating && !previewing}
+            disabled={previewing}
             iconLeft="print-outline"
-            style={{ alignSelf: 'stretch', marginTop: spacing.sm }}
+            style={{ alignSelf: 'stretch' }}
           />
           <Button
             label="Cancel"
