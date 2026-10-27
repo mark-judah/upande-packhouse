@@ -44,7 +44,7 @@ export function SideMenu({
   visible: boolean;
   onClose: () => void;
 }) {
-  const { tenant, instanceUrl } = useTenant();
+  const { instanceUrl } = useTenant();
   const logout = useAuthStore((s) => s.logout);
   const storeFullName = useAuthStore((s) => s.fullName);
   const storeEmail = useAuthStore((s) => s.email);
@@ -156,18 +156,16 @@ export function SideMenu({
                     {fullName || email || 'User'}
                   </Text>
                   {email ? <Text style={s.email} numberOfLines={1}>{email}</Text> : null}
-                  {(tenant || instanceUrl) ? (
+                  {instanceUrl ? (
                     <Text style={s.meta} numberOfLines={1}>
-                      {tenant ?? ''}
-                      {tenant && instanceUrl ? ' · ' : ''}
-                      {instanceUrl ? instanceUrl.replace(/^https?:\/\//, '') : ''}
+                      {instanceUrl.replace(/^https?:\/\//, '')}
                     </Text>
                   ) : null}
                 </View>
 
                 <View style={s.nav}>
                   {items.length === 0 ? (
-                    <Text style={s.empty}>No screens configured for this tenant.</Text>
+                    <Text style={s.empty}>No screens configured.</Text>
                   ) : (
                     items.map((item) => (
                       <Pressable

@@ -7,7 +7,6 @@ import { Button } from '@/src/core/ui/Button';
 import { Dropdown } from '@/src/core/ui/Dropdown';
 import { LabeledInput } from '@/src/core/ui/LabeledInput';
 import { useToast } from '@/src/core/ui/Toast';
-import { useTenant } from '@/src/core/tenant/tenant-context';
 import { useUserStation } from '@/src/core/tenant/user-station';
 import { COLORS } from '@/src/core/theme';
 import { useStationStore } from './store';
@@ -19,7 +18,6 @@ type Props = {
 };
 
 export function ConfigureStationScreen({ next }: Props) {
-  const { tenant } = useTenant();
   const { station, setStation } = useUserStation();
   const { showSuccess, showError } = useToast();
 
@@ -34,7 +32,6 @@ export function ConfigureStationScreen({ next }: Props) {
   const [greenhouseFocused, setGreenhouseFocused] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const isXflora = tenant === 'Xflora';
 
   useEffect(() => {
     if (farms.length === 0 && greenhouses.length === 0) load();
@@ -42,9 +39,11 @@ export function ConfigureStationScreen({ next }: Props) {
   }, []);
 
   const filteredGreenhouses = useMemo(
-    () => stationRepository.filterGreenhousesForFarm(tenant, farm, greenhouses),
-    [tenant, farm, greenhouses],
+    () => stationRepository.filterGreenhousesForFarm(farm, greenhouses),
+    [farm, greenhouses],
   );
+  // An instance with no greenhouses set up (Xflora) picks the farm only.
+  const noGreenhouses = greenhouses.length === 0;
 
   const greenhouseSuggestions = useMemo(() => {
     if (!greenhouse) return filteredGreenhouses;
@@ -58,7 +57,7 @@ export function ConfigureStationScreen({ next }: Props) {
       showError('Farm required.');
       return;
     }
-    if (!isXflora && !greenhouse.trim()) {
+    if (!noGreenhouses && !greenhouse.trim()) {
       showError('Station required.');
       return;
     }
@@ -66,7 +65,7 @@ export function ConfigureStationScreen({ next }: Props) {
     try {
       await setStation({
         userFarm: farm,
-        userGreenhouse: isXflora ? '' : greenhouse.trim(),
+        userGreenhouse: noGreenhouses ? '' : greenhouse.trim(),
       });
       showSuccess('Station saved.');
       if (next) router.replace(next as never);
@@ -98,7 +97,7 @@ export function ConfigureStationScreen({ next }: Props) {
           }}
         />
 
-        {!isXflora ? (
+        {!noGreenhouses ? (
           <>
             <View style={{ height: 12 }} />
             <LabeledInput

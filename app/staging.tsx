@@ -1,11 +1,4 @@
-import { useTenant } from '@/src/core/tenant/tenant-context';
-import { PendingScreen } from '@/src/core/ui/PendingScreen';
+import { serverScreen } from '@/src/composition/server-screen';
 import { KarenStagingScreen } from '@/src/tenants/karen/features/staging/StagingScreen';
 
-export default function StagingRoute() {
-  const { tenant } = useTenant();
-  if (tenant !== 'Karen' && tenant !== 'Demo') {
-    return <PendingScreen feature="Precooling" tenant={tenant} />;
-  }
-  return <KarenStagingScreen />;
-}
+export default serverScreen('Precooling', KarenStagingScreen);

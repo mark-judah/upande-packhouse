@@ -1,11 +1,4 @@
-import { useTenant } from '@/src/core/tenant/tenant-context';
-import { PendingScreen } from '@/src/core/ui/PendingScreen';
+import { serverScreen } from '@/src/composition/server-screen';
 import { KarenPrecoolingScreen } from '@/src/tenants/karen/features/precooling/PrecoolingScreen';
 
-export default function PrecoolingRoute() {
-  const { tenant } = useTenant();
-  if (tenant !== 'Karen' && tenant !== 'Demo') {
-    return <PendingScreen feature="Staging" tenant={tenant} />;
-  }
-  return <KarenPrecoolingScreen />;
-}
+export default serverScreen('Staging', KarenPrecoolingScreen);

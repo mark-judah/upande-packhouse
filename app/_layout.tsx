@@ -8,7 +8,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useFonts, DMSans_400Regular, DMSans_500Medium } from '@expo-google-fonts/dm-sans';
 import { Poppins_600SemiBold, Poppins_700Bold } from '@expo-google-fonts/poppins';
 import 'react-native-reanimated';
-import { TenantProvider, useTenant } from '@/src/core/tenant/tenant-context';
+import { TenantProvider } from '@/src/core/tenant/tenant-context';
 import { ToastProvider } from '@/src/core/ui/Toast';
 import { DialogHost } from '@/src/core/ui/DialogHost';
 import { OfflineBanner } from '@/src/core/ui/OfflineBanner';
@@ -17,15 +17,14 @@ import { useAuthStore } from '@/src/core/auth/store';
 import { useNetworkStore } from '@/src/core/network/store';
 import { reportVersionIfDue } from '@/src/core/version';
 import { reportInstall } from '@/src/core/version/install-register';
-import { getDrawerFor } from '@/src/composition/drawer-resolver';
+import { getDrawer } from '@/src/composition/drawer-resolver';
 import { UpdateProvider } from '@/src/core/updates/UpdateProvider';
 
 // Hold the native splash until fonts + auth hydrated.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function TenantScopedDrawer({ children }: { children: React.ReactNode }) {
-  const { tenant } = useTenant();
-  return <DrawerItemsProvider items={getDrawerFor(tenant)}>{children}</DrawerItemsProvider>;
+  return <DrawerItemsProvider items={getDrawer()}>{children}</DrawerItemsProvider>;
 }
 
 export default function RootLayout() {

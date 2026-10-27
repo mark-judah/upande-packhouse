@@ -3,12 +3,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Screen } from './Screen';
 import { Card } from './Card';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
-import type { Tenant } from '@/src/core/tenant/instance-mapper';
 
 type Props = {
   feature: string;
-  // Kept so existing callers compile; the tenant name is no longer rendered.
-  tenant?: Tenant | null;
 };
 
 export function PendingScreen({ feature }: Props) {

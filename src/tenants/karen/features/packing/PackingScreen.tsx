@@ -74,7 +74,7 @@ export function KarenPackingScreen() {
   const [labelWidthMm, setLabelWidthMm] = useState(DEFAULT_BOX_LABEL_WIDTH_MM);
   const [labelHeightMm, setLabelHeightMm] = useState(DEFAULT_BOX_LABEL_HEIGHT_MM);
   // null until formats load; then the server's default unless the operator picks another.
-  const [labelFormat, setLabelFormat] = useState<string | null>(null);
+  const [chosenFormat, setLabelFormat] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   // Saved label PDFs, for the OPL they were read for.
   const [savedFor, setSavedFor] = useState<{ opl: string; entries: SavedBoxLabels[] } | null>(null);
@@ -551,11 +551,13 @@ export function KarenPackingScreen() {
   useEffect(() => {
     if (boxLabelsOpen) loadBoxLabelFormats();
   }, [boxLabelsOpen, loadBoxLabelFormats]);
-  useEffect(() => {
-    setLabelFormat((cur) =>
-      cur && boxLabelFormats.includes(cur) ? cur : boxLabelDefaultFormat ?? boxLabelFormats[0] ?? null,
-    );
-  }, [boxLabelFormats, boxLabelDefaultFormat]);
+  const labelFormat = useMemo(
+    () =>
+      chosenFormat && boxLabelFormats.includes(chosenFormat)
+        ? chosenFormat
+        : boxLabelDefaultFormat ?? boxLabelFormats[0] ?? null,
+    [chosenFormat, boxLabelFormats, boxLabelDefaultFormat],
+  );
 
   const boxLabelFormatOptions = useMemo(
     () =>

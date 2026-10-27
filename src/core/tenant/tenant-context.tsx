@@ -1,9 +1,8 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { storage, StorageKeys } from '@/src/core/storage';
-import { getTenantByUrl, type Tenant } from './instance-mapper';
+import { useServerFeatures } from '@/src/core/api/server-features';
 
 type TenantContextValue = {
-  tenant: Tenant | null;
   instanceUrl: string | null;
   setInstanceUrl: (url: string | null) => Promise<void>;
   hydrated: boolean;
@@ -26,13 +25,13 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   const setInstanceUrl = async (url: string | null) => {
     if (url) await storage.set(StorageKeys.instanceUrl, url);
     else await storage.remove(StorageKeys.instanceUrl);
+    // Another site may have the methods this one lacked.
+    if (url !== instanceUrl) useServerFeatures.getState().reset();
     setUrlState(url);
   };
 
-  const tenant = getTenantByUrl(instanceUrl);
-
   return (
-    <TenantContext.Provider value={{ tenant, instanceUrl, setInstanceUrl, hydrated }}>
+    <TenantContext.Provider value={{ instanceUrl, setInstanceUrl, hydrated }}>
       {children}
     </TenantContext.Provider>
   );

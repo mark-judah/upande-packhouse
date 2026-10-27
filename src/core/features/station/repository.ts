@@ -1,4 +1,3 @@
-import type { Tenant } from '@/src/core/tenant/instance-mapper';
 import { stationApi } from './api';
 
 export type Farm = { name: string; farmName: string };
@@ -26,27 +25,18 @@ export const stationRepository = {
   },
 
   /**
-   * Per-tenant secondary filter applied after a farm is chosen. Mirrors the
-   * Flutter `getFilteredStations()` logic verbatim.
-   *   • Karen / Demo / Mona → warehouse name starts with the farm name
-   *   • Kikwetu Main       → warehouses NOT containing "EX"
-   *   • Kikwetu EX-LEWA    → warehouses containing "EX"
-   *   • Anything else      → no filter (fall back to full list)
+   * The chosen farm's greenhouses, from the names alone (whatever the instance):
+   *   • named after the farm → the warehouses starting with the farm name
+   *   • farm "Main"          → warehouses NOT containing "EX"
+   *   • farm "EX-LEWA"       → warehouses containing "EX"
+   *   • otherwise            → the full list
    */
-  filterGreenhousesForFarm(
-    tenant: Tenant | null,
-    farm: string,
-    greenhouses: string[],
-  ): string[] {
-    if (!farm || !tenant) return [];
-    if (tenant === 'Karen' || tenant === 'Demo' || tenant === 'Mona') {
-      return greenhouses.filter((g) => g.startsWith(farm));
-    }
-    if (tenant === 'Kikwetu') {
-      if (farm === 'Main') return greenhouses.filter((g) => !g.includes('EX'));
-      if (farm === 'EX-LEWA') return greenhouses.filter((g) => g.includes('EX'));
-      return greenhouses;
-    }
+  filterGreenhousesForFarm(farm: string, greenhouses: string[]): string[] {
+    if (!farm) return [];
+    const named = greenhouses.filter((g) => g.startsWith(farm));
+    if (named.length) return named;
+    if (farm === 'Main') return greenhouses.filter((g) => !g.includes('EX'));
+    if (farm === 'EX-LEWA') return greenhouses.filter((g) => g.includes('EX'));
     return greenhouses;
   },
 };
