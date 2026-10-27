@@ -111,6 +111,7 @@ export function KarenPackingScreen() {
     boxLabelFormats,
     boxLabelDefaultFormat,
     boxLabelFormatsLoading,
+    boxLabelFormatsError,
     loadBoxLabelFormats,
     loadPicklists,
     setDate,
@@ -1218,16 +1219,25 @@ export function KarenPackingScreen() {
           <Text style={s.modalHint}>
             Consolidates every box packed so far on this Order Pick List into one PDF.
           </Text>
-          {boxLabelFormatOptions.length > 0 ? (
-            <Dropdown
-              label="Print format"
-              value={labelFormat}
-              options={boxLabelFormatOptions}
-              placeholder={boxLabelFormatsLoading ? 'Loading…' : 'Select print format'}
-              iconName="file-document-outline"
-              onChange={setLabelFormat}
-              disabled={boxLabelsGenerating || previewing}
-            />
+          <Dropdown
+            label="Print format"
+            value={labelFormat}
+            options={boxLabelFormatOptions}
+            placeholder={
+              boxLabelFormatsLoading
+                ? 'Loading…'
+                : boxLabelFormatOptions.length === 0
+                  ? 'Server default'
+                  : 'Select print format'
+            }
+            iconName="file-document-outline"
+            onChange={setLabelFormat}
+            disabled={boxLabelsGenerating || previewing || boxLabelFormatOptions.length === 0}
+          />
+          {boxLabelFormatsError ? (
+            <Text style={s.modalHint}>
+              Couldn’t load print formats ({boxLabelFormatsError}). The server’s default will be used.
+            </Text>
           ) : null}
           <View style={s.modalRow}>
             <View style={s.modalInput}>

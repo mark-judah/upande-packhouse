@@ -191,6 +191,8 @@ type State = {
   boxLabelFormats: string[];
   boxLabelDefaultFormat: string | null;
   boxLabelFormatsLoading: boolean;
+  /** Why the format list couldn't load (null when it did, or hasn't been tried). */
+  boxLabelFormatsError: string | null;
 
   // actions
   loadPicklists: () => Promise<void>;
@@ -641,6 +643,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
   boxLabelFormats: [],
   boxLabelDefaultFormat: null,
   boxLabelFormatsLoading: false,
+  boxLabelFormatsError: null,
 
   loadPicklists: async () => {
     set({ picklistsLoading: true });
@@ -1324,16 +1327,17 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
   loadBoxLabelFormats: async () => {
     if (get().boxLabelFormatsLoading) return;
-    set({ boxLabelFormatsLoading: true });
+    set({ boxLabelFormatsLoading: true, boxLabelFormatsError: null });
     try {
       const raw = await karenPackingApi.getBoxLabelPrintFormats();
       set({
         boxLabelFormats: raw?.message?.formats ?? [],
         boxLabelDefaultFormat: raw?.message?.default ?? null,
       });
-    } catch {
-      // Not fatal: with no list the dialog just omits the picker and the
-      // server prints with its own default, exactly as before.
+    } catch (err) {
+      // Not fatal: printing still works with the server's own default -- but
+      // say why the picker is empty instead of silently hiding it.
+      set({ boxLabelFormatsError: mapAxiosError(err).message || 'Could not load print formats.' });
     } finally {
       set({ boxLabelFormatsLoading: false });
     }
@@ -1401,6 +1405,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
   boxLabelFormats: [],
   boxLabelDefaultFormat: null,
   boxLabelFormatsLoading: false,
+  boxLabelFormatsError: null,
     }),
 }));
 
