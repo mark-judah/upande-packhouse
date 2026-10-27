@@ -187,6 +187,12 @@ type State = {
   bypassSubmitting: boolean;
 
   boxLabelsGenerating: boolean;
+  /** Print formats offered for box labels + the server's default (null until loaded). */
+  boxLabelFormats: string[];
+  boxLabelDefaultFormat: string | null;
+  boxLabelFormatsLoading: boolean;
+  /** Why the format list couldn't load (null when it did, or hasn't been tried). */
+  boxLabelFormatsError: string | null;
 
   // actions
   loadPicklists: () => Promise<void>;
@@ -216,9 +222,16 @@ type State = {
   /** Log `bunches` unscannable bunches against the currently selected line's
    *  box (same caps as submitManual) and record the bypass reason. */
   submitBypass: (reasonName: string, bunches: number) => Promise<PackOutcome>;
+  loadBoxLabelFormats: () => Promise<void>;
   /** Consolidated Box Label PDF for every box packed on the selected OPL.
-   *  widthMm/heightMm omitted -> print format's own default (A4). */
-  generateBoxLabels: (widthMm?: number, heightMm?: number) => Promise<BoxLabelsOutcome>;
+   *  widthMm/heightMm omitted -> print format's own default (A4); printFormat
+   *  omitted -> the server's default; preview -> just the first box's label. */
+  generateBoxLabels: (opts?: {
+    widthMm?: number;
+    heightMm?: number;
+    printFormat?: string;
+    preview?: boolean;
+  }) => Promise<BoxLabelsOutcome>;
   reset: () => void;
 };
 
@@ -627,6 +640,10 @@ export const useKarenPackingStore = create<State>((set, get) => ({
   bypassSubmitting: false,
 
   boxLabelsGenerating: false,
+  boxLabelFormats: [],
+  boxLabelDefaultFormat: null,
+  boxLabelFormatsLoading: false,
+  boxLabelFormatsError: null,
 
   loadPicklists: async () => {
     set({ picklistsLoading: true });
@@ -1308,7 +1325,25 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     return { kind: 'success', message: logMessage };
   },
 
-  generateBoxLabels: async (widthMm, heightMm) => {
+  loadBoxLabelFormats: async () => {
+    if (get().boxLabelFormatsLoading) return;
+    set({ boxLabelFormatsLoading: true, boxLabelFormatsError: null });
+    try {
+      const raw = await karenPackingApi.getBoxLabelPrintFormats();
+      set({
+        boxLabelFormats: raw?.message?.formats ?? [],
+        boxLabelDefaultFormat: raw?.message?.default ?? null,
+      });
+    } catch (err) {
+      // Not fatal: printing still works with the server's own default -- but
+      // say why the picker is empty instead of silently hiding it.
+      set({ boxLabelFormatsError: mapAxiosError(err).message || 'Could not load print formats.' });
+    } finally {
+      set({ boxLabelFormatsLoading: false });
+    }
+  },
+
+  generateBoxLabels: async ({ widthMm, heightMm, printFormat, preview } = {}) => {
     const oplName = get().selectedOpl;
     if (!oplName) {
       const message = 'Select an order before generating box labels.';
@@ -1321,6 +1356,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
         order_pick_list: oplName,
         page_width_mm: widthMm,
         page_height_mm: heightMm,
+        ...(printFormat ? { print_format: printFormat } : {}),
+        ...(preview ? { preview: true } : {}),
       });
       const msg = raw?.message;
       if (!msg?.pdf_base64) {
@@ -1329,7 +1366,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       return {
         success: true,
         base64: msg.pdf_base64,
-        filename: msg.filename || `${oplName}-box-labels.pdf`,
+        filename: msg.filename || `${oplName}-${preview ? 'box-label-preview' : 'box-labels'}.pdf`,
         count: msg.count ?? 0,
       };
     } catch (err) {
@@ -1365,6 +1402,10 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       reasonSubmitting: false,
       bypassSubmitting: false,
       boxLabelsGenerating: false,
+  boxLabelFormats: [],
+  boxLabelDefaultFormat: null,
+  boxLabelFormatsLoading: false,
+  boxLabelFormatsError: null,
     }),
 }));
 
