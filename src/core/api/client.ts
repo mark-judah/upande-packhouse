@@ -2,6 +2,7 @@ import axios, { isAxiosError, type AxiosInstance, type AxiosRequestConfig } from
 import { storage, StorageKeys } from '@/src/core/storage';
 import { recordNetwork } from '@/src/core/debug/debugLogStore';
 import { attachStartTime, elapsed, logError, logRequest, logResponse, safeBody } from './log';
+import { noteMissingMethod, stampFeature } from './server-features';
 import { followDevHost } from './dev-host';
 
 let client: AxiosInstance | null = null;
@@ -9,6 +10,7 @@ let client: AxiosInstance | null = null;
 function buildClient(): AxiosInstance {
   const instance = axios.create({ timeout: 30000 });
   instance.interceptors.request.use(async (config) => {
+    stampFeature(config);
     const baseUrl = await storage.get(StorageKeys.instanceUrl);
     const cookie = await storage.get(StorageKeys.cookie);
     if (baseUrl) config.baseURL = followDevHost(baseUrl);
@@ -40,6 +42,7 @@ function buildClient(): AxiosInstance {
       if (isAxiosError(error)) {
         const duration = elapsed(error.config);
         logError(error, duration);
+        noteMissingMethod(error.config, error.response?.data);
         recordNetwork({
           status: 'error',
           method: error.config?.method,
