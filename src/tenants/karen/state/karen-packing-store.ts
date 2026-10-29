@@ -186,14 +186,6 @@ type State = {
   packingBypassReasonsLoading: boolean;
   bypassSubmitting: boolean;
 
-  boxLabelsGenerating: boolean;
-  /** Print formats offered for box labels + the server's default (null until loaded). */
-  boxLabelFormats: string[];
-  boxLabelDefaultFormat: string | null;
-  boxLabelFormatsLoading: boolean;
-  /** Why the format list couldn't load (null when it did, or hasn't been tried). */
-  boxLabelFormatsError: string | null;
-
   // actions
   loadPicklists: () => Promise<void>;
   setDate: (date: string) => Promise<void>;
@@ -222,22 +214,8 @@ type State = {
   /** Log `bunches` unscannable bunches against the currently selected line's
    *  box (same caps as submitManual) and record the bypass reason. */
   submitBypass: (reasonName: string, bunches: number) => Promise<PackOutcome>;
-  loadBoxLabelFormats: () => Promise<void>;
-  /** Consolidated Box Label PDF for every box packed on the selected OPL.
-   *  widthMm/heightMm omitted -> print format's own default (A4); printFormat
-   *  omitted -> the server's default; preview -> just the first box's label. */
-  generateBoxLabels: (opts?: {
-    widthMm?: number;
-    heightMm?: number;
-    printFormat?: string;
-    preview?: boolean;
-  }) => Promise<BoxLabelsOutcome>;
   reset: () => void;
 };
-
-export type BoxLabelsOutcome =
-  | { success: true; base64: string; filename: string; count: number }
-  | { success: false; message: string };
 
 // ---------------------------------------------------------------------
 // Helpers
@@ -639,11 +617,6 @@ export const useKarenPackingStore = create<State>((set, get) => ({
   packingBypassReasonsLoading: false,
   bypassSubmitting: false,
 
-  boxLabelsGenerating: false,
-  boxLabelFormats: [],
-  boxLabelDefaultFormat: null,
-  boxLabelFormatsLoading: false,
-  boxLabelFormatsError: null,
 
   loadPicklists: async () => {
     set({ picklistsLoading: true });
@@ -1325,57 +1298,6 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     return { kind: 'success', message: logMessage };
   },
 
-  loadBoxLabelFormats: async () => {
-    if (get().boxLabelFormatsLoading) return;
-    set({ boxLabelFormatsLoading: true, boxLabelFormatsError: null });
-    try {
-      const raw = await karenPackingApi.getBoxLabelPrintFormats();
-      set({
-        boxLabelFormats: raw?.message?.formats ?? [],
-        boxLabelDefaultFormat: raw?.message?.default ?? null,
-      });
-    } catch (err) {
-      // Not fatal: printing still works with the server's own default -- but
-      // say why the picker is empty instead of silently hiding it.
-      set({ boxLabelFormatsError: mapAxiosError(err).message || 'Could not load print formats.' });
-    } finally {
-      set({ boxLabelFormatsLoading: false });
-    }
-  },
-
-  generateBoxLabels: async ({ widthMm, heightMm, printFormat, preview } = {}) => {
-    const oplName = get().selectedOpl;
-    if (!oplName) {
-      const message = 'Select an order before generating box labels.';
-      recordLocal({ status: 'info', title: message, context: { action: 'generateBoxLabels', widthMm, heightMm } });
-      return { success: false, message };
-    }
-    set({ boxLabelsGenerating: true });
-    try {
-      const raw = await karenPackingApi.generateBoxLabelsPdf({
-        order_pick_list: oplName,
-        page_width_mm: widthMm,
-        page_height_mm: heightMm,
-        ...(printFormat ? { print_format: printFormat } : {}),
-        ...(preview ? { preview: true } : {}),
-      });
-      const msg = raw?.message;
-      if (!msg?.pdf_base64) {
-        return { success: false, message: 'The server did not return a PDF.' };
-      }
-      return {
-        success: true,
-        base64: msg.pdf_base64,
-        filename: msg.filename || `${oplName}-${preview ? 'box-label-preview' : 'box-labels'}.pdf`,
-        count: msg.count ?? 0,
-      };
-    } catch (err) {
-      return { success: false, message: mapAxiosError(err).message || 'Could not generate box labels.' };
-    } finally {
-      set({ boxLabelsGenerating: false });
-    }
-  },
-
   reset: () =>
     set({
       picklistsLoading: false,
@@ -1401,12 +1323,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       lastOutcome: null,
       reasonSubmitting: false,
       bypassSubmitting: false,
-      boxLabelsGenerating: false,
-  boxLabelFormats: [],
-  boxLabelDefaultFormat: null,
-  boxLabelFormatsLoading: false,
-  boxLabelFormatsError: null,
-    }),
+        }),
 }));
 
 // Fetch + recompute the guide. Does NOT touch currentBoxId / scannedBunchIds,

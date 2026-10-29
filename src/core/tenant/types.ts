@@ -6,6 +6,7 @@ export type DrawerItem = {
     | 'scheduler'
     | 'issuing'
     | 'packing'
+    | 'box-labels'
     | 'bunch-handover'
     | 'precooling'
     | 'staging'

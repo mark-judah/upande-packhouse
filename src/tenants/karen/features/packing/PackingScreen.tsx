@@ -1,8 +1,5 @@
 import { audio } from '@/src/core/audio';
 import { tomorrowISO } from '@/src/core/date';
-import { getSavedBoxLabels, recordSavedBoxLabels, type SavedBoxLabels } from '@/src/core/pdf/boxLabelsHistory';
-import { previewPdf, writeBase64PdfToFile } from '@/src/core/pdf/pdfDownload';
-import { SavedBoxLabelsSheet } from '@/src/core/pdf/SavedBoxLabelsSheet';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
 import { focusWhenReady } from '@/src/core/scanning/focus';
 import { followDevHost } from '@/src/core/api/dev-host';
@@ -12,8 +9,6 @@ import { Button } from '@/src/core/ui/Button';
 import { Alert, Card } from '@/src/core/ui/Card';
 import { DateSelector } from '@/src/core/ui/DateSelector';
 import { Dropdown } from '@/src/core/ui/Dropdown';
-import { FAB } from '@/src/core/ui/FAB';
-import { Input } from '@/src/core/ui/Input';
 import { ItemGroupFilter } from '@/src/core/ui/ItemGroupFilter';
 import { Screen } from '@/src/core/ui/Screen';
 import { useToast } from '@/src/core/ui/Toast';
@@ -27,23 +22,10 @@ import {
 import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
 import { useKarenPackingQualityStore } from '@/src/tenants/karen/state/karen-packing-quality-store';
 import { QualityIssueSheet } from './QualityIssueSheet';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-/** Matches FAB's own FAB_SIZE + its bottom offset formula (insets.bottom +
- *  8) -- used to stack the Saved Labels button directly above the Print
- *  button rather than overlapping it. */
-const FAB_SIZE = 56;
-const FAB_STACK_GAP = 12;
-
-/** Box Label's own print format defaults to A4 (see box_label.json) --
- *  matched here so the dialog opens on the size that already prints
- *  correctly, with room to override for a different label stock. */
-const DEFAULT_BOX_LABEL_WIDTH_MM = '210';
-const DEFAULT_BOX_LABEL_HEIGHT_MM = '297';
+import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 const COLOUR_HEX: Record<string, string> = {
   red: '#dc2626', white: '#f3f4f6', pink: '#ec4899', yellow: '#eab308',
@@ -68,18 +50,6 @@ export function KarenPackingScreen() {
   const [bypassOpen, setBypassOpen] = useState(false);
   const [bypassReason, setBypassReason] = useState<string | null>(null);
   const [bypassQty, setBypassQty] = useState('');
-  const [boxLabelsOpen, setBoxLabelsOpen] = useState(false);
-  // Shown inside the Print Box Labels modal: a toast would sit behind it.
-  const [boxLabelsError, setBoxLabelsError] = useState<string | null>(null);
-  const [labelWidthMm, setLabelWidthMm] = useState(DEFAULT_BOX_LABEL_WIDTH_MM);
-  const [labelHeightMm, setLabelHeightMm] = useState(DEFAULT_BOX_LABEL_HEIGHT_MM);
-  // null until formats load; then the server's default unless the operator picks another.
-  const [chosenFormat, setLabelFormat] = useState<string | null>(null);
-  const [previewing, setPreviewing] = useState(false);
-  // Saved label PDFs, for the OPL they were read for.
-  const [savedFor, setSavedFor] = useState<{ opl: string; entries: SavedBoxLabels[] } | null>(null);
-  const [savedLabelsSheetOpen, setSavedLabelsSheetOpen] = useState(false);
-  const insets = useSafeAreaInsets();
   const { showSuccess, showError } = useToast();
 
   const {
@@ -107,12 +77,6 @@ export function KarenPackingScreen() {
     packingBypassReasons,
     packingBypassReasonsLoading,
     bypassSubmitting,
-    boxLabelsGenerating,
-    boxLabelFormats,
-    boxLabelDefaultFormat,
-    boxLabelFormatsLoading,
-    boxLabelFormatsError,
-    loadBoxLabelFormats,
     loadPicklists,
     setDate,
     setItemGroup,
@@ -128,14 +92,12 @@ export function KarenPackingScreen() {
     submitUnderPackReason,
     loadPackingBypassReasons,
     submitBypass,
-    generateBoxLabels,
     reset,
   } = useKarenPackingStore();
 
   const openQualityIssue = useKarenPackingQualityStore((s) => s.openFor);
   const qualityIssueOpen = useKarenPackingQualityStore((s) => s.open);
 
-  const savedLabels = savedFor && savedFor.opl === selectedOpl ? savedFor.entries : [];
 
   const canonicalTeams = useKarenTeamsStore((s) => s.teams);
   const loadTeams = useKarenTeamsStore((s) => s.load);
@@ -484,20 +446,6 @@ export function KarenPackingScreen() {
     return Number.isFinite(n) && n > standardMax ? String(Math.max(0, standardMax)) : manualQty;
   })();
 
-  // Which PDFs are already on record for this OPL — drives the Saved Labels
-  // button's visibility, so a re-print doesn't require regenerating one just
-  // to look at it again.
-  useEffect(() => {
-    if (!selectedOpl) return;
-    let cancelled = false;
-    getSavedBoxLabels(selectedOpl).then((entries) => {
-      if (!cancelled) setSavedFor({ opl: selectedOpl, entries });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedOpl]);
-
   // Per-box breakdown: how many stems (and which varieties) are in each box.
   const boxBreakdown = useMemo(() => {
     const count = Math.max(1, packingGuide?.plannedBoxes ?? 1);
@@ -545,103 +493,6 @@ export function KarenPackingScreen() {
     }
     return out;
   }, [showTable, packingGuide, pickListItems]);
-
-  // Load the print formats when the dialog opens, and preselect the server's
-  // default unless the operator already chose one that is still offered.
-  useEffect(() => {
-    if (boxLabelsOpen) loadBoxLabelFormats();
-  }, [boxLabelsOpen, loadBoxLabelFormats]);
-  const labelFormat = useMemo(
-    () =>
-      chosenFormat && boxLabelFormats.includes(chosenFormat)
-        ? chosenFormat
-        : boxLabelDefaultFormat ?? boxLabelFormats[0] ?? null,
-    [chosenFormat, boxLabelFormats, boxLabelDefaultFormat],
-  );
-
-  const boxLabelFormatOptions = useMemo(
-    () =>
-      boxLabelFormats.map((f) => ({
-        label: f,
-        value: f,
-        sublabel: f === boxLabelDefaultFormat ? 'Default' : undefined,
-      })),
-    [boxLabelFormats, boxLabelDefaultFormat],
-  );
-
-  const labelSizeMm = () => {
-    const width = parseFloat(labelWidthMm);
-    const height = parseFloat(labelHeightMm);
-    return {
-      widthMm: Number.isFinite(width) && width > 0 ? width : undefined,
-      heightMm: Number.isFinite(height) && height > 0 ? height : undefined,
-    };
-  };
-
-  // One sample label (the first box) in the chosen format and size, so it can
-  // be checked before the whole order is printed. Opened in the OS preview
-  // sheet like the full PDF, but kept out of Saved Labels and the dialog stays
-  // open, ready to adjust and print.
-  const onPreviewBoxLabel = async () => {
-    setBoxLabelsError(null);
-    setPreviewing(true);
-    try {
-      const outcome = await generateBoxLabels({
-        ...labelSizeMm(),
-        printFormat: labelFormat ?? undefined,
-        preview: true,
-      });
-      if (!outcome.success) {
-        setBoxLabelsError(outcome.message);
-        return;
-      }
-      const path = await writeBase64PdfToFile(outcome.base64, outcome.filename);
-      await previewPdf(path);
-    } catch (err) {
-      setBoxLabelsError(err instanceof Error ? err.message : 'Could not open the PDF preview.');
-    } finally {
-      setPreviewing(false);
-    }
-  };
-
-  const onGenerateBoxLabels = async () => {
-    setBoxLabelsError(null);
-    const outcome = await generateBoxLabels({ ...labelSizeMm(), printFormat: labelFormat ?? undefined });
-    if (!outcome.success) {
-      setBoxLabelsError(outcome.message);
-      return;
-    }
-    if (!selectedOpl) return;
-    try {
-      const path = await writeBase64PdfToFile(outcome.base64, outcome.filename);
-      setBoxLabelsOpen(false);
-      // The OS print/preview sheet renders the PDF for real on both
-      // platforms (react-native-webview's local-file PDF support is
-      // unreliable, especially on Android's system WebView) and already
-      // carries its own save/share/print destinations.
-      await previewPdf(path);
-      const entry: SavedBoxLabels = {
-        path,
-        filename: outcome.filename,
-        count: outcome.count,
-        savedAt: Date.now(),
-      };
-      await recordSavedBoxLabels(selectedOpl, entry);
-      const opl = selectedOpl;
-      setSavedFor((prev) => ({ opl, entries: [entry, ...(prev && prev.opl === opl ? prev.entries : [])] }));
-    } catch (err) {
-      showError(err instanceof Error ? err.message : 'Could not open the PDF preview.');
-    }
-  };
-
-  const onSelectSavedEntry = async (entry: SavedBoxLabels) => {
-    setSavedLabelsSheetOpen(false);
-    try {
-      await previewPdf(entry.path);
-    } catch (err) {
-      showError(err instanceof Error ? err.message : 'Could not open the PDF preview.');
-    }
-  };
 
   return (
     <>
@@ -1173,23 +1024,6 @@ export function KarenPackingScreen() {
 
     </Screen>
 
-    <FAB
-      icon="print-outline"
-      onPress={() => {
-        setBoxLabelsError(null);
-        setBoxLabelsOpen(true);
-      }}
-      visible={showTable && !!selectedOpl}
-    />
-
-    <FAB
-      icon="albums-outline"
-      onPress={() => setSavedLabelsSheetOpen(true)}
-      visible={showTable && !!selectedOpl && savedLabels.length > 0}
-      color={COLORS.surface}
-      style={{ bottom: insets.bottom + 8 + FAB_SIZE + FAB_STACK_GAP, borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.border }}
-    />
-
     <QualityIssueSheet
       currentItemCode={selectedItemKey ? selectedItemKey.split('|')[0] : null}
       onDone={(message) => {
@@ -1199,99 +1033,6 @@ export function KarenPackingScreen() {
       }}
     />
 
-    {selectedOpl ? (
-      <SavedBoxLabelsSheet
-        visible={savedLabelsSheetOpen}
-        oplName={selectedOpl}
-        entries={savedLabels}
-        onClose={() => setSavedLabelsSheetOpen(false)}
-        onSelect={onSelectSavedEntry}
-      />
-    ) : null}
-
-    <Modal
-      visible={boxLabelsOpen}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setBoxLabelsOpen(false)}
-    >
-      <View style={s.modalBackdrop}>
-        <View style={s.modalCard}>
-          <Text style={s.modalTitle}>Print Box Labels</Text>
-          <Text style={s.modalHint}>
-            Consolidates every box packed so far on this Order Pick List into one PDF.
-          </Text>
-          <Dropdown
-            label="Print format"
-            value={labelFormat}
-            options={boxLabelFormatOptions}
-            placeholder={
-              boxLabelFormatsLoading
-                ? 'Loading…'
-                : boxLabelFormatOptions.length === 0
-                  ? 'Server default'
-                  : 'Select print format'
-            }
-            iconName="file-document-outline"
-            onChange={setLabelFormat}
-            disabled={boxLabelsGenerating || previewing || boxLabelFormatOptions.length === 0}
-          />
-          {boxLabelFormatsError ? (
-            <Text style={s.modalHint}>
-              Couldn’t load print formats ({boxLabelFormatsError}). The server’s default will be used.
-            </Text>
-          ) : null}
-          <View style={s.modalRow}>
-            <View style={s.modalInput}>
-              <Input
-                label="Width (mm)"
-                value={labelWidthMm}
-                onChangeText={setLabelWidthMm}
-                keyboardType="numeric"
-              />
-            </View>
-            <View style={s.modalInput}>
-              <Input
-                label="Height (mm)"
-                value={labelHeightMm}
-                onChangeText={setLabelHeightMm}
-                keyboardType="numeric"
-              />
-            </View>
-          </View>
-          {boxLabelsError ? (
-            <View style={s.modalError}>
-              <Ionicons name="alert-circle-outline" size={16} color={COLORS.danger} />
-              <Text style={s.modalErrorText}>{boxLabelsError}</Text>
-            </View>
-          ) : null}
-          <Button
-            label="Preview sample"
-            variant="outline"
-            onPress={onPreviewBoxLabel}
-            loading={previewing}
-            disabled={boxLabelsGenerating || previewing}
-            iconLeft="eye-outline"
-            style={{ alignSelf: 'stretch', marginTop: spacing.sm }}
-          />
-          <Button
-            label="Generate"
-            onPress={onGenerateBoxLabels}
-            loading={boxLabelsGenerating && !previewing}
-            disabled={previewing}
-            iconLeft="print-outline"
-            style={{ alignSelf: 'stretch' }}
-          />
-          <Button
-            label="Cancel"
-            variant="ghost"
-            onPress={() => setBoxLabelsOpen(false)}
-            disabled={boxLabelsGenerating}
-            style={{ alignSelf: 'stretch' }}
-          />
-        </View>
-      </View>
-    </Modal>
     </>
   );
 }
@@ -1349,31 +1090,6 @@ const s = StyleSheet.create({
   issuedCapRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
   issuedTag: { backgroundColor: COLORS.warn },
   debugBtn: { width: 32, alignItems: 'center', justifyContent: 'center', padding: 4 },
-  modalBackdrop: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center', justifyContent: 'center', padding: spacing.lg,
-  },
-  modalCard: {
-    width: '100%', maxWidth: 360, backgroundColor: COLORS.surface,
-    borderRadius: borderRadius.lg, padding: spacing.lg, gap: spacing.xs,
-  },
-  modalTitle: { fontFamily: fontFamily.bold, fontSize: fontSize.lg, color: COLORS.text },
-  modalHint: {
-    fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textMuted,
-    marginBottom: spacing.sm,
-  },
-  modalRow: { flexDirection: 'row', gap: spacing.md },
-  modalError: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-    marginTop: spacing.sm,
-    padding: spacing.sm,
-    borderRadius: 8,
-    backgroundColor: '#FEF3F2',
-  },
-  modalErrorText: { flex: 1, fontFamily: fontFamily.medium, fontSize: fontSize.sm, color: COLORS.danger },
-  modalInput: { flex: 1 },
   helper: {
     fontFamily: fontFamily.regular,
     fontSize: fontSize.xs,

@@ -225,18 +225,6 @@ export type RawPackingBypassResponse = {
   data?: { status?: string; message?: string; docname?: string };
 };
 
-// =====================================================================
-// generateBoxLabelsPdf — consolidates every Box Label on one OPL (the
-// real "Box Label" Print Format) into a single PDF, base64-encoded.
-// =====================================================================
-export type RawBoxLabelsPdfResponse = {
-  message?: { pdf_base64?: string; filename?: string; count?: number; print_format?: string };
-};
-
-export type RawBoxLabelPrintFormatsResponse = {
-  message?: { formats?: string[]; default?: string | null };
-};
-
 export const karenPackingApi = {
   /** List order pick lists for a given day (YYYY-MM-DD; defaults to today). */
   async fetchPicklists(date: string): Promise<RawPicklistsResponse> {
@@ -324,34 +312,6 @@ export const karenPackingApi = {
       method: 'POST',
       url: '/api/method/upande_packhouse.mobile.api.createPackingBypass',
       data: payload,
-    });
-  },
-
-  /** Consolidated Box Label PDF for every box packed on one OPL so far.
-   *  pageWidthMm / pageHeightMm are optional -- omit either to fall back
-   *  to the print format's own default (A4). */
-  generateBoxLabelsPdf(payload: {
-    order_pick_list: string;
-    page_width_mm?: number;
-    page_height_mm?: number;
-    /** One of getBoxLabelPrintFormats' names; omit for the server default. */
-    print_format?: string;
-    /** Render only the first box's label, as a sample. */
-    preview?: boolean;
-  }): Promise<RawBoxLabelsPdfResponse> {
-    return api<RawBoxLabelsPdfResponse>({
-      method: 'POST',
-      url: '/api/method/upande_packhouse.mobile.api.generateBoxLabelsPdf',
-      data: payload,
-    });
-  },
-
-  /** Print formats offered for box labels, and the default to preselect. */
-  getBoxLabelPrintFormats(): Promise<RawBoxLabelPrintFormatsResponse> {
-    return api<RawBoxLabelPrintFormatsResponse>({
-      method: 'POST',
-      url: '/api/method/upande_packhouse.mobile.api.getBoxLabelPrintFormats',
-      data: {},
     });
   },
 };

@@ -6,6 +6,7 @@ export const karenDrawer: DrawerItem[] = [
   { label: 'Bucket Logistics', route: 'bucket-logistics', icon: 'navigate-outline' },
   { label: 'Issuing',  route: 'issuing',  icon: 'send-outline' },
   { label: 'Packing',  route: 'packing',  icon: 'cube-outline' },
+  { label: 'Box Labels', route: 'box-labels', icon: 'pricetags-outline' },
   { label: 'Bunch Handover', route: 'bunch-handover', icon: 'swap-horizontal-outline' },
   // Names swapped on purpose: the "staging" screen is what the packhouse calls Precooling,
   // and the "precooling" screen is Staging.

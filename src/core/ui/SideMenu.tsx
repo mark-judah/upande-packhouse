@@ -28,6 +28,7 @@ const ROUTE_ICONS: Record<DrawerItem['route'], IconName> = {
   scheduler: 'list-outline',
   issuing: 'send-outline',
   packing: 'cube-outline',
+  'box-labels': 'pricetags-outline',
   'bunch-handover': 'swap-horizontal-outline',
   // The "staging" screen is shown as Precooling, the "precooling" one as Staging.
   precooling: 'layers-outline',

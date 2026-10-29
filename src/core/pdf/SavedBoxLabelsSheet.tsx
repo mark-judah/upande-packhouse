@@ -27,8 +27,8 @@ type Props = {
 export function SavedBoxLabelsSheet({ visible, oplName, entries, onClose, onSelect }: Props) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={s.backdrop}>
-        <View style={s.card}>
+      <Pressable style={s.backdrop} onPress={onClose}>
+        <Pressable style={s.card} onPress={() => {}}>
           <View style={s.header}>
             <Text style={s.title} numberOfLines={1}>Saved Labels — {oplName}</Text>
             <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Close">
@@ -53,8 +53,8 @@ export function SavedBoxLabelsSheet({ visible, oplName, entries, onClose, onSele
               </Pressable>
             ))}
           </ScrollView>
-        </View>
-      </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
