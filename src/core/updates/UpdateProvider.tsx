@@ -38,11 +38,12 @@ import {
  * applied an update only on the NEXT cold start, so a fix took two openings
  * to reach a phone. The Settings "Check for updates" button still works too.
  *
- * The download is started by the user, never automatically: an APK is tens of
- * MB, and phones here are often on metered data. A finished download is kept
- * and the button becomes "Install"; the installer opens on that tap, and a
- * dismissed installer can be reopened without downloading again. The check itself runs silently
- * once a day so the Settings screen already knows the answer when opened.
+ * A newer APK is downloaded in the background as soon as a check finds it, and
+ * only offered once the whole file is on the phone with the release's exact
+ * size and checksum -- a partial or damaged file never reaches the installer
+ * or the person. A finished download is kept and the button becomes
+ * "Install"; a dismissed installer can be reopened without downloading again.
+ * The check itself runs silently once a day.
  */
 
 /** A bundle downloaded within this long of opening is applied by an immediate
@@ -144,7 +145,11 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     const apk = check?.available ? check.apk : null;
     if (!apk || ready.current?.version === apk.version) return;
     let cancelled = false;
-    findDownloadedApk(apk.downloadUrl, { fileName: apk.assetName, expectedBytes: apk.sizeBytes }).then((uri) => {
+    findDownloadedApk(apk.downloadUrl, {
+      fileName: apk.assetName,
+      expectedBytes: apk.sizeBytes,
+      expectedMd5: apk.md5,
+    }).then((uri) => {
       if (cancelled || !uri) return;
       ready.current = { version: apk.version, uri };
       setDownloaded(apk.version);
@@ -180,6 +185,45 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /** Fetch the APK (resuming a partial file) and mark it ready once complete. */
+  const download = useCallback(async (apk: NonNullable<ApkCheck['apk']>) => {
+    setDownloading(true);
+    setProgress(null);
+    try {
+      const uri = await downloadApk(apk.downloadUrl, {
+        fileName: apk.assetName,
+        expectedBytes: apk.sizeBytes,
+        expectedMd5: apk.md5,
+        onProgress: setProgress,
+      });
+      ready.current = { version: apk.version, uri };
+      setDownloaded(apk.version);
+    } finally {
+      setDownloading(false);
+      setProgress(null);
+    }
+  }, []);
+
+  // A newer APK is fetched in the background as soon as it is known, so the
+  // update is only offered once it is 100% on the phone. Once per version per
+  // opening; a failure leaves the Settings button to retry by hand.
+  const autoFetched = useRef<string | null>(null);
+  useEffect(() => {
+    const apk = check?.available ? check.apk : null;
+    if (!apk || !apk.sizeBytes || !canInstallInApp()) return;
+    if (autoFetched.current === apk.version || ready.current?.version === apk.version) return;
+    if (busy.current) return;
+    autoFetched.current = apk.version;
+    busy.current = true;
+    download(apk)
+      .catch((err) => {
+        if (__DEV__) console.warn('[update] background download failed:', err);
+      })
+      .finally(() => {
+        busy.current = false;
+      });
+  }, [check, download]);
+
   const install = useCallback(async (target?: ApkCheck | null) => {
     const apk = (target ?? check)?.apk;
     if (!apk || busy.current) return false;
@@ -201,7 +245,11 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       if (ready.current?.version === apk.version) {
         // Still complete on disk? Otherwise fall through and fetch the rest.
         const uri = apk.sizeBytes
-          ? await findDownloadedApk(apk.downloadUrl, { fileName: apk.assetName, expectedBytes: apk.sizeBytes })
+          ? await findDownloadedApk(apk.downloadUrl, {
+              fileName: apk.assetName,
+              expectedBytes: apk.sizeBytes,
+              expectedMd5: apk.md5,
+            })
           : ready.current.uri;
         if (uri) {
           await launchInstaller(uri);
@@ -211,28 +259,15 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
         setDownloaded(null);
       }
 
-      setDownloading(true);
-      setProgress(null);
-      try {
-        const uri = await downloadApk(apk.downloadUrl, {
-          fileName: apk.assetName,
-          expectedBytes: apk.sizeBytes,
-          onProgress: setProgress,
-        });
-        ready.current = { version: apk.version, uri };
-        setDownloaded(apk.version);
-        return true;
-      } finally {
-        setDownloading(false);
-        setProgress(null);
-      }
+      await download(apk);
+      return true;
     } catch (err) {
       setInstallError(installErrorFor(err));
       return false;
     } finally {
       busy.current = false;
     }
-  }, [check]);
+  }, [check, download]);
 
   const value = useMemo(
     () => ({ check, checking, checkError, downloading, progress, downloaded, installError, refresh, install }),

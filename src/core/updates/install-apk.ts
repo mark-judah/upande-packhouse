@@ -116,12 +116,27 @@ async function sizeOf(uri: string): Promise<number> {
  */
 export async function findDownloadedApk(
   url: string,
-  opts: { fileName?: string | null; expectedBytes?: number | null } = {},
+  opts: { fileName?: string | null; expectedBytes?: number | null; expectedMd5?: string | null } = {},
 ): Promise<string | null> {
   if (Platform.OS !== 'android' || !url || !opts.expectedBytes) return null;
   const target = apkPath(url, opts.fileName);
   if (!target) return null;
-  return (await sizeOf(target)) === opts.expectedBytes ? target : null;
+  if ((await sizeOf(target)) !== opts.expectedBytes) return null;
+  if (await md5Matches(target, opts.expectedMd5)) return target;
+  // The right size but not this release's bytes: never hand it to the installer.
+  await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => {});
+  return null;
+}
+
+/** The file's MD5 (computed natively) is the release's, or the release published none. */
+async function md5Matches(uri: string, expected?: string | null): Promise<boolean> {
+  if (!expected) return true;
+  try {
+    const info = await FileSystem.getInfoAsync(uri, { md5: true });
+    return info.exists && !info.isDirectory && String(info.md5 || '').toLowerCase() === expected.toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -138,7 +153,12 @@ export async function findDownloadedApk(
  */
 export async function downloadApk(
   url: string,
-  opts: { fileName?: string; expectedBytes?: number | null; onProgress?: (p: DownloadProgress) => void } = {},
+  opts: {
+    fileName?: string;
+    expectedBytes?: number | null;
+    expectedMd5?: string | null;
+    onProgress?: (p: DownloadProgress) => void;
+  } = {},
 ): Promise<string> {
   if (Platform.OS !== 'android') throw new InstallError('APK installation is only possible on Android.');
   if (!url) throw new InstallError('No download link for this release.');
@@ -202,7 +222,14 @@ export async function downloadApk(
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => {});
       have = 0;
     }
-    if (expected && have === expected) return target;
+    if (expected && have === expected) {
+      if (await md5Matches(target, opts.expectedMd5)) return target;
+      // Whole size but the wrong bytes (a resumed file that was never this release's):
+      // throw it away and fetch the release again from the start.
+      await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => {});
+      stalled += 1;
+      continue;
+    }
     if (stalled > 0) await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * stalled));
 
     try {

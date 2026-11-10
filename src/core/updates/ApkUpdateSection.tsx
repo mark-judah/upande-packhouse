@@ -123,7 +123,7 @@ export function ApkUpdateSection() {
   if (check) {
     // Only news is shown: being up to date needs no line of its own.
     if (ready && apk) status = `v${apk.version} is downloaded and ready to install.`;
-    else if (available && apk) status = `v${apk.version} is available as a new APK.`;
+    else if (available && apk && !downloading) status = `v${apk.version} is available as a new APK.`;
   }
 
   return (
