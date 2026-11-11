@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import { storage, StorageKeys } from '@/src/core/storage';
 import { INSTALLED_APK_VERSION } from '@/src/core/version';
 
@@ -40,6 +41,8 @@ export type ApkRelease = {
   downloadUrl: string;
   assetName: string;
   sizeBytes: number | null;
+  /** MD5 of the file (from Pages' apk.json); null when unknown. */
+  md5: string | null;
 };
 
 export type ApkCheck = {
@@ -151,11 +154,65 @@ function toApkRelease(r: GithubRelease): ApkRelease | null {
     downloadUrl: asset.browser_download_url as string,
     assetName: asset.name as string,
     sizeBytes: asset.size ?? null,
+    md5: null,
   };
 }
 
-/** Ask GitHub now. Throws UpdateCheckError; caches a successful result. */
+type PagesApk = {
+  version?: string;
+  downloadUrl?: string;
+  sizeBytes?: number | null;
+  md5?: string;
+  notes?: string;
+  pageUrl?: string;
+};
+
+/** The newest APK as published to GitHub Pages (ota/apk.json): a static file,
+ *  so no API quota, and it carries the file's MD5. Null when it is not there or
+ *  cannot be read; GitHub is asked then. */
+async function fetchPagesApk(): Promise<ApkRelease | null> {
+  const base = String((Constants.expoConfig?.extra as { otaBaseUrl?: string } | undefined)?.otaBaseUrl || '')
+    .replace(/\/+$/, '');
+  if (!base) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${base}/apk.json?t=${Date.now()}`, { signal: controller.signal });
+    if (!res.ok) return null;
+    const j = (await res.json()) as PagesApk;
+    const version = String(j.version ?? '').replace(/^v/i, '');
+    if (!version || !j.downloadUrl) return null;
+    return {
+      version,
+      notes: typeof j.notes === 'string' ? j.notes.trim() : '',
+      pageUrl: j.pageUrl || j.downloadUrl,
+      downloadUrl: j.downloadUrl,
+      assetName: `upande_packhouse_v${version}.apk`,
+      sizeBytes: typeof j.sizeBytes === 'number' ? j.sizeBytes : null,
+      md5: typeof j.md5 === 'string' && /^[0-9a-f]{32}$/i.test(j.md5) ? j.md5 : null,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Ask now: the APK on Pages, else GitHub. Throws UpdateCheckError; caches a successful result. */
 export async function checkForApk(current: string = INSTALLED_APK_VERSION): Promise<ApkCheck> {
+  const pages = await fetchPagesApk();
+  if (pages) {
+    const result: ApkCheck = {
+      current,
+      latestVersion: pages.version,
+      apk: pages,
+      available: compareVersions(pages.version, current) > 0,
+    };
+    await storage
+      .set(StorageKeys.apkUpdateCheck, JSON.stringify({ at: Date.now(), result }))
+      .catch(() => {});
+    return result;
+  }
   const releases = (await fetchReleases()).filter((r) => !r.draft && !r.prerelease && r.tag_name);
   if (releases.length === 0) {
     throw new UpdateCheckError('no_releases', 'No release has been published yet.');

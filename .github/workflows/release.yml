@@ -323,6 +323,35 @@ jobs:
           fail_on_unmatched_files: true
           make_latest: true
 
+      # The app reads ota/apk.json first: size and MD5 let it install only a
+      # file that is complete and the exact one released.
+      - name: Write the APK's details
+        if: steps.version.outputs.release == 'apk'
+        run: |
+          set -euo pipefail
+          mkdir -p apkinfo
+          node -e '
+            const fs = require("fs");
+            const [version, tag, file, repo] = process.argv.slice(1);
+            const name = require("path").basename(file);
+            fs.writeFileSync("apkinfo/apk.json", JSON.stringify({
+              version, tag, assetName: name,
+              downloadUrl: `https://github.com/${repo}/releases/download/${tag}/${name}`,
+              sizeBytes: fs.statSync(file).size,
+              md5: require("crypto").createHash("md5").update(fs.readFileSync(file)).digest("hex"),
+              notes: fs.existsSync("RELEASE_NOTES.md") ? fs.readFileSync("RELEASE_NOTES.md", "utf8") : "",
+            }, null, 1));
+          ' "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.tag }}" "${{ steps.apk.outputs.path }}" "${{ github.repository }}"
+
+      - name: Push the APK's details to GitHub Pages
+        if: steps.version.outputs.release == 'apk'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./apkinfo
+          destination_dir: ota
+          keep_files: true
+
       - name: Publish GitHub Release (OTA)
         if: steps.version.outputs.release == 'ota'
         uses: softprops/action-gh-release@v2
