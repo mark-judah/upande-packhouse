@@ -1,9 +1,9 @@
 {
-  "id": "8fa9cd7d-c207-4534-9193-3c528913c1f9",
-  "createdAt": "2026-11-10T20:42:04.229Z",
+  "id": "93af3f25-267c-497c-bb31-b2e1ba25624f",
+  "createdAt": "2026-11-11T13:27:19.256Z",
   "runtimeVersion": "101.2",
   "launchAsset": {
-    "hash": "xPia479q1HKtejB94DFOcEA7-PwaK3jzD2xAcMzgH3g",
+    "hash": "tJzskdlmiMpgYUoegolZyN3StgB6hYwb0FG-2Wb8NdE",
     "key": "entry-3ab3569bbe7b0b6ae6fdbc3e58ef4162",
     "contentType": "application/javascript",
     "fileExtension": ".hbc",
@@ -636,7 +636,7 @@
       },
       "android": {
         "package": "com.upande.packhouse",
-        "versionCode": 105204,
+        "versionCode": 105205,
         "adaptiveIcon": {
           "backgroundColor": "#FFFFFF",
           "foregroundImage": "./assets/upande_logo.png"
@@ -721,6 +721,6 @@
       ]
     },
     "appVersion": "1.2.5",
-    "publishedAt": "2026-11-10T20:42:04.275Z"
+    "publishedAt": "2026-11-11T13:27:19.287Z"
   }
 }
