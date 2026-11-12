@@ -33,7 +33,7 @@ export type SchedulerOrder = {
   /** Where its stock is, as the Scheduler ranks it: at Kapkolia, at a remote farm, issued. */
   where: 'hub' | 'remote' | 'issued' | '';
   /** The sales farm the order is packed at (where "At …" is). */
-  salesFarm: string;
+  salesFarm?: string;
   customer: string;
   team: string;
   /** Linked Sales Order (for search). */

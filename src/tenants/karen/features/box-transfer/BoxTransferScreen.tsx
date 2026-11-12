@@ -151,7 +151,10 @@ export function KarenBoxTransferScreen() {
   const onTruck = st.loaded.filter((b) => b.vehicle === vehicle);
 
   // Receive Internal Transfer Boxes: count them off the truck and receive the whole trip, or scan each box.
-  const [receiving, setReceiving] = useState<TransferTrip | null>(null);
+  // the trip as the latest load has it (boxes scanned meanwhile change what is still on the way)
+  const [receivingKey, setReceivingKey] = useState<string | null>(null);
+  const receiving = receivingKey ? (st.trips.find((t) => t.key === receivingKey) ?? null) : null;
+  const setReceiving = (trip: TransferTrip | null) => setReceivingKey(trip?.key ?? null);
   const [count, setCount] = useState('');
   const expected = receiving ? receiving.total - receiving.received : 0;
   const onReceiveAll = async () => {

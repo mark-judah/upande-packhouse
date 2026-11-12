@@ -37,6 +37,8 @@ export const useKarenTeamsStore = create<TeamsState>((set, get) => ({
       // Filter options are a convenience, not critical data -- fail quiet
       // and let screens fall back to whatever team strings they already
       // have loaded locally.
+      // a newer read (another station) owns the loading flag
+      if (get().station !== station) return;
       set({ loading: false, loaded: true });
     }
   },

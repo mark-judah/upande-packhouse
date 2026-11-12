@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { mapAxiosError } from '@/src/core/api/client';
 import { tomorrowISO } from '@/src/core/date';
-import { storage } from '@/src/core/storage';
+import { storage, StorageKeys } from '@/src/core/storage';
+import { instanceKey } from '@/src/core/auth/known-instances';
 import { readUserStation } from '@/src/core/tenant/user-station';
 import {
   karenBoxTransferApi,
@@ -42,7 +43,7 @@ export type TransferTrip = {
 };
 
 const mapTrip = (t: RawTransferTrip): TransferTrip => ({
-  key: `${t.vehicle ?? ''}|${t.sent_at ?? ''}`,
+  key: `${t.from ?? ''}|${t.vehicle ?? ''}|${t.sent_at ?? ''}`,
   vehicle: String(t.vehicle ?? ''),
   sentAt: String(t.sent_at ?? ''),
   from: String(t.from ?? ''),
@@ -56,11 +57,18 @@ const mapTrip = (t: RawTransferTrip): TransferTrip => ({
 
 export type TransferOutcome = { kind: 'success' | 'warning' | 'error'; message: string };
 
-/** Where the station's chosen transfer truck is remembered. */
+/** Where the station's chosen transfer truck is remembered: per server, per station. */
 async function truckKey(): Promise<string> {
-  const farm = (await readUserStation())?.userFarm ?? '';
-  return `boxTransferTruck:${farm}`;
+  const [station, url, backup] = await Promise.all([
+    readUserStation(),
+    storage.get(StorageKeys.instanceUrl),
+    storage.get(StorageKeys.instanceUrlBackup),
+  ]);
+  return `boxTransferTruck:${instanceKey(url || backup)}:${station?.userFarm ?? ''}`;
 }
+
+/** Bumped by every load: a reply to an older one is dropped. */
+let loadSeq = 0;
 
 const mapBox = (b: RawTransferBox): TransferBox => ({
   boxLabel: String(b.box_label ?? ''),
@@ -145,12 +153,24 @@ export const useKarenBoxTransferStore = create<State>((set, get) => ({
   },
 
   load: async () => {
+    const seq = ++loadSeq;
     // another station: its own truck, not the one picked for the last
     const farm = (await readUserStation())?.userFarm ?? '';
+    if (seq !== loadSeq) return;
     if (get().vehicleFor !== farm) set({ vehicle: '', vehicleFor: farm });
     set({ loading: true, error: null });
+    const date = get().date;
+    // a newer load started, or the date or station changed while this one was out
+    const stale = async () => {
+      if (seq !== loadSeq) return true;
+      if (get().date === date && ((await readUserStation())?.userFarm ?? '') === farm) return false;
+      // nothing newer asked for it yet: read again for the date and station as they are now
+      if (seq === loadSeq) void get().load();
+      return true;
+    };
     try {
-      const raw = (await karenBoxTransferApi.fetch(get().date))?.message ?? {};
+      const raw = (await karenBoxTransferApi.fetch(date))?.message ?? {};
+      if (await stale()) return;
       set({
         loading: false,
         role: raw.role ?? 'none',
@@ -168,10 +188,12 @@ export const useKarenBoxTransferStore = create<State>((set, get) => ({
         const names = new Set((raw.trucks ?? []).map((t) => t.name));
         const loading = (raw.loaded ?? []).map((b) => String(b.vehicle ?? '')).find((v) => names.has(v));
         const last = await storage.get(await truckKey()).catch(() => null);
+        if (await stale()) return;
         const pick = loading || (last && names.has(last) ? last : '');
         if (pick && !get().vehicle) set({ vehicle: pick });
       }
     } catch (err) {
+      if (await stale()) return;
       set({ loading: false, error: mapAxiosError(err).message || 'Could not load the boxes.' });
     }
   },
@@ -228,5 +250,8 @@ export const useKarenBoxTransferStore = create<State>((set, get) => ({
   },
 
   // the truck stays: it is the station's transfer truck until another is picked
-  reset: () => set({ ...EMPTY, date: tomorrowISO() }),
+  reset: () => {
+    loadSeq += 1; // a load still out belongs to the screen that left
+    set({ ...EMPTY, date: tomorrowISO() });
+  },
 }));

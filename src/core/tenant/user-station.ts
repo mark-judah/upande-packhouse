@@ -36,25 +36,43 @@ async function rememberStation(station: UserStation | null): Promise<void> {
   await storage.set(StorageKeys.stationsByServer, JSON.stringify(all));
 }
 
+/** Bumped by every set/clear: a read that started before one never writes over it. */
+let stationGen = 0;
+/** Servers whose station is known to be in the per-server map (see readFromStorage). */
+const keptFor = new Set<string>();
+
 async function readFromStorage(): Promise<UserStation | null> {
+  const gen = stationGen;
   let raw = await storage.get(StorageKeys.userStation);
   if (!raw) {
-    // signed out, or back from another server: this server's station as it was configured
+    // Signed out: nothing to restore (the backup URL alone is not a session).
+    if (!(await storage.get(StorageKeys.instanceUrl))) return null;
+    // back from another server: this server's station as it was configured
     const kept = (await readStations())[await serverKey()];
     if (!kept?.userFarm) return null;
+    if (gen !== stationGen) return null;
     await storage.set(StorageKeys.userStation, JSON.stringify(kept));
     raw = JSON.stringify(kept);
   }
+  let station: UserStation;
   try {
     const parsed = JSON.parse(raw) as Partial<UserStation>;
     if (!parsed.userFarm) return null;
-    return {
+    station = {
       userFarm: parsed.userFarm,
       userGreenhouse: parsed.userGreenhouse ?? '',
     };
   } catch {
     return null;
   }
+  // Configured before stations were kept per server: keep it now, so the first logout doesn't lose it.
+  const key = await serverKey();
+  if (key && !keptFor.has(key)) {
+    const all = await readStations();
+    if (!all[key] && gen === stationGen) await rememberStation(station);
+    keptFor.add(key);
+  }
+  return station;
 }
 
 type State = {
@@ -73,13 +91,16 @@ const useStationStoreInternal = create<State>((set) => ({
     set({ station, loaded: true });
   },
   setStation: async (next) => {
+    stationGen += 1;
     await storage.set(StorageKeys.userStation, JSON.stringify(next));
     await rememberStation(next);
     set({ station: next });
   },
   clearStation: async () => {
-    await storage.remove(StorageKeys.userStation);
+    stationGen += 1;
+    // the per-server copy first: a read in between must not find it and put the station back
     await rememberStation(null);
+    await storage.remove(StorageKeys.userStation);
     set({ station: null });
   },
 }));

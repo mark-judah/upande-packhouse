@@ -57,16 +57,19 @@ export function KarenIssuingScreen() {
       loadTeams();
     }, [loadTeams]),
   );
-  // and every time the list is read (refresh, another date): the teams the server has for the station now
+  // another date: the teams the server has for the station now (also the first read)
   useEffect(() => {
     loadTeams();
-  }, [availableOrders, loadTeams]);
+  }, [selectedDate, loadTeams]);
+  // an explicit reload: the orders and the teams again
+  const reloadOrders = useCallback(async () => {
+    await Promise.all([loadOrders(), loadTeams()]);
+  }, [loadOrders, loadTeams]);
 
   useEffect(() => {
     loadOrders();
-    loadTeams();
     return () => reset();
-  }, [loadOrders, loadTeams, reset]);
+  }, [loadOrders, reset]);
 
   // Issued buckets drop off the scan list; progress tracks against the total.
   const unissuedItems = useMemo(
@@ -190,7 +193,7 @@ export function KarenIssuingScreen() {
   };
 
   return (
-    <Screen title="Issue from Coldstore" onRefresh={loadOrders}>
+    <Screen title="Issue from Coldstore" onRefresh={reloadOrders}>
       <Card title="Sale order">
         <DateSelector
           value={selectedDate}
@@ -239,7 +242,7 @@ export function KarenIssuingScreen() {
         {!ordersLoading && availableOrders.length === 0 ? (
           <>
             <View style={{ height: spacing.sm }} />
-            <Button label="Reload orders" variant="outline" onPress={loadOrders} />
+            <Button label="Reload orders" variant="outline" onPress={reloadOrders} />
           </>
         ) : null}
       </Card>
