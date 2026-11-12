@@ -42,6 +42,8 @@ export type FarmLoad = { farm: string; buckets: number };
 export type OrderFarm = { opl: string; orderName: string; farm: string; riding?: number };
 
 export type Trip = {
+  /** The sales farm this trip takes its buckets to. */
+  salesFarm: string;
   name: string;
   /** 1-based, global across all of today's trips, lowest packhouse-schedule number first. */
   sequence: number;
@@ -415,6 +417,7 @@ export function buildTrip(
     loadedBuckets: (n?.on_truck ?? raw.loaded_buckets) || 0,
     arrivedBuckets: (n?.shelved ?? raw.bucket_status?.shelved ?? raw.shelved_buckets) || 0,
     farmLoads: stops.map((st) => ({ farm: st.farm, buckets: st.buckets })),
+    salesFarm: raw.sales_farm || hub,
     state: tripState(raw, stops, hub),
     orderFarms: orderFarms(raw),
     status: status as TripStatus,
@@ -460,7 +463,8 @@ export function groupTrips(
     .sort((a, b) => a.seq - b.seq || a.raw.name.localeCompare(b.raw.name));
 
   const hub = data.packhouse || DEFAULT_HUB;
-  const trips = ranked.map(({ raw }, i) => buildTrip(raw, data.orders, i + 1, today, hub));
+  // Each trip arrives at its own sales farm (Remote Transfer Sales Farms), else the default one.
+  const trips = ranked.map(({ raw }, i) => buildTrip(raw, data.orders, i + 1, today, raw.sales_farm || hub));
   numberTrips(trips);
   trips.sort(byTruck);
 

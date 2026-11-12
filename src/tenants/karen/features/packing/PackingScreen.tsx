@@ -101,6 +101,16 @@ export function KarenPackingScreen() {
 
   const canonicalTeams = useKarenTeamsStore((s) => s.teams);
   const loadTeams = useKarenTeamsStore((s) => s.load);
+  // every visit: the station's own teams
+  useFocusEffect(
+    useCallback(() => {
+      loadTeams();
+    }, [loadTeams]),
+  );
+  // and every time the list is read (refresh, another date): the teams the server has for the station now
+  useEffect(() => {
+    loadTeams();
+  }, [availablePicklists, loadTeams]);
 
   useEffect(() => {
     loadPicklists();

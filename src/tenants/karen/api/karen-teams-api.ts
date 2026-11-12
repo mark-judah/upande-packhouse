@@ -1,4 +1,5 @@
 import { api } from '@/src/core/api/client';
+import { stationParams } from '@/src/core/tenant/user-station';
 
 /**
  * Canonical Packing Teams list, backed by upande_packhouse.mobile.api.
@@ -12,10 +13,12 @@ export type RawPackingTeamsResponse = {
 };
 
 export const karenTeamsApi = {
-  fetch(): Promise<RawPackingTeamsResponse> {
+  /** The station's own teams: a sales farm's station lists only the teams assigned to that farm. */
+  async fetch(): Promise<RawPackingTeamsResponse> {
     return api<RawPackingTeamsResponse>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.getPackingTeams',
+      params: await stationParams(),
     });
   },
 };

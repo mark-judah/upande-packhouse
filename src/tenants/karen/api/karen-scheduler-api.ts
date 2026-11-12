@@ -40,6 +40,8 @@ export type RawSchedulerOpl = {
   team?: string;
   custom_order_name?: string;
   custom_farm?: string;
+  /** The sales farm the order is packed at. */
+  sales_farm?: string;
   custom_team?: string;
   custom_total_stems?: number | string;
   custom_issuing_percentage?: number | string;

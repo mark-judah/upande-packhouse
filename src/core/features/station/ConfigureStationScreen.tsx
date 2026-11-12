@@ -57,10 +57,6 @@ export function ConfigureStationScreen({ next }: Props) {
       showError('Farm required.');
       return;
     }
-    if (!noGreenhouses && !greenhouse.trim()) {
-      showError('Station required.');
-      return;
-    }
     setSaving(true);
     try {
       await setStation({
@@ -101,7 +97,7 @@ export function ConfigureStationScreen({ next }: Props) {
           <>
             <View style={{ height: 12 }} />
             <LabeledInput
-              label="Current Station"
+              label="Current Station (optional)"
               iconName="home-variant-outline"
               value={greenhouse}
               onChangeText={setGreenhouse}

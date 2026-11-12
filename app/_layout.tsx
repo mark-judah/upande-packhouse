@@ -111,6 +111,7 @@ export default function RootLayout() {
                   <Stack.Screen name="packing" />
                   <Stack.Screen name="box-labels" />
                   <Stack.Screen name="loading" />
+                  <Stack.Screen name="box-transfer" />
                   <Stack.Screen name="bucket-logistics" />
                   <Stack.Screen name="dispatch" />
                   <Stack.Screen name="configure-station" />

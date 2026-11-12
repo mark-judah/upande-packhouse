@@ -107,6 +107,8 @@ export type RawTripNumbers = {
 export type RawTrip = {
   name: string;
   vehicle: string;
+  /** The sales farm the trip delivers to (its orders'). */
+  sales_farm?: string;
   trip_date: string;
   status: string;
   notes: string;

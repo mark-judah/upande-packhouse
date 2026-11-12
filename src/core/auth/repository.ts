@@ -3,6 +3,7 @@ import { api } from '@/src/core/api/client';
 import { loginRequest, probeBaseUrl } from './api';
 import { fetchCurrentUserRoles } from './roles-api';
 import { knownInstances } from './known-instances';
+import { reloadUserStation } from '@/src/core/tenant/user-station';
 import { clearServerData, isOtherServer } from './server-change';
 
 /** The stock /api/method/login response's `full_name` is computed as
@@ -61,6 +62,8 @@ export const authRepository = {
         storage.set(StorageKeys.fullName, fullName),
         storage.set(StorageKeys.passwordBackup, password),
       ]);
+      // this server's configured station, as it was before signing out or switching servers
+      await reloadUserStation();
 
       // The login response's own full_name is often a blank string (see
       // fetchRealFullName's comment) -- now that the cookie is stored, an
@@ -106,6 +109,7 @@ export const authRepository = {
       StorageKeys.emailBackup,
       StorageKeys.instanceUrlBackup,
       StorageKeys.knownInstances,
+      StorageKeys.stationsByServer,
     ]);
   },
 

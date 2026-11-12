@@ -12,6 +12,8 @@ export const karenDrawer: DrawerItem[] = [
   // and the "precooling" screen is Staging.
   { label: 'Staging', route: 'precooling', icon: 'layers-outline' },
   { label: 'Precooling', route: 'staging', icon: 'snow-outline' },
+  // a sales farm's packed boxes to the main sales farm for dispatch (no Loading Plan)
+  { label: 'Internal Box Transfer', route: 'box-transfer', icon: 'git-compare-outline' },
   { label: 'Loading',  route: 'loading',  icon: 'car-outline' },
   { label: 'Dispatch', route: 'dispatch', icon: 'paper-plane-outline' },
 ];

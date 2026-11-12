@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { Card } from '@/src/core/ui/Card';
 import { DateSelector } from '@/src/core/ui/DateSelector';
@@ -92,6 +92,12 @@ export function PackhouseDashboard() {
   const online = useNetworkStore((s) => s.online);
   const canonicalTeams = useKarenTeamsStore((s) => s.teams);
   const loadTeams = useKarenTeamsStore((s) => s.load);
+  // every visit: the station's own teams
+  useFocusEffect(
+    useCallback(() => {
+      loadTeams();
+    }, [loadTeams]),
+  );
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
 
   useEffect(() => {

@@ -13,6 +13,10 @@ export const stationApi = {
       params: { fields: '["*"]', limit: 1000 },
     });
   },
+  /** The sales farms (Production Settings > Shelf Locations, Sales Shelf): the farms a packhouse can be. */
+  fetchSalesFarms(): Promise<{ message?: { success?: boolean; farms?: string[] } }> {
+    return api({ method: 'GET', url: '/api/method/upande_packhouse.mobile.api.getSalesFarms' });
+  },
   fetchWarehouses(): Promise<RawList<RawWarehouse>> {
     return api<RawList<RawWarehouse>>({
       method: 'GET',
