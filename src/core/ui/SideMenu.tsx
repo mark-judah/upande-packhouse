@@ -34,6 +34,7 @@ const ROUTE_ICONS: Record<DrawerItem['route'], IconName> = {
   precooling: 'layers-outline',
   staging: 'snow-outline',
   loading: 'car-outline',
+  'box-transfer': 'git-compare-outline',
   'bucket-logistics': 'navigate-outline',
   dispatch: 'paper-plane-outline',
 };

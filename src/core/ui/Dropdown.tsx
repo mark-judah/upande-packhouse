@@ -90,6 +90,15 @@ export function Dropdown({
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <View style={s.overlay}>
+          {/* a tap outside the sheet closes it */}
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              setSearch('');
+              setOpen(false);
+            }}
+            accessibilityLabel="Close"
+          />
           <View style={[s.sheet, { paddingBottom: insets.bottom }]}>
             <View style={s.sheetHeader}>
               <Text style={s.sheetTitle}>{label || 'Select'}</Text>

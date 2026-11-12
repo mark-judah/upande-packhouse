@@ -1,3 +1,4 @@
+import { useFocusEffect } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Screen } from '@/src/core/ui/Screen';
@@ -35,6 +36,12 @@ export function KarenSchedulerScreen() {
   const { loading, error, date, orders, load, setDate } = useKarenSchedulerStore();
   const teams = useKarenTeamsStore((s) => s.teams);
   const loadTeams = useKarenTeamsStore((s) => s.load);
+  // every visit: the station's own teams
+  useFocusEffect(
+    useCallback(() => {
+      loadTeams();
+    }, [loadTeams]),
+  );
   const [query, setQuery] = useState('');
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
 
@@ -188,7 +195,7 @@ const OrderRow = memo(function OrderRow({ order }: { order: SchedulerOrder }) {
           {order.packed ? <Text style={s.packed}>packed</Text> : null}
           {atHub ? (
             <View style={s.hub}>
-              <Text style={s.hubText}>At Kapkolia</Text>
+              <Text style={s.hubText}>At {order.salesFarm || 'sales farm'}</Text>
             </View>
           ) : atFarm ? (
             <View style={[s.hub, s.farm]}>

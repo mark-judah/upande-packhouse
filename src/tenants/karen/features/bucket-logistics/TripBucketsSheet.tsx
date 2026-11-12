@@ -18,6 +18,8 @@ export type BucketListTarget = {
   title: string;
   pairs: OrderFarm[];
   trip: { name: string; status: TripStatus } | null;
+  /** The sales farm these buckets go to (a trip's own), when there is one. */
+  hub?: string;
 };
 
 type Props = { target: BucketListTarget | null; hub: string; onClose: () => void };
@@ -64,7 +66,7 @@ function BucketList({ target, hub, onClose }: Props & { target: BucketListTarget
               <Text style={s.secCount}>{sec.buckets.length}</Text>
             </View>
             {sec.buckets.map((b, i) => {
-              const stage = stageInfo(b.stage, hub);
+              const stage = stageInfo(b.stage, target.hub || hub);
               const color = b.varietyColor || sec.color;
               return (
                 <View

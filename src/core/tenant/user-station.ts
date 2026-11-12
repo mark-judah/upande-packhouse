@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
+import { instanceKey } from '@/src/core/auth/known-instances';
 import { storage, StorageKeys } from '@/src/core/storage';
 
 export type UserStation = {
@@ -8,9 +9,42 @@ export type UserStation = {
   userGreenhouse: string;
 };
 
+/** The server the app is on (signed in, or last signed in to). */
+async function serverKey(): Promise<string> {
+  const [url, backup] = await Promise.all([
+    storage.get(StorageKeys.instanceUrl),
+    storage.get(StorageKeys.instanceUrlBackup),
+  ]);
+  return instanceKey(url || backup);
+}
+
+async function readStations(): Promise<Record<string, UserStation>> {
+  try {
+    return JSON.parse((await storage.get(StorageKeys.stationsByServer)) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+/** This server's station, kept per server: a logout or a visit to another server never loses it. */
+async function rememberStation(station: UserStation | null): Promise<void> {
+  const key = await serverKey();
+  if (!key) return;
+  const all = await readStations();
+  if (station) all[key] = station;
+  else delete all[key];
+  await storage.set(StorageKeys.stationsByServer, JSON.stringify(all));
+}
+
 async function readFromStorage(): Promise<UserStation | null> {
-  const raw = await storage.get(StorageKeys.userStation);
-  if (!raw) return null;
+  let raw = await storage.get(StorageKeys.userStation);
+  if (!raw) {
+    // signed out, or back from another server: this server's station as it was configured
+    const kept = (await readStations())[await serverKey()];
+    if (!kept?.userFarm) return null;
+    await storage.set(StorageKeys.userStation, JSON.stringify(kept));
+    raw = JSON.stringify(kept);
+  }
   try {
     const parsed = JSON.parse(raw) as Partial<UserStation>;
     if (!parsed.userFarm) return null;
@@ -40,10 +74,12 @@ const useStationStoreInternal = create<State>((set) => ({
   },
   setStation: async (next) => {
     await storage.set(StorageKeys.userStation, JSON.stringify(next));
+    await rememberStation(next);
     set({ station: next });
   },
   clearStation: async () => {
     await storage.remove(StorageKeys.userStation);
+    await rememberStation(null);
     set({ station: null });
   },
 }));
@@ -83,4 +119,16 @@ export async function writeUserStation(station: UserStation): Promise<void> {
 }
 export async function clearUserStation(): Promise<void> {
   await useStationStoreInternal.getState().clearStation();
+}
+/** Call `fn` with the station's farm whenever the configured station changes; returns the unsubscribe. */
+export function onStationChange(fn: (farm: string) => void): () => void {
+  return useStationStoreInternal.subscribe((s, prev) => {
+    const farm = s.station?.userFarm ?? '';
+    if (farm !== (prev.station?.userFarm ?? '')) fn(farm);
+  });
+}
+
+/** Read the station again (after signing in): this server's own, restored from what it was set to. */
+export async function reloadUserStation(): Promise<void> {
+  await useStationStoreInternal.getState().hydrate();
 }

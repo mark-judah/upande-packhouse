@@ -3,12 +3,20 @@ import { stationApi } from './api';
 export type Farm = { name: string; farmName: string };
 
 export const stationRepository = {
+  /** The farms a packhouse station can be: the sales farms only. A server without that list
+   *  (another tenant) offers every farm. */
   async fetchFarms(): Promise<Farm[]> {
-    const raw = await stationApi.fetchFarms();
-    return (raw.data ?? []).map((f) => ({
-      name: f.name,
-      farmName: f.farm_name ?? f.name,
-    }));
+    const [raw, sales] = await Promise.all([
+      stationApi.fetchFarms(),
+      stationApi.fetchSalesFarms().catch(() => null),
+    ]);
+    const only = new Set(sales?.message?.success ? (sales.message.farms ?? []) : []);
+    return (raw.data ?? [])
+      .filter((f) => !only.size || only.has(f.name))
+      .map((f) => ({
+        name: f.name,
+        farmName: f.farm_name ?? f.name,
+      }));
   },
 
   /**

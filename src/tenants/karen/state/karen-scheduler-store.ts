@@ -32,6 +32,8 @@ export type SchedulerOrder = {
   scheduleNumber: number;
   /** Where its stock is, as the Scheduler ranks it: at Kapkolia, at a remote farm, issued. */
   where: 'hub' | 'remote' | 'issued' | '';
+  /** The sales farm the order is packed at (where "At …" is). */
+  salesFarm: string;
   customer: string;
   team: string;
   /** Linked Sales Order (for search). */
@@ -104,6 +106,7 @@ function buildOrder(
     orderName: (o.order_name || o.custom_order_name || name).toString(),
     scheduleNumber: Math.round(num(schedule[name])),
     where: where[name] ?? '',
+    salesFarm: (o.sales_farm ?? '').toString(),
     customer: (o.customer ?? '').toString(),
     team: (o.team || o.custom_team || '').toString(),
     salesOrder: (o.sales_order ?? '').toString(),

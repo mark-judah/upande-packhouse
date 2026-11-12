@@ -7,6 +7,8 @@ export const StorageKeys = {
   emailBackup: 'email_backup',
   fullName: 'fullname',
   userStation: 'userStation',
+  /** {server: station}: each server's configured station, kept through logout and server changes. */
+  stationsByServer: 'stationsByServer',
   versionLastReportedOn: 'versionLastReportedOn',
   userRoles: 'userRoles',
   biometricEnabled: 'biometric_enabled',

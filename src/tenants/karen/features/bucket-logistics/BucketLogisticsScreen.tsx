@@ -81,7 +81,7 @@ export function KarenBucketLogisticsScreen() {
   );
 
   const openTrip = useCallback(
-    (trip: Trip) => setListing({ title: trip.title, pairs: trip.orderFarms, trip: { name: trip.name, status: trip.status } }),
+    (trip: Trip) => setListing({ title: trip.title, pairs: trip.orderFarms, trip: { name: trip.name, status: trip.status }, hub: trip.salesFarm }),
     [],
   );
 

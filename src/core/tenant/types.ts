@@ -11,6 +11,7 @@ export type DrawerItem = {
     | 'precooling'
     | 'staging'
     | 'loading'
+    | 'box-transfer'
     | 'bucket-logistics'
     | 'dispatch';
   icon: string; // Ionicons name
