@@ -23,7 +23,7 @@ import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store'
 import { useKarenPackingQualityStore } from '@/src/tenants/karen/state/karen-packing-quality-store';
 import { QualityIssueSheet } from './QualityIssueSheet';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -119,6 +119,17 @@ export function KarenPackingScreen() {
     loadTeams();
     return () => reset();
   }, [loadPicklists, loadUnderPackReasons, loadPackingBypassReasons, loadTeams, reset]);
+
+  // Opened from Sea Freight with an order's pick list: go to its delivery day and open it.
+  const { opl: openOpl, date: openDate } = useLocalSearchParams<{ opl?: string; date?: string }>();
+  useEffect(() => {
+    if (!openOpl) return;
+    const store = useKarenPackingStore.getState();
+    (async () => {
+      if (openDate && openDate !== store.selectedDate) await store.setDate(openDate);
+      await useKarenPackingStore.getState().selectOpl(openOpl);
+    })();
+  }, [openOpl, openDate]);
 
   const isStandardRoses = packingGuide?.itemGroup === 'Standard Roses';
 

@@ -70,6 +70,8 @@ export type ReplaceSheet = {
   /** Why nothing can be offered, when that is the answer. */
   message: string | null;
   submitting: boolean;
+  /** Other pick lists that still have this bucket to issue. */
+  alsoOn?: { opl: string; orderName: string }[];
 };
 
 export type IssueOutcome =
@@ -599,6 +601,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
           neededQty: typeof res.needed_qty === 'number' ? res.needed_qty : null,
           message: res.found ? res.message || null : res.message || 'No bucket can replace this one.',
           submitting: false,
+          alsoOn: (res.also_on ?? []).map((o) => ({ opl: o.opl, orderName: o.order_name || o.opl })),
           candidates: (res.candidates ?? []).map((c) => ({
             bucket: c.new_bucket,
             shelf: c.shelf ?? null,

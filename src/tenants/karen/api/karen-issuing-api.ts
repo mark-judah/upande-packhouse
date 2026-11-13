@@ -115,6 +115,8 @@ export type RawReplacementOptions = {
   message?: string;
   needed_qty?: number;
   candidates?: RawReplacementCandidate[];
+  /** Other pick lists that still have this bucket to issue. */
+  also_on?: { opl: string; order_name?: string | null }[];
 };
 
 /** Replace reason "Issued offline": the OPLs the bucket was already issued on. */

@@ -13,6 +13,7 @@ export type DrawerItem = {
     | 'loading'
     | 'box-transfer'
     | 'bucket-logistics'
+    | 'sea-freight'
     | 'dispatch';
   icon: string; // Ionicons name
   /** Show in the drawer but render a "Coming soon" state and ignore taps. */
