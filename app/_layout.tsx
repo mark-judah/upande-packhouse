@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { AppState } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -18,13 +18,20 @@ import { useNetworkStore } from '@/src/core/network/store';
 import { reportVersionIfDue } from '@/src/core/version';
 import { reportInstall } from '@/src/core/version/install-register';
 import { getDrawer } from '@/src/composition/drawer-resolver';
+import { useSendsBoxesToMain } from '@/src/core/features/station/transfer-sender';
 import { UpdateProvider } from '@/src/core/updates/UpdateProvider';
 
 // Hold the native splash until fonts + auth hydrated.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function TenantScopedDrawer({ children }: { children: React.ReactNode }) {
-  return <DrawerItemsProvider items={getDrawer()}>{children}</DrawerItemsProvider>;
+  // a sales farm sending its boxes to the main one stages them only: no Precooling (route "staging")
+  const sends = useSendsBoxesToMain();
+  const items = useMemo(
+    () => (sends ? getDrawer().filter((i) => i.route !== 'staging') : getDrawer()),
+    [sends],
+  );
+  return <DrawerItemsProvider items={items}>{children}</DrawerItemsProvider>;
 }
 
 export default function RootLayout() {

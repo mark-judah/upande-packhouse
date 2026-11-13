@@ -14,7 +14,7 @@ export const stationApi = {
     });
   },
   /** The sales farms (Production Settings > Shelf Locations, Sales Shelf): the farms a packhouse can be. */
-  fetchSalesFarms(): Promise<{ message?: { success?: boolean; farms?: string[] } }> {
+  fetchSalesFarms(): Promise<{ message?: { success?: boolean; farms?: string[]; main?: string; senders?: string[] } }> {
     return api({ method: 'GET', url: '/api/method/upande_packhouse.mobile.api.getSalesFarms' });
   },
   fetchWarehouses(): Promise<RawList<RawWarehouse>> {
