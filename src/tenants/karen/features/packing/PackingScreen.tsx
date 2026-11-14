@@ -22,8 +22,9 @@ import {
 import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
 import { useKarenPackingQualityStore } from '@/src/tenants/karen/state/karen-packing-quality-store';
 import { QualityIssueSheet } from './QualityIssueSheet';
+import { karenSeaFreightApi } from '@/src/tenants/karen/api/karen-sea-freight-api';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -119,6 +120,28 @@ export function KarenPackingScreen() {
     loadTeams();
     return () => reset();
   }, [loadPicklists, loadUnderPackReasons, loadPackingBypassReasons, loadTeams, reset]);
+
+  // Sea freight orders' pick lists, flagged with a Sea Freight banner.
+  const [seaFreightOpls, setSeaFreightOpls] = useState<Set<string>>(new Set());
+  useFocusEffect(
+    useCallback(() => {
+      karenSeaFreightApi
+        .pickLists()
+        .then((names) => setSeaFreightOpls(new Set(names)))
+        .catch(() => {});
+    }, []),
+  );
+
+  // Opened from Sea Freight with an order's pick list: go to its delivery day and open it.
+  const { opl: openOpl, date: openDate } = useLocalSearchParams<{ opl?: string; date?: string }>();
+  useEffect(() => {
+    if (!openOpl) return;
+    const store = useKarenPackingStore.getState();
+    (async () => {
+      if (openDate && openDate !== store.selectedDate) await store.setDate(openDate);
+      await useKarenPackingStore.getState().selectOpl(openOpl);
+    })();
+  }, [openOpl, openDate]);
 
   const isStandardRoses = packingGuide?.itemGroup === 'Standard Roses';
 
@@ -237,9 +260,11 @@ export function KarenPackingScreen() {
       label: parts.map((p) => p.text).join('') || o.oplName,
       parts,
       value: o.oplName,
-      corner: o.schedule
-        ? `${o.scheduleTeam || 'Team'} #${o.schedule}`
-        : undefined,
+      corner: seaFreightOpls.has(o.oplName)
+        ? 'SEA FREIGHT'
+        : o.schedule
+          ? `${o.scheduleTeam || 'Team'} #${o.schedule}`
+          : undefined,
       subParts: [
         { text: `${o.oplName} · ` },
         ...(o.customer ? [{ text: `${o.customer} · ` }] : []),
@@ -557,6 +582,12 @@ export function KarenPackingScreen() {
           onChange={onPickOrder}
           disabled={picklistsLoading || filteredPicklists.length === 0}
         />
+        {selectedPicklist && seaFreightOpls.has(selectedPicklist.oplName) ? (
+          <View style={s.seaFreightBanner}>
+            <MaterialCommunityIcons name="ferry" size={18} color="#fff" />
+            <Text style={s.seaFreightText}>SEA FREIGHT</Text>
+          </View>
+        ) : null}
         {selectedPicklist ? (
           <Text style={s.helper}>
             <Text style={s.bold}>
@@ -1168,6 +1199,17 @@ const s = StyleSheet.create({
   boxStems: { fontFamily: fontFamily.bold, fontSize: 32, color: COLORS.text },
   boxStemsTotal: { fontFamily: fontFamily.regular, fontSize: fontSize.md, color: COLORS.textMuted },
   tag: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 },
+  seaFreightBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: '#0369A1',
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  seaFreightText: { fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: '#fff', letterSpacing: 1 },
   tagActive: { backgroundColor: COLORS.primary },
   tagFull: { backgroundColor: '#16a34a' },
   tagText: { fontFamily: fontFamily.bold, fontSize: 11, color: '#fff', letterSpacing: 0.5 },

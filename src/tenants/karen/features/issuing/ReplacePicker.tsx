@@ -96,6 +96,11 @@ export function ReplacePicker({
             </Pressable>
           ))}
         </View>
+        {sheet?.alsoOn?.length ? (
+          <Text style={s.issuedNote}>
+            {`Also on ${sheet.alsoOn.map((o) => `${o.orderName} (${o.opl})`).join(', ')}`}
+          </Text>
+        ) : null}
         {reason === 'Issued offline' ? (
           <Text style={[s.issuedNote, sameLine && s.issuedNoteSame]}>
             {issuedLoading

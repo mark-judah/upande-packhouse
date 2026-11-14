@@ -2,6 +2,9 @@ import { create } from 'zustand';
 
 /** Methods every screen shares (version, device register): a site without them says nothing about a screen. */
 const APP_WIDE = [/^frappe\./, /^upande_quality\.mobile\.mobile_app\./];
+/** Extras a screen can do without (the Packing screen's Sea Freight banner): a site without them
+ *  must not turn the whole screen into Coming soon. */
+const OPTIONAL = [/^upande_packhouse\.api\.sea_freight\.pick_lists$/];
 
 /** What Frappe answers for a method the site does not have. */
 const NO_SUCH_METHOD = /Failed to get method for command/i;
@@ -34,7 +37,7 @@ export function noteMissingMethod(config: { url?: string } | undefined, body: un
   const feature = (config as { appFeature?: string | null } | undefined)?.appFeature;
   if (!feature || !body || !NO_SUCH_METHOD.test(JSON.stringify(body))) return;
   const method = config?.url?.match(/\/api\/method\/([^?/]+)/)?.[1];
-  if (!method || APP_WIDE.some((re) => re.test(method))) return;
+  if (!method || [...APP_WIDE, ...OPTIONAL].some((re) => re.test(method))) return;
   const { missing } = useServerFeatures.getState();
   if (!missing[feature]) useServerFeatures.setState({ missing: { ...missing, [feature]: method } });
 }

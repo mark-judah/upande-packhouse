@@ -5,6 +5,7 @@ export const karenDrawer: DrawerItem[] = [
   { label: 'Scheduler', route: 'scheduler', icon: 'list-outline' },
   { label: 'Bucket Logistics', route: 'bucket-logistics', icon: 'navigate-outline' },
   { label: 'Issuing',  route: 'issuing',  icon: 'send-outline' },
+  { label: 'Sea Freight', route: 'sea-freight', icon: 'boat-outline' },
   { label: 'Packing',  route: 'packing',  icon: 'cube-outline' },
   { label: 'Box Labels', route: 'box-labels', icon: 'pricetags-outline' },
   { label: 'Bunch Handover', route: 'bunch-handover', icon: 'swap-horizontal-outline' },
