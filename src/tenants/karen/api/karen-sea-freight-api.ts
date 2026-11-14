@@ -15,8 +15,25 @@ export type SeaFreightLine = {
   receivedStems: number;
 };
 
+/** A bucket harvested for the order: what the receive scan expects. */
+export type SeaFreightBucket = {
+  bucket: string;
+  itemCode: string;
+  salesOrderItem: string;
+  stems: number;
+  greenhouse: string;
+};
+
 export type SeaFreightOrder = {
   name: string;
+  /** The Sales Order's order name (custom_order_name), when set. */
+  orderName: string;
+  /** Harvesting marked 100% done in the production app: ready to receive. */
+  harvestDone: boolean;
+  /** Received here: its pick lists exist and it packs like any order. */
+  received: boolean;
+  pickLists: string[];
+  buckets: SeaFreightBucket[];
   customer: string;
   deliveryDate: string;
   status: string;
@@ -40,6 +57,11 @@ type RawLine = {
 
 type RawOrder = {
   name?: string;
+  order_name?: string;
+  harvest_done?: boolean;
+  received?: boolean;
+  pick_lists?: string[];
+  buckets?: Array<{ bucket?: string; item_code?: string; sales_order_item?: string; stems?: number; greenhouse?: string }>;
   customer?: string;
   delivery_date?: string;
   status?: string;
@@ -61,6 +83,17 @@ export const karenSeaFreightApi = {
     });
     return (res.message?.orders ?? []).map((o) => ({
       name: String(o.name ?? ''),
+      orderName: String(o.order_name ?? ''),
+      harvestDone: !!o.harvest_done,
+      received: !!o.received,
+      pickLists: (o.pick_lists ?? []).map(String),
+      buckets: (o.buckets ?? []).map((b) => ({
+        bucket: String(b.bucket ?? ''),
+        itemCode: String(b.item_code ?? ''),
+        salesOrderItem: String(b.sales_order_item ?? ''),
+        stems: n(b.stems),
+        greenhouse: String(b.greenhouse ?? ''),
+      })),
       customer: String(o.customer ?? ''),
       deliveryDate: String(o.delivery_date ?? ''),
       status: String(o.status ?? ''),
@@ -79,5 +112,24 @@ export const karenSeaFreightApi = {
         receivedStems: n(l.received_stems),
       })),
     }));
+  },
+
+  /** Take the order in from its scanned buckets: builds its pick lists, issued and ready to pack. */
+  async receive(salesOrder: string, buckets: string[]): Promise<{ pickLists: string[] }> {
+    const res = await api<{ message?: { pick_lists?: string[] } }>({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.api.sea_freight.receive',
+      data: { sales_order: salesOrder, buckets },
+    });
+    return { pickLists: (res.message?.pick_lists ?? []).map(String) };
+  },
+
+  /** Pick lists of open sea freight orders, for the Packing screen's banner. */
+  async pickLists(): Promise<string[]> {
+    const res = await api<{ message?: string[] }>({
+      method: 'GET',
+      url: '/api/method/upande_packhouse.api.sea_freight.pick_lists',
+    });
+    return (res.message ?? []).map(String);
   },
 };
