@@ -57,7 +57,7 @@
         {
           "android": {
             "usesCleartextTraffic": true,
-            "extraProguardRules": "-keep class com.google.mlkit.vision.barcode.** { *; }\n-keep class com.google.mlkit.vision.common.** { *; }\n-keep class expo.modules.imageloader.** { *; }"
+            "enableMinifyInReleaseBuilds": false
           }
         }
       ],
