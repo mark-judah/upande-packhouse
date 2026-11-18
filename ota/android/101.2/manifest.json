@@ -1,13 +1,13 @@
 {
-  "id": "c2fd52a0-effc-4a89-bc10-c7394678de76",
-  "createdAt": "2026-11-18T04:33:21.561Z",
+  "id": "73a0aa09-310d-4d36-b072-f5963f3de5ab",
+  "createdAt": "2026-11-18T17:39:35.151Z",
   "runtimeVersion": "101.2",
   "launchAsset": {
-    "hash": "OKX-UVZ0mNuyTGpytQRx3mo3qSqA36hTE5pA_R_TnpY",
-    "key": "entry-0e1e622ec6d894dd62f9636069637ecc",
+    "hash": "-UuvSADz6AGw2mnPBBTOUGVYDtAd1WZ7_2rfhGMa0Mw",
+    "key": "entry-483b79708eb0c71ce7f0fb703ed91666",
     "contentType": "application/javascript",
     "fileExtension": ".hbc",
-    "url": "https://mark-judah.github.io/upande-packhouse/ota/android/101.2/_expo/static/js/android/entry-0e1e622ec6d894dd62f9636069637ecc.hbc"
+    "url": "https://mark-judah.github.io/upande-packhouse/ota/android/101.2/_expo/static/js/android/entry-483b79708eb0c71ce7f0fb703ed91666.hbc"
   },
   "assets": [
     {
@@ -619,7 +619,7 @@
       "name": "Upande Packhouse",
       "slug": "upande-packhouse",
       "owner": "markjk",
-      "version": "1.2.8",
+      "version": "1.2.9",
       "orientation": "portrait",
       "icon": "./assets/upande_logo.png",
       "scheme": "upandepackhouse",
@@ -636,7 +636,7 @@
       },
       "android": {
         "package": "com.upande.packhouse",
-        "versionCode": 105208,
+        "versionCode": 105209,
         "adaptiveIcon": {
           "backgroundColor": "#FFFFFF",
           "foregroundImage": "./assets/upande_logo.png"
@@ -670,7 +670,8 @@
           "expo-build-properties",
           {
             "android": {
-              "usesCleartextTraffic": true
+              "usesCleartextTraffic": true,
+              "extraProguardRules": "-keep class com.google.mlkit.vision.barcode.** { *; }\n-keep class com.google.mlkit.vision.common.** { *; }\n-keep class expo.modules.imageloader.** { *; }"
             }
           }
         ],
@@ -720,7 +721,7 @@
         "web"
       ]
     },
-    "appVersion": "1.2.8",
-    "publishedAt": "2026-11-18T04:33:21.592Z"
+    "appVersion": "1.2.9",
+    "publishedAt": "2026-11-18T17:39:35.170Z"
   }
 }
