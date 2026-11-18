@@ -14,6 +14,24 @@ const BARCODE_TYPES: BarcodeType[] = ['qr', 'code128', 'code39', 'ean13', 'ean8'
  *  preview has not found a code: a small or soft-printed QR the preview frames
  *  miss is usually readable in a still. */
 const STILL_SCAN_MS = 1500;
+/** A still that is not taken or decoded in this time is given up, so one stuck call never stops the stills. */
+const STILL_TIMEOUT_MS = 6000;
+
+function withTimeout<T>(p: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout')), STILL_TIMEOUT_MS);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
 
 export function CameraScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -39,10 +57,10 @@ export function CameraScannerScreen() {
       running = true;
       let uri: string | null = null;
       try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.9, shutterSound: false });
+        const photo = await withTimeout(cameraRef.current.takePictureAsync({ quality: 0.9, shutterSound: false }));
         uri = photo?.uri ?? null;
         if (!uri || stopped || handled.current) return;
-        const found = await scanFromURLAsync(uri, BARCODE_TYPES);
+        const found = await withTimeout(scanFromURLAsync(uri, BARCODE_TYPES));
         const data = found.find((b) => b.data)?.data;
         if (data && !stopped) onBarcode(data);
       } catch {
