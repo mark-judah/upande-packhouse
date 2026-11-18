@@ -49,6 +49,10 @@ export type DashboardKpi = {
 
 export type DashboardData = {
   deliveryDate: string;
+  /** The farm shown: a sales farm, or "" for every farm. */
+  farm: string;
+  salesFarms: string[];
+  allFarms: boolean;
   kpi: DashboardKpi;
   orders: DashboardOrder[];
   topVarieties: DashboardVariety[];
@@ -72,8 +76,11 @@ interface DashboardState {
    *  defaults a day ahead. Showing "tomorrow" by default made every KPI
    *  read 0 despite real transactions existing for today. */
   selectedDate: string;
+  /** The farm picked on the home screen; null until picked (the station's own sales farm). */
+  selectedFarm: string | null;
   load: () => Promise<void>;
   setDate: (date: string) => Promise<void>;
+  setFarm: (farm: string) => Promise<void>;
 }
 
 export const useKarenDashboardStore = create<DashboardState>((set, get) => ({
@@ -82,13 +89,14 @@ export const useKarenDashboardStore = create<DashboardState>((set, get) => ({
   error: null,
   // Opens on tomorrow's orders: the packhouse packs today what delivers tomorrow.
   selectedDate: tomorrowISO(),
+  selectedFarm: null,
 
   load: async () => {
     if (get().loading) return;
     set({ loading: true, error: null });
     try {
       const date = get().selectedDate;
-      const raw = await karenDashboardApi.fetch(date);
+      const raw = await karenDashboardApi.fetch(date, get().selectedFarm);
       const m = raw?.message;
       // A malformed/auth-failure response (no `message`, or one with neither
       // an error nor a kpi object) must not silently render as an all-zero
@@ -107,6 +115,9 @@ export const useKarenDashboardStore = create<DashboardState>((set, get) => ({
       const ordersDone = n(k.orders_done);
       const data: DashboardData = {
         deliveryDate: String(m.delivery_date ?? date),
+        farm: String(m.farm ?? ''),
+        salesFarms: (m.sales_farms ?? []).map(String),
+        allFarms: Boolean(m.all_farms),
         kpi: {
           boxesRequired: n(k.boxes_required),
           boxesPacked: n(k.boxes_packed),
@@ -164,6 +175,11 @@ export const useKarenDashboardStore = create<DashboardState>((set, get) => ({
 
   setDate: async (date) => {
     set({ selectedDate: date, data: null });
+    await get().load();
+  },
+
+  setFarm: async (farm) => {
+    set({ selectedFarm: farm, data: null });
     await get().load();
   },
 }));

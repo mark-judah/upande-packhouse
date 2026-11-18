@@ -5,6 +5,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { Card } from '@/src/core/ui/Card';
 import { DateSelector } from '@/src/core/ui/DateSelector';
+import { Dropdown } from '@/src/core/ui/Dropdown';
 import { ItemGroupFilter } from '@/src/core/ui/ItemGroupFilter';
 import {
   useKarenDashboardStore,
@@ -89,6 +90,8 @@ export function PackhouseDashboard() {
   const error = useKarenDashboardStore((s) => s.error);
   const selectedDate = useKarenDashboardStore((s) => s.selectedDate);
   const setDate = useKarenDashboardStore((s) => s.setDate);
+  const selectedFarm = useKarenDashboardStore((s) => s.selectedFarm);
+  const setFarm = useKarenDashboardStore((s) => s.setFarm);
   const online = useNetworkStore((s) => s.online);
   const canonicalTeams = useKarenTeamsStore((s) => s.teams);
   const loadTeams = useKarenTeamsStore((s) => s.load);
@@ -145,10 +148,31 @@ export function PackhouseDashboard() {
   const isEmpty = !loading && data && (kpi?.ordersTotal ?? 0) === 0;
   const stopCount = stopGroups.length;
 
+  // As the quality app's home: "All farms" and every sales farm; the station's own farm to start with.
+  const farmOptions = data
+    ? [
+        ...(data.allFarms ? [{ label: 'All farms', value: '' }] : []),
+        ...data.salesFarms.map((f) => ({ label: f, value: f })),
+      ]
+    : [];
+  const showFarmPicker = farmOptions.length > 1;
+
   return (
     <View>
       <View style={s.topRow}>
-        <Text style={s.dateText}>Packhouse overview</Text>
+        {showFarmPicker ? (
+          <View style={s.farmPicker}>
+            <Dropdown
+              label="Farm"
+              value={selectedFarm ?? data?.farm ?? ''}
+              options={farmOptions}
+              searchable={farmOptions.length > 8}
+              onChange={setFarm}
+            />
+          </View>
+        ) : (
+          <Text style={s.dateText}>Packhouse overview</Text>
+        )}
         <View style={[s.statusPill, online ? s.pillLive : s.pillOffline]}>
           <View style={[s.statusDot, online ? s.dotLive : s.dotOffline]} />
           <Text style={[s.statusText, online ? s.statusTextLive : s.statusTextOffline]}>
@@ -532,6 +556,7 @@ const s = StyleSheet.create({
     marginBottom: spacing.md,
   },
   dateText: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted },
+  farmPicker: { flex: 1, marginRight: spacing.sm },
   statusPill: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     paddingHorizontal: spacing.sm, paddingVertical: 4,
