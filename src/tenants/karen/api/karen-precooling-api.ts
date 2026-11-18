@@ -1,4 +1,5 @@
 import { api } from "@/src/core/api/client";
+import { stationParams } from "@/src/core/tenant/user-station";
 import type { RawStagingResponse } from "./karen-staging-api";
 
 export type PrecoolingAction = "in" | "out";
@@ -25,14 +26,15 @@ export type PrecoolingSummary = {
 };
 
 export const karenPrecoolingApi = {
-  /** Box counts per Sales Order for one delivery date: packed vs in precooling vs precooled. */
+  /** Box counts per Sales Order for one delivery date: packed vs in precooling vs precooled, for the
+   *  boxes at this device's sales farm (every box when no station is set). */
   async fetchPrecoolingSummary(
     deliveryDate: string,
   ): Promise<PrecoolingSummary> {
     const res = await api<{ message: PrecoolingSummary }>({
       method: "GET",
       url: "/api/method/upande_packhouse.mobile.api.fetchPrecoolingSummary",
-      params: { delivery_date: deliveryDate },
+      params: { delivery_date: deliveryDate, ...(await stationParams()) },
     });
     return res.message;
   },

@@ -59,7 +59,7 @@ type State = {
   coldstore: ColdstoreGroup[];
   coldstoreSkewMs: number;
   coldstoreLoading: boolean;
-  loadColdstore: (location?: string) => Promise<void>;
+  loadColdstore: (location?: string, station?: string) => Promise<void>;
   reset: () => void;
 };
 
@@ -122,10 +122,10 @@ export const useKarenStagingStore = create<State>((set, get) => ({
   coldstoreSkewMs: 0,
   coldstoreLoading: false,
 
-  loadColdstore: async (location) => {
+  loadColdstore: async (location, station) => {
     set({ coldstoreLoading: true });
     try {
-      const res = await karenStagingApi.fetchColdstoreBoxes(location);
+      const res = await karenStagingApi.fetchColdstoreBoxes(location, station);
       const { groups, skewMs } = mapColdstore(res?.message);
       set({ coldstore: groups, coldstoreSkewMs: skewMs, coldstoreLoading: false });
     } catch {

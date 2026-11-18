@@ -39,6 +39,11 @@ export type RawDashboardPacker = {
 
 export type RawDashboardData = {
   delivery_date?: string;
+  /** The farm shown: a sales farm, or "" for every farm. */
+  farm?: string;
+  /** The home screen's farm picker: every sales farm (plus All farms when all_farms). */
+  sales_farms?: string[];
+  all_farms?: boolean;
   kpi?: {
     boxes_required?: number;
     boxes_packed?: number;
@@ -64,11 +69,16 @@ export type RawDashboardResponse = {
 };
 
 export const karenDashboardApi = {
-  async fetch(date?: string): Promise<RawDashboardResponse> {
+  /** `farm`: a sales farm, "" for every farm, null/undefined for the station's own. */
+  async fetch(date?: string, farm?: string | null): Promise<RawDashboardResponse> {
     return api<RawDashboardResponse>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.getPackhouseDashboardData',
-      params: { ...(date ? { date } : {}), ...(await stationParams()) },
+      params: {
+        ...(date ? { date } : {}),
+        ...(await stationParams()),
+        ...(farm !== null && farm !== undefined ? { farm } : {}),
+      },
     });
   },
 };
