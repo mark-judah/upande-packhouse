@@ -31,6 +31,11 @@ type Props = {
 
 const DEBOUNCE_MS = 300;
 const REFOCUS_DELAY_MS = 100;
+/** A handheld scanner types a whole code in one fast burst; people type far slower. A burst that then goes
+ *  quiet for this long is a finished scan, Enter suffix or not. */
+const SCAN_IDLE_MS = 250;
+/** Characters arriving closer together than this (or several at once) come from a scanner, not a person. */
+const SCANNER_GAP_MS = 60;
 
 export const ScanField = forwardRef<ScanFieldHandle, Props>(function ScanField(
   {
@@ -55,6 +60,11 @@ export const ScanField = forwardRef<ScanFieldHandle, Props>(function ScanField(
   // Set while we're navigating to the camera screen so the sticky-focus loop
   // doesn't fight the nav transition.
   const navigatingAwayRef = useRef(false);
+  // Handheld-scanner burst: when the last character came in, whether this input is a scanner burst, and the
+  // timer that completes it once the scanner goes quiet.
+  const lastKeyAt = useRef(0);
+  const burstRef = useRef(false);
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const text = value ?? internal;
   const setText = (next: string) => {
@@ -78,6 +88,10 @@ export const ScanField = forwardRef<ScanFieldHandle, Props>(function ScanField(
   }));
 
   const fire = (code: string) => {
+    if (idleTimer.current) {
+      clearTimeout(idleTimer.current);
+      idleTimer.current = null;
+    }
     const trimmed = code.trim();
     if (!trimmed) return;
     const now = Date.now();
@@ -90,8 +104,26 @@ export const ScanField = forwardRef<ScanFieldHandle, Props>(function ScanField(
   };
 
   const handleChange = (next: string) => {
+    const before = text;
     setText(next);
     if (programmaticRef.current) return;
+    // A scanner with no Enter suffix (or one whose payload is not valid JSON on this device's keyboard
+    // layout) never triggers the checks below: finish its burst once it goes quiet.
+    const now = Date.now();
+    const added = next.length - before.length;
+    const fast = added > 1 || (before.length > 0 && now - lastKeyAt.current < SCANNER_GAP_MS);
+    if (!before.length) burstRef.current = added > 1;
+    else if (fast) burstRef.current = true;
+    else if (added > 0) burstRef.current = false;
+    lastKeyAt.current = now;
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+    idleTimer.current = null;
+    if (next.trim() && (burstRef.current || !showSoftKeyboard)) {
+      idleTimer.current = setTimeout(() => {
+        idleTimer.current = null;
+        fire(next);
+      }, SCAN_IDLE_MS);
+    }
     // Honeywell-style hardware scanners type characters fast, and some
     // configurations don't emit an Enter suffix — so onSubmitEditing never
     // fires. Detect a complete JSON payload as the scan-complete signal:

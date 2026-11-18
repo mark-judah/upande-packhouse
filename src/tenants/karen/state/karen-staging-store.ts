@@ -63,18 +63,22 @@ type State = {
   reset: () => void;
 };
 
-/** Pull the box label from a scan: `{box_label:"…"}` or a bare string. */
+/** Pull the box label from a scan: `{box_label:"…"}` or a bare string. A handheld scanner can add a prefix
+ *  or suffix, or type the quotes as other characters on its keyboard layout: the label after `box_label` is
+ *  still read then. */
 export function extractBoxLabel(raw: string): string {
-  const text = raw.replace(/[\r\n]+/g, '').trim();
+  const text = raw.replace(/[\u0000-\u001f\u007f]+/g, '').trim();
   if (!text) return '';
-  if (!text.startsWith('{')) return text;
   try {
     const parsed = JSON.parse(text) as Record<string, unknown>;
-    const label = parsed.box_label;
-    return typeof label === 'string' ? label.trim() : '';
+    const label = parsed?.box_label;
+    if (typeof label === 'string') return label.trim();
   } catch {
-    return '';
+    // not clean JSON: read it below
   }
+  const m = text.match(/box_label\W+([A-Za-z0-9_-]+)/i);
+  if (m) return m[1];
+  return text.includes('{') || text.includes('}') ? '' : text;
 }
 
 /** Pull the location from a scan: `{location|name|place:"…"}` or a bare string. */
