@@ -11,6 +11,7 @@ import { ScanField, type ScanFieldHandle } from "@/src/core/scanning/ScanField";
 import { focusWhenReady } from "@/src/core/scanning/focus";
 import { useToast } from "@/src/core/ui/Toast";
 import { useKarenPrecoolingStore } from "@/src/tenants/karen/state/karen-precooling-store";
+import { useUserStation } from "@/src/core/tenant/user-station";
 import type {
   PrecoolingCounts,
   PrecoolingOrder,
@@ -155,10 +156,12 @@ export function KarenPrecoolingScreen() {
     [summary, groupBy],
   );
 
+  // the counts are the station's sales farm's boxes: asked again when the station changes
+  const farm = useUserStation().station?.userFarm ?? "";
   useEffect(() => {
     void loadSummary();
-    return () => reset();
-  }, [loadSummary, reset]);
+  }, [loadSummary, farm]);
+  useEffect(() => () => reset(), [reset]);
 
   useFocusEffect(
     useCallback(() => {

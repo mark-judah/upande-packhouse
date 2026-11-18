@@ -39,8 +39,9 @@ export function KarenStagingScreen() {
   } = useKarenStagingStore();
   const { station } = useUserStation();
   const farm = station?.userFarm ?? '';
-  // The station's own location's boxes (Karen or Ravine); every box on a phone with no station.
+  // The station's own sales farm's boxes (Kapkolia, Chepsito, Karen); every box on a phone with no station.
   const site = farm ? (farm === 'Karen' ? 'Karen' : 'Ravine') : undefined;
+  const salesFarm = farm || undefined;
 
   // Times in the coldstore tick every 30s without asking the server again.
   const [now, setNow] = useState(() => Date.now());
@@ -51,8 +52,8 @@ export function KarenStagingScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      void loadColdstore(site);
-    }, [loadColdstore, site]),
+      void loadColdstore(site, salesFarm);
+    }, [loadColdstore, site, salesFarm]),
   );
   const boxCount = coldstore.reduce((n, g) => n + g.boxes.length, 0);
 
@@ -79,13 +80,13 @@ export function KarenStagingScreen() {
     if (outcome.kind === 'success') showSuccess(outcome.message || 'Box staged successfully');
     else if (outcome.kind === 'warning') showInfo(outcome.message || 'Check the scan and try again');
     else showError(outcome.message || 'Failed to create precooling entry');
-    if (outcome.kind === 'success') void loadColdstore(site);
+    if (outcome.kind === 'success') void loadColdstore(site, salesFarm);
     scanRef.current?.clear();
     focusWhenReady(scanRef);
   };
 
   return (
-    <Screen title="Precooling Entry" onRefresh={() => loadColdstore(site)}>
+    <Screen title="Precooling Entry" onRefresh={() => loadColdstore(site, salesFarm)}>
       <Card title="Precooling location">
         <ScanField
           ref={locRef}

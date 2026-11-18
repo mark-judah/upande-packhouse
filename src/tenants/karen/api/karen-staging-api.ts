@@ -31,12 +31,13 @@ export type RawColdstoreData = {
 };
 
 export const karenStagingApi = {
-  /** Boxes in the dispatch coldstore, not yet loaded, by drop-off point. */
-  fetchColdstoreBoxes(location?: string): Promise<{ message?: RawColdstoreData }> {
+  /** Boxes in the dispatch coldstore, not yet loaded, by drop-off point: the location's, and only those at
+   *  the device's sales farm (`station`) when it has one. */
+  fetchColdstoreBoxes(location?: string, station?: string): Promise<{ message?: RawColdstoreData }> {
     return api<{ message?: RawColdstoreData }>({
       method: 'GET',
       url: '/api/method/upande_packhouse.mobile.api.fetchColdstoreBoxes',
-      params: location ? { location } : {},
+      params: { ...(location ? { location } : {}), ...(station ? { station } : {}) },
     });
   },
 
