@@ -1,9 +1,9 @@
 {
-  "id": "7b5a504f-6535-4c25-9a01-b672c2a6f87d",
-  "createdAt": "2026-11-18T18:36:24.170Z",
+  "id": "44596448-58d4-4ec5-bcd4-a1af631cecab",
+  "createdAt": "2026-11-18T18:56:37.924Z",
   "runtimeVersion": "101.4",
   "launchAsset": {
-    "hash": "R500ElWm2YctoYDSv2H3Qr8WtubVZ1WAutXeUkzpoiU",
+    "hash": "CtqyW--PacWahwsHKNl1OrZfAWedewz9gBUv7On5DDY",
     "key": "entry-483b79708eb0c71ce7f0fb703ed91666",
     "contentType": "application/javascript",
     "fileExtension": ".hbc",
@@ -722,6 +722,6 @@
       ]
     },
     "appVersion": "1.4.0",
-    "publishedAt": "2026-11-18T18:36:24.196Z"
+    "publishedAt": "2026-11-18T18:56:37.943Z"
   }
 }
