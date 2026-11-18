@@ -1,9 +1,9 @@
 {
- "version": "1.2.0",
- "tag": "v1.2.0",
- "assetName": "upande_packhouse_v1.2.0.apk",
- "downloadUrl": "https://github.com/mark-judah/upande-packhouse/releases/download/v1.2.0/upande_packhouse_v1.2.0.apk",
- "sizeBytes": 67853365,
- "md5": "84f4da9b49829f0a2ddf924aaff595d7",
- "notes": ""
+ "version": "1.3.0",
+ "tag": "v1.3.0",
+ "assetName": "upande_packhouse_v1.3.0.apk",
+ "downloadUrl": "https://github.com/mark-judah/upande-packhouse/releases/download/v1.3.0/upande_packhouse_v1.3.0.apk",
+ "sizeBytes": 67933989,
+ "md5": "dd910f335420c1e141c48871fdb90930",
+ "notes": "## v1.3.0\n\n_No commits since the previous release._\n\n**Full changelog:** https://github.com/mark-judah/upande-packhouse/compare/v1.2.9...v1.3.0\n\n---\n\n> **Debug-signed build.** This APK is signed with Android's public debug\n> key, not a private upload key. Sideload it (you may need to allow\n> \"Install unknown apps\"); it cannot be published to Google Play, and\n> it will not install over a build signed with a different key.\n"
 }
