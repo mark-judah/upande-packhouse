@@ -91,6 +91,9 @@ export type PackingGuide = {
   isMixed: boolean;
   /** Planned box count (>= 1). */
   plannedBoxes: number;
+  /** The box numbers this pick list packs, in order: its Packing Guide's own (boxes 3-6 when the line's
+   *  boxes 1-2 went out on an earlier pick list), else 1..plannedBoxes. */
+  boxNumbers: number[];
   packratePerBox: number;
   items: PackingGuideItem[];
   /** Mixed BUNCH: this order's bunch is composed of the bouquet-guide rows below. */
@@ -408,6 +411,15 @@ function extractPickListWithFpl(
   return null;
 }
 
+/** The guide's own box numbers in order, else 1..planned. */
+function boxNumbersFrom(boxes: Record<number, unknown>, planned: number): number[] {
+  const own = Object.keys(boxes)
+    .map((k) => Math.trunc(Number(k)))
+    .filter((n) => n > 0)
+    .sort((a, b) => a - b);
+  return own.length ? own : Array.from({ length: Math.max(1, planned) }, (_, i) => i + 1);
+}
+
 /** Planned box count from the guide; always >= 1 (matches Flutter). */
 function plannedBoxesFrom(planned: number | null | undefined): number {
   const n = toNum(planned, 0);
@@ -529,6 +541,7 @@ function buildGuideView(payload: RawPickListWithFpl): {
     itemGroup: (guideRaw.item_group ?? '').toString(),
     isMixed: guideRaw.is_mixed === true,
     plannedBoxes: plannedBoxesFrom(guideRaw.planned_boxes),
+    boxNumbers: boxNumbersFrom(boxes, plannedBoxesFrom(guideRaw.planned_boxes)),
     packratePerBox: toNum(guideRaw.packrate_per_box, 0),
     items: (guideRaw.items ?? []).map((it) => ({
       itemCode: (it.item_code ?? '').toString(),
@@ -690,7 +703,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       closedBoxes: {},
       lastOutcome: null,
     });
-    await reloadGuide(oplName, set);
+    await reloadGuide(oplName, set, null, true);
   },
 
   selectPackItem: (itemKey) => set({ selectedItemKey: itemKey }),
@@ -1332,6 +1345,7 @@ async function reloadGuide(
   oplName: string,
   set: (partial: Partial<State>) => void,
   currentSelectedItemKey: string | null = null,
+  fresh = false,
 ): Promise<void> {
   set({ guideLoading: true });
   try {
@@ -1364,7 +1378,20 @@ async function reloadGuide(
       ? currentSelectedItemKey
       : firstIncompleteItemKey(view.pickListItems, view.packedBunchesTally);
 
+    // the box being packed is always one of this pick list's own numbers: a fresh load (or a box that is
+    // not on it) starts on its first box with room, so a second pick list of a line packs boxes 3-6, not 1-4
+    const numbers = view.packingGuide?.boxNumbers ?? [1];
+    const prev = useKarenPackingStore.getState().currentBoxId;
+    const stemsIn = (box: number) =>
+      Object.values(view.varietyStemsInBox).reduce((sum, byBox) => sum + (byBox[box] ?? 0), 0);
+    const rate = view.packingGuide?.packratePerBox ?? 0;
+    const boxPatch: Partial<State> =
+      fresh || !numbers.includes(prev)
+        ? { currentBoxId: numbers.find((b) => !(rate > 0) || stemsIn(b) < rate) ?? numbers[0] }
+        : {};
+
     set({
+      ...boxPatch,
       guideLoading: false,
       showTable: true,
       pickListItems: view.pickListItems,
