@@ -332,9 +332,10 @@ export function KarenPackingScreen() {
     (force = false) => {
       const st = useKarenPackingStore.getState();
       const guide = st.packingGuide;
-      const nextBox = st.currentBoxId + 1;
-      const maxBox = Math.max(1, guide?.plannedBoxes ?? 1);
-      if (nextBox > maxBox) return;
+      // the pick list's own next box number (boxes 3-6 on a line's second pick list)
+      const numbers = guide?.boxNumbers ?? [1];
+      const nextBox = numbers[numbers.indexOf(st.currentBoxId) + 1];
+      if (nextBox === undefined) return;
       if (force) {
         audio.beep();
         setBox(nextBox);
@@ -483,10 +484,9 @@ export function KarenPackingScreen() {
 
   // Per-box breakdown: how many stems (and which varieties) are in each box.
   const boxBreakdown = useMemo(() => {
-    const count = Math.max(1, packingGuide?.plannedBoxes ?? 1);
+    const numbers = packingGuide?.boxNumbers ?? [1];
     const rate = packingGuide?.packratePerBox ?? 0;
-    return Array.from({ length: count }, (_, i) => {
-      const boxId = i + 1;
+    return numbers.map((boxId) => {
       const varieties: { variety: string; stems: number }[] = [];
       let total = 0;
       for (const [variety, byBox] of Object.entries(varietyStemsInBox)) {
@@ -498,7 +498,7 @@ export function KarenPackingScreen() {
       }
       return { boxId, total, rate, varieties };
     });
-  }, [packingGuide?.plannedBoxes, packingGuide?.packratePerBox, varietyStemsInBox]);
+  }, [packingGuide?.boxNumbers, packingGuide?.packratePerBox, varietyStemsInBox]);
 
   // Surface orders that were set up wrongly in the ERP so the operator knows
   // why the box math may be off (missing packrate / box count / bunch size).
