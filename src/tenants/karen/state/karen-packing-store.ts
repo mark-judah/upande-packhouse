@@ -170,6 +170,9 @@ type State = {
   packedBunchesTally: Record<string, number>;
   /** variety -> (boxNumber -> stems already in that box). */
   varietyStemsInBox: Record<string, Record<number, number>>;
+  /** `${variety}|${stemsPerBunch}` -> (boxNumber -> stems): a variety on two lines of one box (4 bunches of 5
+   *  and 4 bunches of 20 Aqua) counts each line on its own. */
+  lineStemsInBox: Record<string, Record<number, number>>;
   scannedBunchIds: string[];
   currentBoxId: number;
   lastScannedKey: string | null;
@@ -434,6 +437,7 @@ function buildGuideView(payload: RawPickListWithFpl): {
   packingGuide: PackingGuide | null;
   packedBunchesTally: Record<string, number>;
   varietyStemsInBox: Record<string, Record<number, number>>;
+  lineStemsInBox: Record<string, Record<number, number>>;
   saleOrderId: string;
   customerId: string;
 } {
@@ -479,6 +483,7 @@ function buildGuideView(payload: RawPickListWithFpl): {
 
   // stems already packed, per variety per box
   const varietyStemsInBox: Record<string, Record<number, number>> = {};
+  const lineStemsInBox: Record<string, Record<number, number>> = {};
   for (const fpl of farmPackLists) {
     for (const item of fpl.pack_list_item ?? []) {
       const boxNum = parseInt((item.box_id ?? '1').toString(), 10) || 1;
@@ -501,6 +506,9 @@ function buildGuideView(payload: RawPickListWithFpl): {
       varietyStemsInBox[variety] = varietyStemsInBox[variety] ?? {};
       varietyStemsInBox[variety][boxNum] =
         (varietyStemsInBox[variety][boxNum] ?? 0) + stems;
+      const lk = lineKey(variety, item.bunch_uom ? stemsPerBunch(item.bunch_uom.toString()) : 0);
+      lineStemsInBox[lk] = lineStemsInBox[lk] ?? {};
+      lineStemsInBox[lk][boxNum] = (lineStemsInBox[lk][boxNum] ?? 0) + stems;
     }
   }
 
@@ -564,6 +572,7 @@ function buildGuideView(payload: RawPickListWithFpl): {
     packingGuide,
     packedBunchesTally,
     varietyStemsInBox,
+    lineStemsInBox,
     saleOrderId: (opl.sales_order ?? '').toString(),
     customerId: (opl.customer ?? '').toString(),
   };
@@ -587,9 +596,34 @@ function extractBunch(raw: RawBunchResponse): { bunch: RawBunchEntry | null; err
 
 /** target stems per variety per box for a mixed box: that box's own Packing Guide row
  *  when there is one, else the variety's planned stems split evenly over the boxes. */
-export function targetPerVariety(guide: PackingGuide, variety: string, box?: number): number {
+export const lineKey = (variety: string, perBunch: number) => `${variety}|${perBunch || 0}`;
+
+/** The box's rows of this variety -- only its own line's (same bunch size) when the variety is on two lines of the
+ *  box (4 bunches of 5 and 4 bunches of 20 Aqua). */
+function varietyRows(guide: PackingGuide, variety: string, box?: number, perBunch?: number): BoxContentItem[] | null {
   const rows = box ? guide.boxes[box] : undefined;
-  if (rows && rows.length) return rows.filter((r) => r.variety === variety).reduce((n, r) => n + r.stems, 0);
+  if (!rows || !rows.length) return null;
+  const mine = rows.filter((r) => r.variety === variety);
+  return splitLines(mine) && perBunch ? mine.filter((r) => r.stemsPerBunch === perBunch) : mine;
+}
+const splitLines = (rows: BoxContentItem[]) => new Set(rows.map((r) => r.stemsPerBunch)).size > 1;
+
+/** Stems of this variety already in the box: of its own line when the box holds the variety on two lines. */
+export function stemsInBoxOf(
+  state: { varietyStemsInBox: Record<string, Record<number, number>>; lineStemsInBox: Record<string, Record<number, number>> },
+  guide: PackingGuide | null,
+  variety: string,
+  box: number,
+  perBunch?: number,
+): number {
+  const rows = guide ? (guide.boxes[box] ?? []).filter((r) => r.variety === variety) : [];
+  if (perBunch && splitLines(rows)) return state.lineStemsInBox[lineKey(variety, perBunch)]?.[box] ?? 0;
+  return state.varietyStemsInBox[variety]?.[box] ?? 0;
+}
+
+export function targetPerVariety(guide: PackingGuide, variety: string, box?: number, perBunch?: number): number {
+  const rows = varietyRows(guide, variety, box, perBunch);
+  if (rows) return rows.reduce((n, r) => n + r.stems, 0);
   const item = guide.items.find((i) => i.itemCode === variety);
   if (!item || guide.plannedBoxes <= 0) return 0;
   return Math.round(item.plannedStems / guide.plannedBoxes);
@@ -614,6 +648,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
   packedBunchesTally: {},
   varietyStemsInBox: {},
+  lineStemsInBox: {},
   scannedBunchIds: [],
   currentBoxId: 1,
   lastScannedKey: null,
@@ -670,6 +705,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       issueCap: null,
       packedBunchesTally: {},
       varietyStemsInBox: {},
+      lineStemsInBox: {},
       scannedBunchIds: [],
       currentBoxId: 1,
       lastScannedKey: null,
@@ -697,6 +733,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       issueCap: null,
       packedBunchesTally: {},
       varietyStemsInBox: {},
+      lineStemsInBox: {},
       scannedBunchIds: [],
       currentBoxId: 1,
       lastScannedKey: null,
@@ -772,8 +809,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
     // Strict per-variety limit for mixed boxes (+ optimistic reserve).
     if (guide && (guide.isMixed || guide.isMixedBunch) && variety) {
-      const target = targetPerVariety(guide, variety, state.currentBoxId);
-      const alreadyInBox = state.varietyStemsInBox[variety]?.[state.currentBoxId] ?? 0;
+      const target = targetPerVariety(guide, variety, state.currentBoxId, bunchStems);
+      const alreadyInBox = stemsInBoxOf(state, guide, variety, state.currentBoxId, bunchStems);
       if (alreadyInBox + bunchStems > target) {
         return fail(
           'warning',
@@ -853,8 +890,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
     // Re-check mixed target against the bunch's resolved variety.
     if (guide && (guide.isMixed || guide.isMixedBunch) && pVariety) {
-      const target = targetPerVariety(guide, pVariety, state.currentBoxId);
-      const alreadyInBox = state.varietyStemsInBox[pVariety]?.[state.currentBoxId] ?? 0;
+      const target = targetPerVariety(guide, pVariety, state.currentBoxId, pStems);
+      const alreadyInBox = stemsInBoxOf(state, guide, pVariety, state.currentBoxId, pStems);
       if (alreadyInBox + pStems > target) {
         set({ submitting: false });
         return fail(
@@ -954,8 +991,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     // Cap 3 — mixed boxes: never exceed this variety's per-box target.
     let varietyRemaining = Infinity;
     if (guide && (guide.isMixed || guide.isMixedBunch)) {
-      const target = targetPerVariety(guide, item.itemCode, state.currentBoxId);
-      const inBox = state.varietyStemsInBox[item.itemCode]?.[state.currentBoxId] ?? 0;
+      const target = targetPerVariety(guide, item.itemCode, state.currentBoxId, perBunch);
+      const inBox = stemsInBoxOf(state, guide, item.itemCode, state.currentBoxId, perBunch);
       varietyRemaining = Math.max(0, Math.floor((target - inBox) / perBunch));
     }
 
@@ -1022,8 +1059,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     let required = 0;
     for (const item of state.pickListItems) {
       const perBunch = stemsPerBunch(item.uom);
-      packed += Math.floor((state.varietyStemsInBox[item.itemCode]?.[box] ?? 0) / perBunch);
-      required += Math.floor(targetPerVariety(guide, item.itemCode, box) / perBunch);
+      packed += Math.floor(stemsInBoxOf(state, guide, item.itemCode, box, perBunch) / perBunch);
+      required += Math.floor(targetPerVariety(guide, item.itemCode, box, perBunch) / perBunch);
     }
     if (state.closedBoxes[box]) {
       return {
@@ -1034,8 +1071,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
           return {
             item,
             bunches: 0,
-            required: Math.floor(targetPerVariety(guide, item.itemCode, box) / perBunch),
-            inBox: Math.floor((state.varietyStemsInBox[item.itemCode]?.[box] ?? 0) / perBunch),
+            required: Math.floor(targetPerVariety(guide, item.itemCode, box, perBunch) / perBunch),
+            inBox: Math.floor(stemsInBoxOf(state, guide, item.itemCode, box, perBunch) / perBunch),
           };
         }),
       };
@@ -1050,8 +1087,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       const perBunch = stemsPerBunch(item.uom);
       const packed = Math.trunc(state.packedBunchesTally[key(item.itemCode, item.uom, item.stemLength)] ?? 0);
       const orderRemaining = Math.max(0, Math.trunc(item.qty) - packed);
-      const target = targetPerVariety(guide, item.itemCode, box);
-      const inBox = state.varietyStemsInBox[item.itemCode]?.[box] ?? 0;
+      const target = targetPerVariety(guide, item.itemCode, box, perBunch);
+      const inBox = stemsInBoxOf(state, guide, item.itemCode, box, perBunch);
       const varietyRemaining = Math.max(0, Math.floor((target - inBox) / perBunch));
       const boxRemaining =
         guide.packratePerBox > 0 ? Math.max(0, Math.floor((guide.packratePerBox - boxStems) / perBunch)) : Infinity;
@@ -1241,8 +1278,8 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
     let varietyRemaining = Infinity;
     if (guide && (guide.isMixed || guide.isMixedBunch)) {
-      const target = targetPerVariety(guide, item.itemCode, state.currentBoxId);
-      const inBox = state.varietyStemsInBox[item.itemCode]?.[state.currentBoxId] ?? 0;
+      const target = targetPerVariety(guide, item.itemCode, state.currentBoxId, perBunch);
+      const inBox = stemsInBoxOf(state, guide, item.itemCode, state.currentBoxId, perBunch);
       varietyRemaining = Math.max(0, Math.floor((target - inBox) / perBunch));
     }
 
@@ -1328,6 +1365,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       issueCap: null,
       packedBunchesTally: {},
       varietyStemsInBox: {},
+      lineStemsInBox: {},
       scannedBunchIds: [],
       currentBoxId: 1,
       lastScannedKey: null,
@@ -1399,6 +1437,7 @@ async function reloadGuide(
       selectedItemKey,
       packedBunchesTally: view.packedBunchesTally,
       varietyStemsInBox: view.varietyStemsInBox,
+      lineStemsInBox: view.lineStemsInBox,
       issueCap: issueCapFrom(payload),
       saleOrderId: view.saleOrderId,
       customerId: view.customerId,
