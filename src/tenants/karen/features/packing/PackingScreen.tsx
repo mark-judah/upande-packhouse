@@ -18,6 +18,7 @@ import {
   stemsPerBunch,
   useKarenPackingStore,
   type PickListLine,
+  stemsInBoxOf,
 } from '@/src/tenants/karen/state/karen-packing-store';
 import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
 import { useKarenPackingQualityStore } from '@/src/tenants/karen/state/karen-packing-quality-store';
@@ -68,6 +69,7 @@ export function KarenPackingScreen() {
     issueCap,
     packedBunchesTally,
     varietyStemsInBox,
+    lineStemsInBox,
     currentBoxId,
     closedBoxes,
     lastScannedKey,
@@ -697,7 +699,9 @@ export function KarenPackingScreen() {
               <Text style={s.targetTitle}>In Box {currentBoxId}</Text>
               {(packingGuide.boxes[currentBoxId] ?? []).map((it) => {
                 const per = it.stemsPerBunch || 1;
-                const packed = Math.floor((varietyStemsInBox[it.variety]?.[currentBoxId] ?? 0) / per);
+                const packed = Math.floor(
+                  stemsInBoxOf({ varietyStemsInBox, lineStemsInBox }, packingGuide, it.variety, currentBoxId, it.stemsPerBunch) / per,
+                );
                 const done = packed >= it.bunches;
                 return (
                   <View key={`${it.variety}-${it.length}`} style={s.targetRow}>
