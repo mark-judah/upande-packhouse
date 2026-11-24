@@ -19,6 +19,21 @@ export type RawReadySaleOrderItem = {
   transfer_farm?: string | null;
   /** Marked not found at its farm: never coming -- replace it or complete short. */
   not_found?: number;
+  /** Reported not found (at its farm or here), or the bucket replacing one: the report. */
+  not_found_report?: {
+    bucket?: string;
+    replaced_by?: string;
+    shelf?: string;
+    photo?: string;
+    by?: string;
+    at?: string;
+    farm?: string;
+    reason?: string;
+  } | null;
+  /** Progressive Issuing: none of this bucket's boxes is complete yet (why), so it is not issued yet. */
+  box_waiting?: string;
+  /** Stems the bucket holds on its shelf (not issued yet): more than `qty`, only `qty` are taken. */
+  bucket_stems?: number;
 };
 
 /** One ready-TO-ISSUE entry — one row PER ORDER PICK LIST (an OPL is the
@@ -28,6 +43,10 @@ export type RawReadySaleOrderItem = {
  *  enriched object; the UI degrades gracefully when a field is absent. */
 export type RawReadyOrder = {
   opl_name?: string;
+  /** A webstore (Quality B) order: Grade B flowers, replaced from Grade B buckets only. */
+  quality_b?: number | boolean;
+  /** Progressive Issuing: a draft issued box by box -- its complete boxes of all of them. */
+  progressive?: { ready?: number; total?: number; start_from?: number; open?: boolean; waiting?: string } | null;
   name?: string;
   order?: string;
   sale_order?: string;
@@ -108,6 +127,9 @@ export type RawReplacementCandidate = {
   stem_length?: string | null;
   available_qty?: number;
   harvest_date?: string | null;
+  /** In a remote cold store (this farm): it comes on a truck, first in line. */
+  remote?: boolean;
+  farm?: string | null;
 };
 
 export type RawReplacementOptions = {
@@ -131,6 +153,8 @@ export type RawIssuedOfflineInfo = {
 export type RawReplaceResult = {
   success?: boolean;
   message?: string;
+  /** Replaced from a remote cold store: it comes on a truck. */
+  remote?: boolean;
   new_bucket?: string;
   shelf?: string;
 };
@@ -167,6 +191,9 @@ export const karenIssuingApi = {
     new_bucket_id: string;
     reason: string;
     sale_order_item?: string;
+    /** Missing: the shelf the system put it on, scanned, and the uploaded photo of it. */
+    scanned_shelf?: string;
+    shelf_photo?: string;
   }): Promise<RawReplaceResult> {
     const res = await api<{ message?: RawReplaceResult }>({
       method: 'POST',
@@ -175,6 +202,38 @@ export const karenIssuingApi = {
       data: { ...payload, ...(await stationFarm()) },
       // A swap can wait on stock locks and retry server-side.
       timeout: 120000,
+    });
+    return res.message ?? {};
+  },
+
+  /** Not on its shelf and nothing to replace it: marked not found (the shelf scanned and its photo kept on a
+   *  Bucket Replacement); the order is then completed short. */
+  async markNotFound(payload: {
+    opl_name: string;
+    bucket: string;
+    sale_order_item?: string;
+    scanned_shelf: string;
+    shelf_photo: string;
+  }): Promise<RawReplaceResult> {
+    const res = await api<{ message?: RawReplaceResult }>({
+      method: 'POST',
+      url: `${OFFLINE_ISSUE}.mark_not_found_for_issuing`,
+      data: { ...payload, ...(await stationFarm()) },
+    });
+    return res.message ?? {};
+  },
+
+  /** Not-found report, step one: is the shelf scanned the one the system put the bucket on? */
+  async checkNotFoundShelf(payload: {
+    opl_name: string;
+    bucket: string;
+    sale_order_item?: string;
+    scan: string;
+  }): Promise<{ ok?: boolean; expected?: string; shelf?: string; message?: string }> {
+    const res = await api<{ message?: { ok?: boolean; expected?: string; shelf?: string; message?: string } }>({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.api.not_found_report.checkNotFoundShelf',
+      data: payload,
     });
     return res.message ?? {};
   },
@@ -198,6 +257,9 @@ export const karenIssuingApi = {
     opl_name: string;
     bucket: string;
     sale_order_item?: string;
+    /** The shelf the system put it on, scanned, and the uploaded photo of it. */
+    scanned_shelf?: string;
+    shelf_photo?: string;
   }): Promise<RawReplaceResult> {
     const res = await api<{ message?: RawReplaceResult }>({
       method: 'POST',
@@ -249,6 +311,16 @@ export const karenIssuingApi = {
       url: '/api/method/upande_packhouse.mobile.api.getReadySaleOrderItemsData',
       // The station decides which buckets are here to scan (Karen vs Kapkolia).
       data: { opl_name: oplName, ...(await stationParams()) },
+    });
+  },
+
+  /** A scanned bucket that is not on the pick list: on a Quality B pick list the server may put it on a row of
+   *  its variety (Production Settings > Issue Any Grade B Bucket of the Same Variety); otherwise it refuses. */
+  takeScannedBucket(payload: { opl_name: string; bucket: string }): Promise<{ message?: { status?: string; new_bucket?: string } }> {
+    return api({
+      method: 'POST',
+      url: '/api/method/upande_packhouse.quality_b.take_scanned_bucket',
+      data: payload,
     });
   },
 

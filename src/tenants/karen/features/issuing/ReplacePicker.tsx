@@ -3,9 +3,11 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { Ionicons } from '@expo/vector-icons';
 import { Button } from '@/src/core/ui/Button';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
+import { NotFoundReportCard, NotFoundReportSteps } from './NotFoundReport';
 import {
   REPLACE_REASONS,
   type IssuedOfflineInfo,
+  type NotFoundReport,
   type ReplaceReason,
   type ReplaceSheet,
   type ReplacementCandidate,
@@ -23,13 +25,16 @@ export function ReplacePicker({
   onPick,
   onCheckIssued,
   onMarkIssued,
+  onNotFound,
 }: {
   sheet: ReplaceSheet | null;
   onClose: () => void;
-  onPick: (c: ReplacementCandidate, reason: ReplaceReason) => void;
+  onPick: (c: ReplacementCandidate, reason: ReplaceReason, report?: NotFoundReport) => void;
   onCheckIssued: () => Promise<IssuedOfflineInfo>;
   /** `line`: the line (team) it was issued to, for the confirmation. */
-  onMarkIssued: (line: string) => void;
+  onMarkIssued: (line: string, report?: NotFoundReport) => void;
+  /** Not on its shelf and nothing to replace it: mark it not found (after the shelf scan and photo). */
+  onNotFound: (report: NotFoundReport) => void;
 }) {
   const candidates = sheet?.candidates ?? [];
   // Default to the best match each time the sheet opens for a bucket.
@@ -69,6 +74,18 @@ export function ReplacePicker({
   const chosen = candidates.find((c) => c.bucket === selected) ?? null;
   const needed = sheet?.neededQty ?? (item ? Number(item.qty) || null : null);
 
+  // Missing: the shelf the system put it on, scanned, and its photo, before it is replaced -- unless its farm
+  // already reported it not found (it never came here): the farm's report stands.
+  const [reportFor, setReportFor] = useState<{ item: object | undefined; report: NotFoundReport | null }>({
+    item: undefined,
+    report: null,
+  });
+  const report = reportFor.item === item ? reportFor.report : null;
+  const setReport = (r: NotFoundReport | null) => setReportFor({ item, report: r });
+  const farmReported = !!item?.notFound;
+  // every reason (missing, damaged, wrong variety, issued offline): the shelf scanned and photographed first
+  const needsReport = !farmReported && !report;
+
   return (
     <Modal visible={!!sheet} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={s.sheetBackdrop} onPress={onClose} />
@@ -96,6 +113,17 @@ export function ReplacePicker({
             </Pressable>
           ))}
         </View>
+        {item?.notFoundReport ? <NotFoundReportCard report={item.notFoundReport} /> : null}
+        {!farmReported && item && sheet ? (
+          <NotFoundReportSteps
+            key={`${item.oplName}-${item.bucket}`}
+            oplName={item.oplName}
+            bucket={item.bucket}
+            saleOrderItem={item.lines.find((l) => !l.isIssued)?.saleOrderItem || undefined}
+            shelfHint={item.shelf}
+            onReady={setReport}
+          />
+        ) : null}
         {sheet?.alsoOn?.length ? (
           <Text style={s.issuedNote}>
             {`Also on ${sheet.alsoOn.map((o) => `${o.orderName} (${o.opl})`).join(', ')}`}
@@ -115,7 +143,7 @@ export function ReplacePicker({
           </Text>
         ) : null}
 
-        {sheet?.loading ? (
+        {needsReport ? null : sheet?.loading ? (
           <Text style={s.repNone}>Finding matching buckets…</Text>
         ) : (
           <>
@@ -125,7 +153,15 @@ export function ReplacePicker({
             <ScrollView style={s.sheetList} contentContainerStyle={{ paddingBottom: spacing.sm }}>
               {candidates.map((c, i) => {
                 const on = c.bucket === selected;
-                return (
+                // the sales farm's first, then the remote cold stores'
+                const head =
+                  i === 0 || !!candidates[i - 1].remoteFarm !== !!c.remoteFarm ? (
+                    <Text key={`h-${i}`} style={s.repGroup}>
+                      {c.remoteFarm ? 'Remote cold stores' : 'Sales farm'}
+                    </Text>
+                  ) : null;
+                return [
+                  head,
                   <Pressable
                     key={`${c.bucket}-${i}`}
                     onPress={() => setSelected(c.bucket)}
@@ -161,17 +197,21 @@ export function ReplacePicker({
                           .filter(Boolean)
                           .join(' · ')}
                       </Text>
-                      {c.shelf ? (
+                      {c.shelf || c.remoteFarm ? (
                         <View style={s.repShelf}>
-                          <Ionicons name="location-outline" size={12} color={COLORS.textMuted} />
+                          <Ionicons
+                            name={c.remoteFarm ? 'bus-outline' : 'location-outline'}
+                            size={12}
+                            color={COLORS.textMuted}
+                          />
                           <Text style={s.repShelfText} numberOfLines={1}>
-                            {c.shelf}
+                            {[c.remoteFarm, c.shelf].filter(Boolean).join(' · ')}
                           </Text>
                         </View>
                       ) : null}
                     </View>
-                  </Pressable>
-                );
+                  </Pressable>,
+                ];
               })}
             </ScrollView>
             {!candidates.length ? (
@@ -180,22 +220,44 @@ export function ReplacePicker({
           </>
         )}
 
+        {sheet?.error ? <Text style={s.repError}>{sheet.error}</Text> : null}
         <View style={s.repActions}>
           <Button label="Cancel" variant="outline" size="sm" singleLine onPress={onClose} style={{ flex: 1 }} />
-          {candidates.length ? (
+          {candidates.length && !needsReport ? (
             <Button
               size="sm"
               singleLine
               label={chosen ? `Replace with ${chosen.bucket}` : 'Replace'}
               iconLeft="swap-horizontal"
-              onPress={() => chosen && onPick(chosen, reason)}
+              onPress={() => chosen && onPick(chosen, reason, report ?? undefined)}
               // Issued offline to this same line: nothing to replace, so Replace is greyed out.
-              disabled={!chosen || sheet?.submitting || offlineHere || (reason === 'Issued offline' && issuedLoading)}
+              disabled={
+                !chosen ||
+                needsReport ||
+                sheet?.submitting ||
+                offlineHere ||
+                (reason === 'Issued offline' && issuedLoading)
+              }
               loading={sheet?.submitting && !offlineHere}
               style={{ flex: 2 }}
             />
           ) : null}
         </View>
+        {/* Missing and nothing to replace it: not found, once the shelf is scanned and photographed */}
+        {reason === 'Missing' && !farmReported && !sheet?.loading ? (
+          <View style={s.repActions}>
+            <Button
+              size="sm"
+              singleLine
+              variant={candidates.length ? 'outline' : undefined}
+              label="Not found — no replacement"
+              iconLeft="close-circle-outline"
+              onPress={() => report && onNotFound(report)}
+              disabled={!report || sheet?.submitting}
+              style={{ flex: 1 }}
+            />
+          </View>
+        ) : null}
         {offlineHere ? (
           <View style={s.repActions}>
             <Button
@@ -204,9 +266,9 @@ export function ReplacePicker({
               label="Mark as issued"
               iconLeft="checkmark-done-outline"
               onPress={() =>
-                onMarkIssued(issuedOk?.issuedTo.find((r) => r.sameLine)?.team || issuedOk?.line || '')
+                onMarkIssued(issuedOk?.issuedTo.find((r) => r.sameLine)?.team || issuedOk?.line || '', report ?? undefined)
               }
-              disabled={sheet?.submitting}
+              disabled={sheet?.submitting || needsReport}
               loading={sheet?.submitting}
               style={{ flex: 1 }}
             />
@@ -246,6 +308,21 @@ const s = StyleSheet.create({
     fontSize: fontSize.xs,
     color: COLORS.textMuted,
     marginTop: 2,
+  },
+  repGroup: {
+    fontFamily: fontFamily.bold,
+    fontSize: fontSize.xs,
+    color: COLORS.textMuted,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: spacing.sm,
+    marginBottom: 2,
+  },
+  repError: {
+    fontFamily: fontFamily.semiBold,
+    fontSize: fontSize.sm,
+    color: COLORS.danger,
+    marginTop: spacing.sm,
   },
   reasonRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.sm },
   reasonChip: {

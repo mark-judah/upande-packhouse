@@ -19,6 +19,10 @@ import { tomorrowISO } from '@/src/core/date';
 // ---------------------------------------------------------------------
 export type OplOption = {
   oplName: string;
+  /** A webstore order of Grade B flowers. */
+  qualityB: boolean;
+  /** Progressive Issuing: a draft packed box by box -- its complete boxes of all of them. */
+  progressive: { ready: number; total: number } | null;
   orderName: string;
   itemGroup: string;
   team: string;
@@ -175,6 +179,8 @@ type State = {
   lineStemsInBox: Record<string, Record<number, number>>;
   scannedBunchIds: string[];
   currentBoxId: number;
+  /** Progressive Issuing: boxes of a draft pick list not complete yet, with why (greyed out, never packed). */
+  waitingBoxes: Record<number, string>;
   lastScannedKey: string | null;
   /** Boxes closed via an Under Pack Reason this session -- packable stems
    *  remain (it was closed short of packrate on purpose), but the box is
@@ -355,6 +361,8 @@ function extractPicklists(raw: RawPicklistsResponse): OplOption[] {
   return data
     .map((d) => ({
       oplName: (d.opl_name ?? '').toString(),
+      qualityB: !!Number(d.quality_b ?? 0),
+      progressive: d.progressive ? { ready: Number(d.progressive.ready ?? 0), total: Number(d.progressive.total ?? 0) } : null,
       orderName: (d.order_name ?? '').toString(),
       itemGroup: (d.item_group ?? '').toString(),
       team: (d.team ?? '').toString(),
@@ -651,6 +659,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
   lineStemsInBox: {},
   scannedBunchIds: [],
   currentBoxId: 1,
+  waitingBoxes: {},
   lastScannedKey: null,
   closedBoxes: {},
 
@@ -736,6 +745,7 @@ export const useKarenPackingStore = create<State>((set, get) => ({
       lineStemsInBox: {},
       scannedBunchIds: [],
       currentBoxId: 1,
+      waitingBoxes: {},
       lastScannedKey: null,
       closedBoxes: {},
       lastOutcome: null,
@@ -771,6 +781,9 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     }
     if (state.closedBoxes[state.currentBoxId]) {
       return fail('warning', `Box ${state.currentBoxId} is closed (under-packed). Switch to the next box.`);
+    }
+    if (state.waitingBoxes[state.currentBoxId]) {
+      return fail('warning', `Box ${state.currentBoxId} is not complete yet (${state.waitingBoxes[state.currentBoxId]}). Pack another box.`);
     }
 
     // Parse the bunch QR.
@@ -956,6 +969,9 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     if (state.closedBoxes[state.currentBoxId]) {
       return fail('warning', `Box ${state.currentBoxId} is closed (under-packed). Switch to the next box.`);
     }
+    if (state.waitingBoxes[state.currentBoxId]) {
+      return fail('warning', `Box ${state.currentBoxId} is not complete yet (${state.waitingBoxes[state.currentBoxId]}). Pack another box.`);
+    }
     // Resolve the SELECTED line, not always the first — a straight box has
     // just one line so this is unchanged for it, but a mixed bunch/box has
     // several, and hardcoding index 0 here used to make every one of them
@@ -1110,6 +1126,9 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     if (state.closedBoxes[state.currentBoxId]) {
       return fail('warning', `Box ${state.currentBoxId} is closed (under-packed). Switch to the next box.`);
     }
+    if (state.waitingBoxes[state.currentBoxId]) {
+      return fail('warning', `Box ${state.currentBoxId} is not complete yet (${state.waitingBoxes[state.currentBoxId]}). Pack another box.`);
+    }
     const left = get().boxFill().lines.filter((f) => f.bunches > 0);
     if (!left.length) return fail('warning', `Box ${state.currentBoxId} needs nothing more. Switch to the next box.`);
     const room = left.reduce((n, f) => n + f.bunches, 0);
@@ -1245,6 +1264,9 @@ export const useKarenPackingStore = create<State>((set, get) => ({
     if (!state.selectedOpl) return fail('warning', 'Select an order first.');
     if (state.closedBoxes[state.currentBoxId]) {
       return fail('warning', `Box ${state.currentBoxId} is closed (under-packed). Switch to the next box.`);
+    }
+    if (state.waitingBoxes[state.currentBoxId]) {
+      return fail('warning', `Box ${state.currentBoxId} is not complete yet (${state.waitingBoxes[state.currentBoxId]}). Pack another box.`);
     }
     const reason = reasonName.trim();
     if (!reason) return fail('warning', 'Pick a reason first.');
@@ -1393,10 +1415,17 @@ async function reloadGuide(
       set({ guideLoading: false, lastOutcome: { kind: 'error', message: 'Empty pick list response.' } });
       return;
     }
-    if (toNum(payload.order_pick_list?.docstatus) === 0) {
-      set({ guideLoading: false, showTable: false, lastOutcome: { kind: 'warning', message: 'This Order Pick List is cancelled.' } });
+    const progressive = payload.order_pick_list?.progressive;
+    if (toNum(payload.order_pick_list?.docstatus) === 0 && !progressive?.open) {
+      set({ guideLoading: false, showTable: false, lastOutcome: { kind: 'warning', message: 'This Order Pick List is not submitted yet.' } });
       return;
     }
+    // Progressive Issuing: the boxes of a draft not complete yet, greyed out and never packed
+    const waitingBoxes: Record<number, string> = {};
+    Object.entries(progressive?.box_waiting ?? {}).forEach(([box, why]) => {
+      const n = parseInt(box, 10);
+      if (n) waitingBoxes[n] = why;
+    });
     const view = buildGuideView(payload);
 
     // Keep the operator on their current line as long as it still has room;
@@ -1425,11 +1454,17 @@ async function reloadGuide(
     const rate = view.packingGuide?.packratePerBox ?? 0;
     const boxPatch: Partial<State> =
       fresh || !numbers.includes(prev)
-        ? { currentBoxId: numbers.find((b) => !(rate > 0) || stemsIn(b) < rate) ?? numbers[0] }
+        ? {
+            currentBoxId:
+              numbers.find((b) => !waitingBoxes[b] && (!(rate > 0) || stemsIn(b) < rate)) ??
+              numbers.find((b) => !waitingBoxes[b]) ??
+              numbers[0],
+          }
         : {};
 
     set({
       ...boxPatch,
+      waitingBoxes,
       guideLoading: false,
       showTable: true,
       pickListItems: view.pickListItems,

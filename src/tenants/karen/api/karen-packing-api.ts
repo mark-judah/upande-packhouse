@@ -7,6 +7,10 @@ import { stationParams } from '@/src/core/tenant/user-station';
 // =====================================================================
 export type RawOplItem = {
   opl_name?: string;
+  /** A webstore (Quality B) order: Grade B flowers. */
+  quality_b?: number | boolean;
+  /** Progressive Issuing: a draft packed box by box -- its complete boxes of all of them. */
+  progressive?: { ready?: number; total?: number } | null;
   order_name?: string;
   item_group?: string;
   team?: string;
@@ -142,6 +146,8 @@ export type RawPackingGuide = {
 export type RawOrderPickList = {
   name?: string;
   docstatus?: number;
+  /** Progressive Issuing: a draft still waiting for buckets, packed box by box -- the boxes not complete yet. */
+  progressive?: { open?: boolean; ready?: number; total?: number; box_waiting?: Record<string, string> };
   sales_order?: string;
   customer?: string;
   custom_farm?: string;
