@@ -12,6 +12,7 @@ import { ItemGroupFilter } from '@/src/core/ui/ItemGroupFilter';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
 import { focusWhenReady } from '@/src/core/scanning/focus';
 import { useToast } from '@/src/core/ui/Toast';
+import { audio } from '@/src/core/audio';
 import { showDialog } from '@/src/core/ui/DialogHost';
 import {
   useKarenIssuingStore,
@@ -19,6 +20,7 @@ import {
 } from '@/src/tenants/karen/state/karen-issuing-store';
 import { useKarenTeamsStore } from '@/src/tenants/karen/state/karen-teams-store';
 import { ReplacePicker } from './ReplacePicker';
+import { NotFoundReportCard } from './NotFoundReport';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
 export function KarenIssuingScreen() {
@@ -46,6 +48,7 @@ export function KarenIssuingScreen() {
     confirmReplace,
     issuedOfflineInfo,
     markIssuedOffline,
+    markNotFound,
     reset,
   } = useKarenIssuingStore();
   const { showSuccess, showError } = useToast();
@@ -137,16 +140,25 @@ export function KarenIssuingScreen() {
   const doneOrders = availableOrders.filter((o) => o.issueDone).length;
   const orderOptions = filteredOrders.map((o) => {
     const varieties = (o.varietyLengths.length ? o.varietyLengths : o.varieties).join(', ');
-    const parts: { text: string; bold?: boolean; semi?: boolean }[] = [];
+    const parts: { text: string; bold?: boolean; semi?: boolean; color?: string }[] = [];
+    if (o.qualityB) parts.push({ text: 'Quality B · ', bold: true, color: COLORS.warn });
     if (o.name) parts.push({ text: o.name, bold: true });
     if (varieties) parts.push(...(parts.length ? [{ text: ' · ' }] : []), { text: varieties, semi: true });
     return {
       label: parts.map((p) => p.text).join('') || o.oplName,
       parts,
       value: o.oplName,
-      corner: o.schedule
-        ? `${o.scheduleTeam || 'Team'} #${o.schedule}`
-        : 'Not scheduled',
+      banner: o.progressive
+        ? {
+            text: `WAITING TRANSFER · ${o.progressive.ready}/${o.progressive.total} BOXES READY${o.progressive.waiting ? ` · ${o.progressive.waiting.toUpperCase()}` : ''}`,
+            color: o.progressive.open ? '#B45309' : '#78716C',
+          }
+        : undefined,
+      corner: o.qualityB
+        ? 'QUALITY B'
+        : o.schedule
+          ? `${o.scheduleTeam || 'Team'} #${o.schedule}`
+          : 'Not scheduled',
       subParts: [
         { text: o.oplName },
         ...(o.customer ? [{ text: ` · ${o.customer}` }] : []),
@@ -171,6 +183,10 @@ export function KarenIssuingScreen() {
     };
   });
 
+  const waitingCount = useMemo(
+    () => packingItems.filter((i) => i.waitingTransfer && !i.isIssued).length,
+    [packingItems],
+  );
   const selectedOplInfo = useMemo(
     () => availableOrders.find((o) => o.oplName === selectedOpl) ?? null,
     [availableOrders, selectedOpl],
@@ -182,9 +198,23 @@ export function KarenIssuingScreen() {
   };
 
   const onScan = async (raw: string) => {
+    const before = packingItems;
     const outcome = await submitScan(raw);
     if (outcome.kind === 'success') {
-      showSuccess(`Issued ${outcome.bucket}`);
+      // A bucket holding more than the order needs: take the order's stems, the bucket goes back -- its own sound
+      const it = before.find((i) => i.bucket.toLowerCase() === outcome.bucket.toLowerCase());
+      const extra = it ? takePart(it) : null;
+      if (!(it && extra)) showSuccess(`Issued ${outcome.bucket}`);
+      if (it && extra) {
+        audio.takePart();
+        showDialog(
+          `Take ${extra.take} stems only`,
+          `${it.bucket.toUpperCase()} has ${extra.has} stems. This order needs ${extra.take}.\n` +
+            `Take ${extra.take}. Put the bucket back${it.shelf ? ` on ${it.shelf}` : ''}.`,
+          [{ text: 'OK' }],
+          { name: 'alert-circle-outline', tone: 'warn' },
+        );
+      }
     } else {
       showError(outcome.message);
     }
@@ -277,6 +307,26 @@ export function KarenIssuingScreen() {
             <Text style={s.helper}>No buckets allocated to this pick list.</Text>
           ) : (
             <>
+              {/* Waiting transfer: the order still has buckets coming from other farms. */}
+              {selectedOplInfo?.progressive || waitingCount > 0 ? (
+                <View style={s.waitingBanner}>
+                  <Ionicons name="bus-outline" size={20} color="#fff" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.waitingTitle}>WAITING TRANSFER</Text>
+                    <Text style={s.waitingText}>
+                      {[
+                        selectedOplInfo?.progressive
+                          ? `${selectedOplInfo.progressive.ready}/${selectedOplInfo.progressive.total} boxes ready${selectedOplInfo.progressive.waiting ? ` · ${selectedOplInfo.progressive.waiting}` : ''}`
+                          : '',
+                        waitingCount ? `${waitingCount} bucket${waitingCount === 1 ? '' : 's'} on the way` : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+
               {/* Which team to hand this order's buckets to. */}
               {orderTeam ? (
                 <View style={s.teamBanner}>
@@ -374,20 +424,27 @@ export function KarenIssuingScreen() {
       <ReplacePicker
         sheet={replace}
         onClose={closeReplace}
-        onPick={(c, why) => {
+        onPick={(c, why, report) => {
           const old = replace?.item.bucket ?? '';
+          const needed = Math.round(replace?.neededQty ?? (Number(replace?.item.qty) || 0));
           // A replacement cannot be undone here, so it is confirmed first.
           showDialog(
             'Replace this bucket?',
             `Are you sure you want to replace ${old.toUpperCase()} with ${c.bucket.toUpperCase()}${
               c.shelf ? ` (shelf ${c.shelf.toUpperCase()})` : ''
-            }? Reason: ${why.toLowerCase()}.`,
+            }? Reason: ${why.toLowerCase()}.` +
+              (c.remoteFarm ? `\n\nIt is at ${c.remoteFarm}: it comes on the next truck.` : '') +
+              // more stems than the order needs: take the order's stems, the bucket goes back
+              (needed > 0 && (c.availableQty ?? 0) > needed
+                ? `\n\n${c.bucket.toUpperCase()} has ${Math.round(c.availableQty ?? 0)} stems. This order needs ${needed}. ` +
+                  `Take ${needed}. Put the bucket back${c.shelf ? ` on ${c.shelf.toUpperCase()}` : ''}.`
+                : ''),
             [
               { text: 'No', style: 'cancel' },
               {
                 text: 'Yes',
                 onPress: async () => {
-                  const res = await confirmReplace(c.bucket, why);
+                  const res = await confirmReplace(c.bucket, why, report);
                   if (res.ok) showSuccess(res.message);
                   else showError(res.message);
                 },
@@ -397,7 +454,25 @@ export function KarenIssuingScreen() {
           );
         }}
         onCheckIssued={issuedOfflineInfo}
-        onMarkIssued={(line) => {
+        onNotFound={(report) => {
+          const b = (replace?.item.bucket ?? '').toUpperCase();
+          showDialog(
+            'Not found?',
+            `${b} is marked not found. Complete the order short once the rest is issued.`,
+            [
+              { text: 'No', style: 'cancel' },
+              {
+                text: 'Mark not found',
+                onPress: async () => {
+                  const res = await markNotFound(report);
+                  if (res.ok) showSuccess(res.message);
+                },
+              },
+            ],
+            { name: 'help-circle-outline', tone: 'warn' },
+          );
+        }}
+        onMarkIssued={(line, report) => {
           const bucket = (replace?.item.bucket ?? '').toUpperCase();
           showDialog(
             'Mark as issued?',
@@ -407,7 +482,7 @@ export function KarenIssuingScreen() {
               {
                 text: 'Yes',
                 onPress: async () => {
-                  const res = await markIssuedOffline();
+                  const res = await markIssuedOffline(report);
                   if (res.ok) showSuccess(res.message);
                   else showError(res.message);
                 },
@@ -419,6 +494,13 @@ export function KarenIssuingScreen() {
       />
     </Screen>
   );
+}
+
+/** A bucket holding more stems than the order takes: {take, has}, else null. */
+function takePart(item: PackingItem): { take: number; has: number } | null {
+  const take = Math.round(Number(item.qty) || 0);
+  const has = Math.round(item.bucketStems ?? 0);
+  return take > 0 && has > take ? { take, has } : null;
 }
 
 function PackingRow({ item, onReplace }: { item: PackingItem; onReplace?: () => void }) {
@@ -460,6 +542,13 @@ function PackingRow({ item, onReplace }: { item: PackingItem; onReplace?: () => 
           <View style={s.tagNotFound}>
             <Text style={s.tagNotFoundText}>NOT FOUND</Text>
           </View>
+        ) : item.boxWaiting && !item.waitingTransfer ? (
+          // Progressive Issuing: its box is not complete yet -- issued once it is.
+          <View style={s.tagMixed}>
+            <Text style={s.tagMixedText} numberOfLines={1}>
+              BOX WAITING · {item.boxWaiting.toUpperCase()}
+            </Text>
+          </View>
         ) : item.waitingTransfer ? (
           // Allocated at a remote farm: on its way, issued once it is shelved here.
           <View style={s.tagMixed}>
@@ -483,6 +572,13 @@ function PackingRow({ item, onReplace }: { item: PackingItem; onReplace?: () => 
           </Pressable>
         ) : null}
       </View>
+      {!done && takePart(item) ? (
+        <Text style={s.takePart}>
+          Take {takePart(item)!.take} of {takePart(item)!.has} stems
+        </Text>
+      ) : null}
+      {/* Reported not found (at its farm or here), or replacing one: where, who, when, the shelf photo */}
+      {item.notFoundReport ? <NotFoundReportCard report={item.notFoundReport} /> : null}
     </View>
   );
 }
@@ -498,6 +594,7 @@ function Row({ label, value }: { label: string; value: string }) {
 
 const s = StyleSheet.create({
   bold: { fontFamily: fontFamily.bold },
+  takePart: { fontFamily: fontFamily.bold, fontSize: fontSize.xs, color: COLORS.warn, marginTop: 4 },
   semi: { fontFamily: fontFamily.semiBold },
   issuedDone: { fontFamily: fontFamily.bold, color: COLORS.success },
   helper: {
@@ -508,6 +605,19 @@ const s = StyleSheet.create({
   },
   packingScroll: { maxHeight: 320 },
 
+  waitingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: '#B45309',
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  waitingTitle: { fontFamily: fontFamily.bold, fontSize: 11, color: '#fff', letterSpacing: 0.6 },
+  waitingText: { fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: '#fff' },
   teamBanner: {
     flexDirection: 'row',
     alignItems: 'center',

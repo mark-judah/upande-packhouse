@@ -72,6 +72,7 @@ export function KarenPackingScreen() {
     lineStemsInBox,
     currentBoxId,
     closedBoxes,
+    waitingBoxes,
     lastScannedKey,
     submitting,
     underPackReasons,
@@ -255,14 +256,20 @@ export function KarenPackingScreen() {
   // issuing screen; order name + stems shown below as the sublabel.
   const orderOptions = filteredPicklists.map((o) => {
     const varieties = (o.varietyLengths.length ? o.varietyLengths : o.varieties).join(', ');
-    const parts: { text: string; bold?: boolean; semi?: boolean }[] = [];
+    const parts: { text: string; bold?: boolean; semi?: boolean; color?: string }[] = [];
+    if (o.qualityB) parts.push({ text: 'Quality B · ', bold: true, color: COLORS.warn });
     if (o.orderName) parts.push({ text: o.orderName, bold: true });
     if (varieties) parts.push(...(parts.length ? [{ text: ' · ' }] : []), { text: varieties, semi: true });
     return {
       label: parts.map((p) => p.text).join('') || o.oplName,
       parts,
       value: o.oplName,
-      corner: seaFreightOpls.has(o.oplName)
+      banner: o.progressive
+        ? { text: `WAITING TRANSFER · ${o.progressive.ready}/${o.progressive.total} BOXES READY`, color: '#B45309' }
+        : undefined,
+      corner: o.qualityB
+        ? 'QUALITY B'
+        : seaFreightOpls.has(o.oplName)
         ? 'SEA FREIGHT'
         : o.schedule
           ? `${o.scheduleTeam || 'Team'} #${o.schedule}`
@@ -498,9 +505,9 @@ export function KarenPackingScreen() {
           total += stems;
         }
       }
-      return { boxId, total, rate, varieties };
+      return { boxId, total, rate, varieties, waiting: waitingBoxes[boxId] ?? '' };
     });
-  }, [packingGuide?.boxNumbers, packingGuide?.packratePerBox, varietyStemsInBox]);
+  }, [packingGuide?.boxNumbers, packingGuide?.packratePerBox, varietyStemsInBox, waitingBoxes]);
 
   // Surface orders that were set up wrongly in the ERP so the operator knows
   // why the box math may be off (missing packrate / box count / bunch size).
@@ -588,6 +595,29 @@ export function KarenPackingScreen() {
           <View style={s.seaFreightBanner}>
             <MaterialCommunityIcons name="ferry" size={18} color="#fff" />
             <Text style={s.seaFreightText}>SEA FREIGHT</Text>
+          </View>
+        ) : null}
+        {selectedPicklist?.progressive || Object.keys(waitingBoxes).length ? (
+          <View style={s.waitingBanner}>
+            <MaterialCommunityIcons name="truck-fast-outline" size={20} color="#fff" />
+            <View style={{ flex: 1 }}>
+              <Text style={s.waitingTitle}>WAITING TRANSFER</Text>
+              <Text style={s.waitingText}>
+                {[
+                  selectedPicklist?.progressive
+                    ? `${selectedPicklist.progressive.ready}/${selectedPicklist.progressive.total} boxes ready`
+                    : '',
+                  Object.keys(waitingBoxes).length
+                    ? `box ${Object.keys(waitingBoxes)
+                        .map(Number)
+                        .sort((a, b) => a - b)
+                        .join(', ')} waiting`
+                    : '',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Text>
+            </View>
           </View>
         ) : null}
         {selectedPicklist ? (
@@ -1087,7 +1117,7 @@ function BoxBreakdown({
   currentBoxId,
   onSelectBox,
 }: {
-  boxes: { boxId: number; total: number; rate: number; varieties: { variety: string; stems: number }[] }[];
+  boxes: { boxId: number; total: number; rate: number; varieties: { variety: string; stems: number }[]; waiting: string }[];
   currentBoxId: number;
   onSelectBox: (id: number) => void;
 }) {
@@ -1100,7 +1130,9 @@ function BoxBreakdown({
         return (
           <Pressable
             key={b.boxId}
-            style={[s.bbItem, active && s.bbItemActive]}
+            // Progressive Issuing: a box whose buckets are not all shelved yet is greyed out and not packed
+            style={[s.bbItem, active && s.bbItemActive, !!b.waiting && s.bbItemWaiting]}
+            disabled={!!b.waiting}
             onPress={() => onSelectBox(b.boxId)}
           >
             <View style={s.bbHead}>
@@ -1114,7 +1146,9 @@ function BoxBreakdown({
             <View style={s.bbTrack}>
               <View style={[s.bbFill, { width: `${p * 100}%` }, full && s.bbFillFull]} />
             </View>
-            {b.varieties.length > 0 ? (
+            {b.waiting ? (
+              <Text style={s.bbEmpty}>waiting · {b.waiting}</Text>
+            ) : b.varieties.length > 0 ? (
               <Text style={s.bbVarieties} numberOfLines={2}>
                 {b.varieties.map((v) => `${v.variety} (${v.stems})`).join('  •  ')}
               </Text>
@@ -1129,6 +1163,7 @@ function BoxBreakdown({
 }
 
 const s = StyleSheet.create({
+  bbItemWaiting: { opacity: 0.45 },
   bold: { fontFamily: fontFamily.bold },
   packedDone: { fontFamily: fontFamily.bold, color: COLORS.success },
   shortText: { fontFamily: fontFamily.bold, color: COLORS.danger },
@@ -1203,6 +1238,19 @@ const s = StyleSheet.create({
   boxStems: { fontFamily: fontFamily.bold, fontSize: 32, color: COLORS.text },
   boxStemsTotal: { fontFamily: fontFamily.regular, fontSize: fontSize.md, color: COLORS.textMuted },
   tag: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 },
+  waitingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: '#B45309',
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  waitingTitle: { fontFamily: fontFamily.bold, fontSize: 11, color: '#fff', letterSpacing: 0.6 },
+  waitingText: { fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: '#fff' },
   seaFreightBanner: {
     flexDirection: 'row',
     alignItems: 'center',

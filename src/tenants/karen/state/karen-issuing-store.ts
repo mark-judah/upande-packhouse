@@ -28,6 +28,12 @@ export type PackingItem = {
   waitingTransfer: string | null;
   /** Marked not found at its farm: never coming -- replace it, or complete the order short. */
   notFound: boolean;
+  /** Progressive Issuing: its box is not complete yet (why) -- greyed out, issued once the box is. */
+  boxWaiting: string | null;
+  /** Reported not found (at its farm or here), or the bucket replacing one: the report and its shelf photo. */
+  notFoundReport: NotFoundReportInfo | null;
+  /** Stems the bucket holds on its shelf; more than `qty` means only `qty` are taken and it goes back. */
+  bucketStems: number | null;
   /** Sale order lines this bucket feeds on the OPL; each is issued on its own. */
   lines: PackingLine[];
 };
@@ -59,9 +65,27 @@ export type ReplacementCandidate = {
   stemLength: string | null;
   availableQty: number | null;
   harvestDate: string | null;
+  /** In a remote cold store: it comes on a truck, first in line. Null at the sales farm. */
+  remoteFarm: string | null;
 };
 
 /** The Replace sheet for one packing-list bucket. */
+/** A bucket reported not found: the shelf the system put it on, scanned, and the uploaded photo of it. */
+export type NotFoundReport = { shelf: string; photo: string };
+
+/** A not-found report as the issuing list shows it. */
+export type NotFoundReportInfo = {
+  bucket: string;
+  replacedBy: string;
+  shelf: string;
+  photo: string;
+  by: string;
+  at: string;
+  farm: string;
+  /** Missing, Damaged, Wrong variety or Issued offline. */
+  reason: string;
+};
+
 export type ReplaceSheet = {
   item: PackingItem;
   loading: boolean;
@@ -70,6 +94,8 @@ export type ReplaceSheet = {
   /** Why nothing can be offered, when that is the answer. */
   message: string | null;
   submitting: boolean;
+  /** Why the last replace / mark issued failed, shown in the sheet (a toast would sit behind it). */
+  error?: string | null;
   /** Other pick lists that still have this bucket to issue. */
   alsoOn?: { opl: string; orderName: string }[];
 };
@@ -82,6 +108,10 @@ export type IssueOutcome =
  *  can have several of these (e.g. split by team); each is its own row. */
 export type ReadyOrder = {
   oplName: string;
+  /** A webstore order of Grade B flowers. */
+  qualityB: boolean;
+  /** Progressive Issuing: a draft issued box by box -- its complete boxes of all of them. */
+  progressive: { ready: number; total: number; open: boolean; waiting: string } | null;
   name: string;
   customer: string;
   varieties: string[];
@@ -158,11 +188,14 @@ type State = {
   confirmReplace: (
     newBucket: string,
     reason: ReplaceReason,
+    report?: NotFoundReport,
   ) => Promise<{ ok: boolean; message: string }>;
   /** "Issued offline": where the Replace sheet's bucket was already issued. */
   issuedOfflineInfo: () => Promise<IssuedOfflineInfo>;
   /** Issued offline to this OPL's own line: mark it issued; the packing list reloads. */
-  markIssuedOffline: () => Promise<{ ok: boolean; message: string }>;
+  markIssuedOffline: (report?: NotFoundReport) => Promise<{ ok: boolean; message: string }>;
+  /** Not on its shelf and nothing to replace it: marked not found; the order is then completed short. */
+  markNotFound: (report: NotFoundReport) => Promise<{ ok: boolean; message: string }>;
   reset: () => void;
 };
 
@@ -197,6 +230,15 @@ function toReadyOrder(entry: string | RawReadyOrder): ReadyOrder | null {
 
   return {
     oplName,
+    qualityB: !!Number(entry.quality_b ?? 0),
+    progressive: entry.progressive
+      ? {
+          ready: Number(entry.progressive.ready ?? 0),
+          total: Number(entry.progressive.total ?? 0),
+          open: entry.progressive.open !== false,
+          waiting: (entry.progressive.waiting ?? '').toString(),
+        }
+      : null,
     name,
     customer: (entry.customer ?? '').toString().trim(),
     varieties: toStringList(entry.varieties),
@@ -306,6 +348,9 @@ function extractPackingList(raw: RawPackingListResponse): PackingItem[] {
         isIssued:      true,
         waitingTransfer: null,
         notFound:      false,
+        boxWaiting:    null,
+        notFoundReport: null,
+        bucketStems:   null,
         lines:         [],
       };
       merged.set(key, item);
@@ -318,6 +363,21 @@ function extractPackingList(raw: RawPackingListResponse): PackingItem[] {
 
     if (r.waiting_transfer) item.waitingTransfer = (r.transfer_farm ?? '').toString() || 'remote farm';
     if (r.not_found) item.notFound = true;
+    if (r.box_waiting) item.boxWaiting = r.box_waiting.toString();
+    if (typeof r.bucket_stems === 'number') item.bucketStems = r.bucket_stems;
+    if (r.not_found_report && !item.notFoundReport) {
+      const nf = r.not_found_report;
+      item.notFoundReport = {
+        bucket: (nf.bucket ?? bucket).toString(),
+        replacedBy: (nf.replaced_by ?? '').toString(),
+        shelf: (nf.shelf ?? '').toString(),
+        photo: (nf.photo ?? '').toString(),
+        by: (nf.by ?? '').toString(),
+        at: (nf.at ?? '').toString(),
+        farm: (nf.farm ?? '').toString(),
+        reason: (nf.reason ?? 'Missing').toString(),
+      };
+    }
     item.qty = String((Number(item.qty) || 0) + qty);
     item.isIssued = item.isIssued && isIssued;
     const line = item.lines.find((l) => l.saleOrderItem === saleOrderItem);
@@ -328,7 +388,20 @@ function extractPackingList(raw: RawPackingListResponse): PackingItem[] {
       item.lines.push({ saleOrderItem, qty, isIssued });
     }
   }
-  return [...merged.values()];
+  // shelves in ascending order (G2M, G3M ... G10M), the way the issuer walks them; no shelf last
+  return [...merged.values()].sort((a, b) => compareShelves(a.shelf, b.shelf));
+}
+
+/** Natural shelf order: letter prefix, the number as a number, then the suffix. */
+function compareShelves(a: string, b: string): number {
+  const key = (s: string): [number, string, number, string] => {
+    const v = (s || '').trim().toUpperCase();
+    const m = v.match(/^(\D*)(\d+)(.*)$/);
+    return m ? [0, m[1], Number(m[2]), m[3]] : [v ? 0 : 1, v, -1, ''];
+  };
+  const x = key(a);
+  const y = key(b);
+  return x[0] - y[0] || x[1].localeCompare(y[1]) || x[2] - y[2] || x[3].localeCompare(y[3]);
 }
 
 function joinDistinct(list: string, value: string): string {
@@ -471,18 +544,28 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
       return out;
     }
 
-    const match = state.packingItems.find(
+    let match = state.packingItems.find(
       (it) => it.bucket.toLowerCase() === bucketId.toLowerCase(),
     );
 
     if (!match) {
-      const out: IssueOutcome = {
-        kind: 'error',
-        bucket: bucketId,
-        message: `Bucket ${bucketId} isn't allocated to ${state.selectedOpl}.`,
-      };
-      set({ lastOutcome: out });
-      return out;
+      // Not on the pick list: a Quality B pick list may take any Grade B bucket of a variety it still needs
+      // (the server decides, and puts it on that row); anything else is refused as before.
+      let message = `Bucket ${bucketId} isn't allocated to ${state.selectedOpl}.`;
+      try {
+        await karenIssuingApi.takeScannedBucket({ opl_name: state.selectedOpl, bucket: bucketId });
+        const raw = await karenIssuingApi.fetchPackingList(state.selectedOpl);
+        const items = extractPackingList(raw);
+        set({ packingItems: items });
+        match = items.find((it) => it.bucket.toLowerCase() === bucketId.toLowerCase());
+      } catch (err) {
+        message = mapAxiosError(err).message || message;
+      }
+      if (!match) {
+        const out: IssueOutcome = { kind: 'error', bucket: bucketId, message };
+        set({ lastOutcome: out });
+        return out;
+      }
     }
     if (match.lines.some((l) => !l.saleOrderItem)) {
       const out: IssueOutcome = {
@@ -499,6 +582,16 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
         kind: 'error',
         bucket: bucketId,
         message: `Bucket ${bucketId} is already issued.`,
+      };
+      set({ lastOutcome: out });
+      return out;
+    }
+
+    if (match.boxWaiting && !match.waitingTransfer) {
+      const out: IssueOutcome = {
+        kind: 'error',
+        bucket: bucketId,
+        message: `Bucket ${bucketId} is in a box that is not complete yet (${match.boxWaiting}). Issue it once its box is.`,
       };
       set({ lastOutcome: out });
       return out;
@@ -608,6 +701,7 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
             stemLength: c.stem_length ?? null,
             availableQty: typeof c.available_qty === 'number' ? c.available_qty : null,
             harvestDate: c.harvest_date ?? null,
+            remoteFarm: c.remote ? c.farm || 'remote farm' : null,
           })),
         },
       });
@@ -656,11 +750,11 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
     }
   },
 
-  confirmReplace: async (newBucket, reason) => {
+  confirmReplace: async (newBucket, reason, report) => {
     const sheet = get().replace;
     const opl = get().selectedOpl;
     if (!sheet || !opl) return { ok: false, message: 'Nothing to replace.' };
-    set({ replace: { ...sheet, submitting: true } });
+    set({ replace: { ...sheet, submitting: true, error: null } });
     try {
       const res = await karenIssuingApi.replaceBucket({
         opl_name: opl,
@@ -668,19 +762,25 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
         new_bucket_id: newBucket,
         reason,
         sale_order_item: sheet.item.lines.find((l) => !l.isIssued)?.saleOrderItem || undefined,
+        scanned_shelf: report?.shelf,
+        shelf_photo: report?.photo,
       });
       if (!res.success) {
-        set({ replace: { ...sheet, submitting: false } });
-        return { ok: false, message: res.message || 'The replacement failed.' };
+        const message = res.message || 'The replacement failed.';
+        set({ replace: { ...sheet, submitting: false, error: message } });
+        return { ok: false, message };
       }
       set({ replace: null });
       // The OPL now lists the replacement; scanning it issues it as usual.
       await get().selectOrder(opl);
+      // from a remote cold store: it comes on a truck; here: fetch it and scan it
+      if (res.remote) return { ok: true, message: res.message || `${newBucket} comes on the next truck.` };
       const where = res.shelf ? ` from shelf ${res.shelf}` : '';
       return { ok: true, message: `${sheet.item.bucket} replaced. Fetch ${newBucket}${where} and scan it.` };
     } catch (err) {
-      set({ replace: { ...sheet, submitting: false } });
-      return { ok: false, message: mapAxiosError(err).message || 'The replacement failed.' };
+      const message = mapAxiosError(err).message || 'The replacement failed.';
+      set({ replace: { ...sheet, submitting: false, error: message } });
+      return { ok: false, message };
     }
   },
 
@@ -711,27 +811,59 @@ export const useKarenIssuingStore = create<State>((set, get) => ({
     }
   },
 
-  markIssuedOffline: async () => {
+  markNotFound: async (report) => {
     const sheet = get().replace;
     const opl = get().selectedOpl;
     if (!sheet || !opl) return { ok: false, message: 'Nothing to mark.' };
-    set({ replace: { ...sheet, submitting: true } });
+    set({ replace: { ...sheet, submitting: true, error: null } });
+    try {
+      const res = await karenIssuingApi.markNotFound({
+        opl_name: opl,
+        bucket: sheet.item.bucket,
+        sale_order_item: sheet.item.lines.find((l) => !l.isIssued)?.saleOrderItem || undefined,
+        scanned_shelf: report.shelf,
+        shelf_photo: report.photo,
+      });
+      if (!res.success) {
+        const message = res.message || 'Could not mark it not found.';
+        set({ replace: { ...sheet, submitting: false, error: message } });
+        return { ok: false, message };
+      }
+      set({ replace: null });
+      await get().selectOrder(opl);
+      return { ok: true, message: res.message || `${sheet.item.bucket} marked not found.` };
+    } catch (err) {
+      const message = mapAxiosError(err).message || 'Could not mark it not found.';
+      set({ replace: { ...sheet, submitting: false, error: message } });
+      return { ok: false, message };
+    }
+  },
+
+  markIssuedOffline: async (report) => {
+    const sheet = get().replace;
+    const opl = get().selectedOpl;
+    if (!sheet || !opl) return { ok: false, message: 'Nothing to mark.' };
+    set({ replace: { ...sheet, submitting: true, error: null } });
     try {
       const res = await karenIssuingApi.markIssuedOffline({
         opl_name: opl,
         bucket: sheet.item.bucket,
         sale_order_item: sheet.item.lines.find((l) => !l.isIssued)?.saleOrderItem || undefined,
+        scanned_shelf: report?.shelf,
+        shelf_photo: report?.photo,
       });
       if (!res.success) {
-        set({ replace: { ...sheet, submitting: false } });
-        return { ok: false, message: res.message || 'Could not mark it issued.' };
+        const message = res.message || 'Could not mark it issued.';
+        set({ replace: { ...sheet, submitting: false, error: message } });
+        return { ok: false, message };
       }
       set({ replace: null });
       await get().selectOrder(opl);
       return { ok: true, message: res.message || `${sheet.item.bucket} marked issued.` };
     } catch (err) {
-      set({ replace: { ...sheet, submitting: false } });
-      return { ok: false, message: mapAxiosError(err).message || 'Could not mark it issued.' };
+      const message = mapAxiosError(err).message || 'Could not mark it issued.';
+      set({ replace: { ...sheet, submitting: false, error: message } });
+      return { ok: false, message };
     }
   },
 

@@ -14,7 +14,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 
 /** `parts`: the label in pieces, some bold; `label` stays the plain text (search).
- *  `corner`: bold text at the row's bottom right. */
+ *  `corner`: bold text at the row's bottom right. `banner`: a coloured strip over the row. */
 type LabelPart = { text: string; bold?: boolean; semi?: boolean; color?: string };
 /** `subParts`: the sublabel in styled pieces (wins over `sublabel`). */
 type Option = {
@@ -24,6 +24,7 @@ type Option = {
   subParts?: LabelPart[];
   parts?: LabelPart[];
   corner?: string;
+  banner?: { text: string; color: string };
 };
 
 type Props = {
@@ -141,6 +142,11 @@ export function Dropdown({
                     style={s.row}
                   >
                     <View style={{ flex: 1 }}>
+                      {item.banner ? (
+                        <View style={[s.rowBanner, { backgroundColor: item.banner.color }]}>
+                          <Text style={s.rowBannerText}>{item.banner.text}</Text>
+                        </View>
+                      ) : null}
                       <Text style={[s.rowText, isSelected && { fontFamily: fontFamily.semiBold }]}>
                         {item.parts
                           ? item.parts.map((p, i) => (
@@ -244,6 +250,8 @@ const s = StyleSheet.create({
   rowSemi: { fontFamily: fontFamily.semiBold },
   rowSub: { fontFamily: fontFamily.regular, fontSize: fontSize.xs, color: COLORS.textMuted, marginTop: 2 },
   rowFoot: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm },
+  rowBanner: { alignSelf: 'flex-start', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, marginBottom: 4 },
+  rowBannerText: { fontFamily: fontFamily.bold, fontSize: 10, color: '#fff', letterSpacing: 0.6 },
   rowCorner: { fontFamily: fontFamily.bold, fontSize: fontSize.xs, color: COLORS.text, marginTop: 2 },
   sep: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.border },
   empty: { padding: spacing.xl, alignItems: 'center' },

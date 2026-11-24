@@ -1,3 +1,4 @@
+import { File } from 'expo-file-system';
 import { storage, StorageKeys } from '@/src/core/storage';
 import { followDevHost } from './dev-host';
 
@@ -27,15 +28,17 @@ export async function uploadImage(
   const baseUrl = followDevHost(saved);
   const cookie = await storage.get(StorageKeys.cookie);
 
+  const file = new File(localUri);
   const form = new FormData();
   form.append('file', {
-    // RN's fetch accepts this shape directly when the body is FormData.
+    // Global fetch is expo/fetch, which rejects RN's `{ uri, name, type }` parts
+    // ("Unsupported FormDataPart implementation"). It takes any part with `bytes()`,
+    // and reads `name`/`type` for the part headers.
     // The cast is needed because lib.dom.d.ts thinks FormData entries are Blob | string.
-    uri: localUri,
-    name: fileName || localUri.split('/').pop() || 'photo.jpg',
+    name: fileName || file.name || 'photo.jpg',
     type: 'image/jpeg',
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any);
+    bytes: () => file.bytes(),
+  } as unknown as Blob);
   form.append('is_private', '0');
   form.append('folder', 'Home');
 

@@ -4,6 +4,8 @@ const sources = {
   beep: require('@/assets/beep.mp3'),
   submit: require('@/assets/submit.mp3'),
   error: require('@/assets/error.mp3'),
+  /** A bucket holding more stems than the order takes: take only the order's stems, put the bucket back. */
+  takePart: require('@/assets/take-part.wav'),
 } as const;
 
 type SoundKey = keyof typeof sources;
@@ -33,4 +35,5 @@ export const audio = {
   beep: () => play('beep'),
   submit: () => play('submit'),
   error: () => play('error'),
+  takePart: () => play('takePart'),
 };
