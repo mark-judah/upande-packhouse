@@ -45,7 +45,10 @@ export type RawDashboardData = {
   sales_farms?: string[];
   all_farms?: boolean;
   kpi?: {
+    /** Boxes ordered, as Orders & Workflow counts them. */
     boxes_required?: number;
+    /** Boxes on the pick lists: what "boxes packed" is out of. */
+    boxes_planned?: number;
     boxes_packed?: number;
     stems_expected?: number;
     stems_packed?: number;

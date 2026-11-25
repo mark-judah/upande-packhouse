@@ -209,7 +209,7 @@ export function PackhouseDashboard() {
           {(kpi?.boxesPacked ?? 0).toLocaleString()}
         </Text>
         <Text style={s.heroUnit}>
-          of {(kpi?.boxesRequired ?? 0).toLocaleString()} boxes · {kpi?.ordersDone ?? 0}/{kpi?.ordersTotal ?? 0} orders ready
+          of {(kpi?.boxesPlanned ?? 0).toLocaleString()} boxes planned · {kpi?.ordersDone ?? 0}/{kpi?.ordersTotal ?? 0} orders ready
         </Text>
         <Ionicons name="cube" size={72} color="rgba(255,255,255,0.06)" style={s.heroIcon} />
       </Pressable>

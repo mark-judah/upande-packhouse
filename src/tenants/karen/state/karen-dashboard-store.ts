@@ -35,6 +35,8 @@ export type DashboardPacker = {
 
 export type DashboardKpi = {
   boxesRequired: number;
+  /** Boxes on the pick lists: what boxesPacked is out of (Orders & Workflow's "Boxes packed"). */
+  boxesPlanned: number;
   boxesPacked: number;
   stemsExpected: number;
   stemsPacked: number;
@@ -120,6 +122,7 @@ export const useKarenDashboardStore = create<DashboardState>((set, get) => ({
         allFarms: Boolean(m.all_farms),
         kpi: {
           boxesRequired: n(k.boxes_required),
+          boxesPlanned: n(k.boxes_planned ?? k.boxes_required),
           boxesPacked: n(k.boxes_packed),
           stemsExpected: n(k.stems_expected),
           stemsPacked: n(k.stems_packed),
