@@ -9,6 +9,7 @@ import { Button } from '@/src/core/ui/Button';
 import { ProgressBar } from '@/src/core/ui/ProgressBar';
 import { useToast } from '@/src/core/ui/Toast';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
+import { focusWhenReady } from '@/src/core/scanning/focus';
 import { COLORS, borderRadius, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { mapAxiosError } from '@/src/core/api/client';
 import { karenSeaFreightApi, type SeaFreightOrder } from '@/src/tenants/karen/api/karen-sea-freight-api';
@@ -62,6 +63,13 @@ export function KarenSeaFreightScreen() {
     useCallback(() => {
       load();
     }, [load]),
+  );
+  // the scan takes focus once the screen has settled (as Packing does): the scanner types into it, no soft keyboard
+  const scanReady = orders.some((o) => o.harvestDone && !o.received);
+  useFocusEffect(
+    useCallback(() => {
+      if (scanReady) focusWhenReady(scanRef);
+    }, [scanReady]),
   );
   const refresh = async () => {
     setRefreshing(true);
@@ -133,7 +141,7 @@ export function KarenSeaFreightScreen() {
         <View style={s.pinned}>
           {!loading && !error && orders.length === 0 ? <Alert tone="info">No open sea freight orders.</Alert> : null}
           {toReceive.length ? (
-            <ScanField ref={scanRef} label="Scan bucket to receive" onScan={onScan} autoFocus placeholder="Scan bucket QR" />
+            <ScanField ref={scanRef} label="Scan bucket to receive" onScan={onScan} placeholder="Scan bucket QR" />
           ) : null}
         </View>
       ) : null}
