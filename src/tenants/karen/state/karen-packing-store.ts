@@ -677,8 +677,11 @@ export const useKarenPackingStore = create<State>((set, get) => ({
 
   loadPicklists: async () => {
     set({ picklistsLoading: true });
+    const date = get().selectedDate;
     try {
-      const raw = await karenPackingApi.fetchPicklists(get().selectedDate);
+      const raw = await karenPackingApi.fetchPicklists(date);
+      // a reply for a day no longer shown (the date changed meanwhile) is dropped
+      if (get().selectedDate !== date) return;
       // Drop a stale group filter if the reloaded picklists no longer contain it.
       const picklists = extractPicklists(raw);
       const groups = new Set(picklists.map((p) => p.itemGroup).filter(Boolean));

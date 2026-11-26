@@ -108,13 +108,13 @@ export function KarenSeaFreightScreen() {
   const pack = (o: SeaFreightOrder) => {
     const opl = o.pickLists[0] ?? o.pickList;
     if (!opl) return;
-    router.push({ pathname: '/packing', params: { opl, date: o.deliveryDate } } as never);
+    router.push({ pathname: '/packing', params: { opl, date: o.deliveryDate, t: String(Date.now()) } } as never);
   };
 
   return (
     <Screen title="Sea Freight" loading={loading && orders.length === 0} error={error} onRetry={load} onRefresh={load}>
       {!loading && !error && orders.length === 0 ? <Alert tone="info">No open sea freight orders.</Alert> : null}
-      {toReceive.length ? <ScanField ref={scanRef} onScan={onScan} autoFocus placeholder="Scan bucket QR to receive" /> : null}
+      {toReceive.length ? <ScanField ref={scanRef} label="Scan bucket to receive" onScan={onScan} autoFocus placeholder="Scan bucket QR" /> : null}
       {orders.map((o) => (
         <View key={o.name} style={s.order}>
           <View style={s.head}>

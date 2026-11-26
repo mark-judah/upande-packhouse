@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { Button } from './Button';
@@ -62,6 +62,9 @@ export function Screen({
     : undefined;
 
   const padding = contentPadded ? s.content : { padding: 0 };
+  // the bottom edge is left to the body: the last of a long list scrolls clear of the phone's navigation bar
+  const insets = useSafeAreaInsets();
+  const bottom = { paddingBottom: (contentPadded ? spacing.xxl : 0) + insets.bottom };
 
   let body: ReactNode;
   if (loading) {
@@ -87,7 +90,7 @@ export function Screen({
     // nothing to bring the focused field/button into view.
     body = (
       <KeyboardAwareScrollView
-        contentContainerStyle={[s.content, padding]}
+        contentContainerStyle={[s.content, padding, bottom]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
