@@ -37,6 +37,9 @@ export type SeaFreightOrder = {
   customer: string;
   deliveryDate: string;
   status: string;
+  /** Its place in the planned sequence for the delivery day (0: not planned) and the team packing it. */
+  sequence: number;
+  team: string;
   orderedStems: number;
   harvestedStems: number;
   receivedStems: number;
@@ -65,6 +68,8 @@ type RawOrder = {
   customer?: string;
   delivery_date?: string;
   status?: string;
+  sequence?: number;
+  team?: string;
   ordered_stems?: number;
   harvested_stems?: number;
   received_stems?: number;
@@ -96,6 +101,8 @@ export const karenSeaFreightApi = {
       })),
       customer: String(o.customer ?? ''),
       deliveryDate: String(o.delivery_date ?? ''),
+      sequence: Number(o.sequence ?? 0),
+      team: String(o.team ?? ''),
       status: String(o.status ?? ''),
       orderedStems: n(o.ordered_stems),
       harvestedStems: n(o.harvested_stems),
@@ -122,6 +129,18 @@ export const karenSeaFreightApi = {
       data: { sales_order: salesOrder, buckets },
     });
     return { pickLists: (res.message?.pick_lists ?? []).map(String) };
+  },
+
+  /** The pick lists and sales orders of open sea freight orders: the Sea Freight banner on every screen after packing. */
+  async marks(): Promise<{ pickLists: string[]; salesOrders: string[] }> {
+    const res = await api<{ message?: { pick_lists?: string[]; sales_orders?: string[] } }>({
+      method: 'GET',
+      url: '/api/method/upande_packhouse.api.sea_freight.marks',
+    });
+    return {
+      pickLists: (res.message?.pick_lists ?? []).map(String),
+      salesOrders: (res.message?.sales_orders ?? []).map(String),
+    };
   },
 
   /** Pick lists of open sea freight orders, for the Packing screen's banner. */

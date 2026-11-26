@@ -136,17 +136,25 @@ export function KarenPackingScreen() {
   );
 
   // Opened from Sea Freight with an order's pick list: go to its delivery day and open it.
-  const { opl: openOpl, date: openDate } = useLocalSearchParams<{ opl?: string; date?: string }>();
+  // `t`: a stamp per tap, so the same pick list opens again however often Pack is pressed
+  const { opl: openOpl, date: openDate, t: openStamp } = useLocalSearchParams<{ opl?: string; date?: string; t?: string }>();
   useEffect(() => {
     if (!openOpl) return;
     const store = useKarenPackingStore.getState();
     (async () => {
+      // the order's day, its list read afresh, no team or group filter hiding it, then the pick list itself
       if (openDate && openDate !== store.selectedDate) await store.setDate(openDate);
+      else await store.loadPicklists();
+      useKarenPackingStore.getState().setTeam(null);
+      useKarenPackingStore.getState().setItemGroup(null);
       await useKarenPackingStore.getState().selectOpl(openOpl);
     })();
-  }, [openOpl, openDate]);
+  }, [openOpl, openDate, openStamp]);
 
-  const isStandardRoses = packingGuide?.itemGroup === 'Standard Roses';
+  // Sea freight is harvested into buckets, not graded into bunch QRs: every crop of it (sprays and fillers too)
+  // is packed by count, as standard roses are
+  const isStandardRoses =
+    packingGuide?.itemGroup === 'Standard Roses' || (!!selectedOpl && seaFreightOpls.has(selectedOpl));
 
   // Guide image is a (possibly private) Frappe file. React Native's <Image>
   // was previously given { uri, headers: { Cookie } } directly -- but RN's

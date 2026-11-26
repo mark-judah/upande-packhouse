@@ -15,9 +15,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SeaFreightBanner, useSeaFreightMarks } from '@/src/tenants/karen/features/sea-freight/SeaFreightBanner';
 
 export function KarenBoxLabelsScreen() {
   const { showError, showSuccess } = useToast();
+  const seaFreight = useSeaFreightMarks();
   const {
     selectedDate,
     orders,
@@ -173,6 +175,7 @@ export function KarenBoxLabelsScreen() {
                 <View style={s.rowText}>
                   <Text style={s.rowTitle} numberOfLines={1}>{o.customer || o.orderName}</Text>
                   <Text style={s.rowSub} numberOfLines={1}>{o.orderName} · {o.oplName}</Text>
+                  {seaFreight.opls.has(o.oplName) ? <SeaFreightBanner compact /> : null}
                   <View style={s.badges}>
                     <Text style={s.badge}>{o.boxes} box{o.boxes === 1 ? '' : 'es'}</Text>
                     <Text style={[s.badge, allPrinted ? s.badgeDone : s.badgeTodo]}>

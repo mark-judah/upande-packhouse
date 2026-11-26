@@ -28,12 +28,14 @@ import { tomorrowISO } from '@/src/core/date';
 import { useToast } from '@/src/core/ui/Toast';
 import { useKarenDispatchStore } from '@/src/tenants/karen/state/karen-dispatch-store';
 import { COLORS, fontFamily, fontSize, spacing, borderRadius } from '@/src/core/theme';
+import { SeaFreightBanner, useSeaFreightMarks } from '@/src/tenants/karen/features/sea-freight/SeaFreightBanner';
 
 // Dispatch is a read-only confirmation clipboard, not a form: it shows what
 // the day's orders required vs what actually got loaded, then a single final
 // "Confirm dispatch" action -- once confirmed the Loading Sheet is marked
 // Departed server-side and this screen locks (see karen-dispatch-store.save).
 export function KarenDispatchScreen() {
+  const seaFreight = useSeaFreightMarks();
   const {
     loading,
     saving,
@@ -423,6 +425,7 @@ export function KarenDispatchScreen() {
                   <Text style={s.orderSub} numberOfLines={1}>
                     {[o.orderName, o.farm].filter(Boolean).join('  ·  ')}
                   </Text>
+                  {seaFreight.orders.has(o.salesOrder) ? <SeaFreightBanner compact /> : null}
                 </View>
                 <Text style={s.tdNum}>{o.boxesRequired}</Text>
                 <View style={[s.boxTag, complete && s.boxTagDone, short && s.boxTagShort]}>

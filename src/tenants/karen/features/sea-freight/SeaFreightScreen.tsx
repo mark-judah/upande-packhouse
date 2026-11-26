@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/core/ui/Screen';
@@ -8,6 +9,7 @@ import { Button } from '@/src/core/ui/Button';
 import { ProgressBar } from '@/src/core/ui/ProgressBar';
 import { useToast } from '@/src/core/ui/Toast';
 import { ScanField, type ScanFieldHandle } from '@/src/core/scanning/ScanField';
+import { focusWhenReady } from '@/src/core/scanning/focus';
 import { COLORS, borderRadius, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { mapAxiosError } from '@/src/core/api/client';
 import { karenSeaFreightApi, type SeaFreightOrder } from '@/src/tenants/karen/api/karen-sea-freight-api';
@@ -29,13 +31,21 @@ function bucketFromScan(raw: string): string {
   return '';
 }
 
-/** Open sea freight orders. Once the farm marks one harvested, Receive scans its buckets in: that makes its pick
- *  lists, issued, and Pack opens them on the Packing screen. */
+/** Buckets scanned in so far, per order: kept while the app is open, so leaving the screen loses none. */
+const scannedByOrder: Record<string, string[]> = {};
+
+/** Open sea freight orders. Once the farm marks one harvested, scanning its buckets receives them; with every bucket
+ *  in, Create pick list makes its pick lists, issued, and Pack opens them on the Packing screen. */
 export function KarenSeaFreightScreen() {
   const [orders, setOrders] = useState<SeaFreightOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [receiving, setReceiving] = useState<string | null>(null);
+  const [scanned, setScanned] = useState<Record<string, string[]>>({ ...scannedByOrder });
+  const [saving, setSaving] = useState<string | null>(null);
+  const scanRef = useRef<ScanFieldHandle>(null);
+  const { showSuccess, showError } = useToast();
+  const insets = useSafeAreaInsets();
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -54,23 +64,106 @@ export function KarenSeaFreightScreen() {
       load();
     }, [load]),
   );
+  // the scan takes focus once the screen has settled (as Packing does): the scanner types into it, no soft keyboard
+  const scanReady = orders.some((o) => o.harvestDone && !o.received);
+  useFocusEffect(
+    useCallback(() => {
+      if (scanReady) focusWhenReady(scanRef);
+    }, [scanReady]),
+  );
+  const refresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
+
+  const toReceive = orders.filter((o) => o.harvestDone && !o.received);
+
+  // a scan receives the bucket; the order's last bucket takes the order in
+  const onScan = async (raw: string) => {
+    const id = bucketFromScan(raw);
+    scanRef.current?.clear();
+    if (!id) {
+      showError('That is not a bucket QR code.');
+      return;
+    }
+    const o = toReceive.find((x) => x.buckets.some((b) => b.bucket === id));
+    if (!o) {
+      showError(`Bucket ${id} is not on a harvested sea freight order.`);
+      return;
+    }
+    const mine = scannedByOrder[o.name] ?? [];
+    if (mine.includes(id)) {
+      showError(`Bucket ${id} is already received.`);
+      return;
+    }
+    const next = [...mine, id];
+    scannedByOrder[o.name] = next;
+    setScanned({ ...scannedByOrder });
+    const allIn = o.buckets.every((b) => next.includes(b.bucket));
+    showSuccess(allIn ? `${id} received · every bucket in` : `${id} received · ${next.length} / ${o.buckets.length}`);
+  };
+
+  // every bucket in: the order's pick lists are made (issued, ready to pack)
+  const createPickList = async (o: SeaFreightOrder) => {
+    const next = scannedByOrder[o.name] ?? [];
+    setSaving(o.name);
+    try {
+      const r = await karenSeaFreightApi.receive(o.name, next);
+      delete scannedByOrder[o.name];
+      setScanned({ ...scannedByOrder });
+      showSuccess(`${o.orderName || o.name}: ${r.pickLists.length} pick list${r.pickLists.length === 1 ? '' : 's'} ready to pack.`);
+      await load();
+    } catch (err) {
+      showError(mapAxiosError(err).message);
+    } finally {
+      setSaving(null);
+    }
+  };
 
   const pack = (o: SeaFreightOrder) => {
     const opl = o.pickLists[0] ?? o.pickList;
     if (!opl) return;
-    router.push({ pathname: '/packing', params: { opl, date: o.deliveryDate } } as never);
+    router.push({ pathname: '/packing', params: { opl, date: o.deliveryDate, t: String(Date.now()) } } as never);
   };
 
   return (
-    <Screen title="Sea Freight" loading={loading && orders.length === 0} error={error} onRetry={load} onRefresh={load}>
-      {!loading && !error && orders.length === 0 ? <Alert tone="info">No open sea freight orders.</Alert> : null}
+    <Screen
+      title="Sea Freight"
+      loading={loading && orders.length === 0}
+      error={error}
+      onRetry={load}
+      scroll={false}
+      contentPadded={false}
+    >
+      {/* the scan stays put at the top; only the orders scroll under it */}
+      {toReceive.length || (!loading && !error && orders.length === 0) ? (
+        <View style={s.pinned}>
+          {!loading && !error && orders.length === 0 ? <Alert tone="info">No open sea freight orders.</Alert> : null}
+          {toReceive.length ? (
+            <ScanField ref={scanRef} label="Scan bucket to receive" onScan={onScan} placeholder="Scan bucket QR" />
+          ) : null}
+        </View>
+      ) : null}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={[s.list, { paddingBottom: spacing.xxl + insets.bottom }]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={COLORS.text} colors={[COLORS.text]} />}
+      >
       {orders.map((o) => (
         <View key={o.name} style={s.order}>
           <View style={s.head}>
+            {o.sequence > 0 ? (
+              <View style={s.seqBadge}>
+                <Text style={s.seqNum}>{`#${o.sequence}`}</Text>
+              </View>
+            ) : null}
             <View style={{ flex: 1 }}>
-              <Text style={s.title} numberOfLines={1}>{o.orderName || o.customer}</Text>
+              <Text style={s.title}>{o.orderName || o.customer}</Text>
               <Text style={s.sub}>
-                {[o.orderName ? o.customer : '', o.name, `Delivery ${o.deliveryDate}`].filter(Boolean).join(' · ')}
+                {[o.orderName ? o.customer : '', o.team, `Delivery ${o.deliveryDate}`].filter(Boolean).join(' · ')}
               </Text>
             </View>
             <StatusPill order={o} />
@@ -83,7 +176,7 @@ export function KarenSeaFreightScreen() {
             <Total label="Packed" value={o.packedStems} />
           </View>
 
-          {o.items.map((l) => (
+          {o.items.filter((l) => l.harvestedStems > 0).map((l) => (
             <View key={l.name} style={s.line}>
               <View style={s.lineHead}>
                 <Text style={s.lineTitle} numberOfLines={1}>
@@ -95,26 +188,28 @@ export function KarenSeaFreightScreen() {
             </View>
           ))}
 
-          {receiving === o.name ? (
-            <ReceivePanel
-              order={o}
-              onCancel={() => setReceiving(null)}
-              onDone={() => {
-                setReceiving(null);
-                load();
-              }}
-            />
-          ) : (
-            <View style={{ marginTop: spacing.sm }}>
-              {o.received ? (
-                <Button label="Pack" iconLeft="cube-outline" onPress={() => pack(o)} disabled={!o.pickLists.length} />
-              ) : o.harvestDone ? (
-                <Button label="Receive" iconLeft="download-outline" onPress={() => setReceiving(o.name)} />
+          {o.harvestDone && !o.received ? (
+            <>
+              <Received order={o} scanned={scanned[o.name] ?? []} />
+              {o.buckets.length > 0 && o.buckets.every((b) => (scanned[o.name] ?? []).includes(b.bucket)) ? (
+                <View style={{ marginTop: spacing.sm }}>
+                  <Button
+                    label="Create pick list"
+                    iconLeft="clipboard-outline"
+                    onPress={() => createPickList(o)}
+                    loading={saving === o.name}
+                  />
+                </View>
               ) : null}
+            </>
+          ) : o.received ? (
+            <View style={{ marginTop: spacing.sm }}>
+              <Button label="Pack" iconLeft="cube-outline" onPress={() => pack(o)} disabled={!o.pickLists.length} />
             </View>
-          )}
+          ) : null}
         </View>
       ))}
+      </ScrollView>
     </Screen>
   );
 }
@@ -132,73 +227,33 @@ function StatusPill({ order }: { order: SeaFreightOrder }) {
   );
 }
 
-/** Scan every bucket harvested for the order, then take it in. */
-function ReceivePanel({ order, onCancel, onDone }: { order: SeaFreightOrder; onCancel: () => void; onDone: () => void }) {
-  const { showSuccess, showError } = useToast();
-  const scanRef = useRef<ScanFieldHandle>(null);
-  const [scanned, setScanned] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
+/** How many of the order's buckets are in; tapped, the buckets themselves, ticked as they are scanned. */
+function Received({ order, scanned }: { order: SeaFreightOrder; scanned: string[] }) {
+  const [open, setOpen] = useState(false);
   const expected = order.buckets;
-  const allIn = expected.length > 0 && expected.every((b) => scanned.includes(b.bucket));
-
-  const onScan = (raw: string) => {
-    const id = bucketFromScan(raw);
-    scanRef.current?.clear();
-    if (!id) {
-      showError('That is not a bucket QR code.');
-      return;
-    }
-    if (!expected.some((b) => b.bucket === id)) {
-      showError(`Bucket ${id} was not harvested for this order.`);
-      return;
-    }
-    if (scanned.includes(id)) {
-      showError(`Bucket ${id} is already scanned.`);
-      return;
-    }
-    setScanned((p) => [...p, id]);
-  };
-
-  const finish = async () => {
-    setSaving(true);
-    try {
-      const r = await karenSeaFreightApi.receive(order.name, scanned);
-      showSuccess(`${order.name} received: ${r.pickLists.length} pick list${r.pickLists.length === 1 ? '' : 's'} ready to pack.`);
-      onDone();
-    } catch (err) {
-      showError(mapAxiosError(err).message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
     <View style={s.receive}>
-      <Text style={s.receiveTitle}>{`Scan buckets · ${scanned.length} / ${expected.length}`}</Text>
-      <ScanField ref={scanRef} onScan={onScan} autoFocus placeholder="Scan bucket QR" />
-      {expected.map((b) => {
-        const done = scanned.includes(b.bucket);
-        return (
-          <View key={b.bucket} style={s.bucket}>
-            <Ionicons
-              name={done ? 'checkmark-circle' : 'ellipse-outline'}
-              size={18}
-              color={done ? COLORS.success : COLORS.textMuted}
-            />
-            <Text style={[s.bucketText, done && { color: COLORS.text }]} numberOfLines={1}>
-              {[b.bucket, b.itemCode, `${fmt(b.stems)} stems`, b.greenhouse].filter(Boolean).join(' · ')}
-            </Text>
-          </View>
-        );
-      })}
-      <View style={s.actions}>
-        <View style={{ flex: 1 }}>
-          <Button label="Cancel" variant="outline" onPress={onCancel} disabled={saving} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Button label="Receive" iconLeft="checkmark" onPress={finish} loading={saving} disabled={!allIn} />
-        </View>
-      </View>
+      <Pressable style={s.receiveHead} onPress={() => setOpen((v) => !v)} hitSlop={6}>
+        <Text style={s.receiveTitle}>{`Received ${scanned.length} / ${expected.length} buckets`}</Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={COLORS.textMuted} />
+      </Pressable>
+      {open
+        ? expected.map((b) => {
+            const done = scanned.includes(b.bucket);
+            return (
+              <View key={b.bucket} style={s.bucket}>
+                <Ionicons
+                  name={done ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={18}
+                  color={done ? COLORS.success : COLORS.textMuted}
+                />
+                <Text style={[s.bucketText, done && { color: COLORS.text }]}>
+                  {[b.bucket, b.itemCode, `${fmt(b.stems)} stems`, b.greenhouse].filter(Boolean).join(' · ')}
+                </Text>
+              </View>
+            );
+          })
+        : null}
     </View>
   );
 }
@@ -213,6 +268,8 @@ function Total({ label, value }: { label: string; value: number }) {
 }
 
 const s = StyleSheet.create({
+  pinned: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.sm, gap: spacing.sm },
+  list: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.md },
   order: {
     backgroundColor: COLORS.surface,
     borderRadius: borderRadius.md,
@@ -223,6 +280,16 @@ const s = StyleSheet.create({
     gap: spacing.xs,
   },
   head: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  seqBadge: {
+    minWidth: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.text,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  seqNum: { fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: '#FFFFFF' },
   title: { fontFamily: fontFamily.semiBold, fontSize: fontSize.md, color: COLORS.text },
   sub: { fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textSecondary },
   pill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: spacing.sm, paddingVertical: 2 },
@@ -248,6 +315,7 @@ const s = StyleSheet.create({
     paddingTop: spacing.sm,
     gap: spacing.sm,
   },
+  receiveHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   receiveTitle: { fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },
   bucket: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   bucketText: { flex: 1, fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textMuted },

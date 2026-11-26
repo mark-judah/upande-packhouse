@@ -25,6 +25,7 @@ import {
   type LoadingPlanItem,
 } from '@/src/tenants/karen/state/karen-loading-store';
 import { COLORS, fontFamily, fontSize, spacing, borderRadius } from '@/src/core/theme';
+import { SeaFreightBanner, useSeaFreightMarks } from '@/src/tenants/karen/features/sea-freight/SeaFreightBanner';
 
 export function KarenLoadingScreen() {
   const scanRef = useRef<ScanFieldHandle>(null);
@@ -456,6 +457,7 @@ function plannedBoxes(items: LoadingPlanItem[]): number {
 }
 
 function CustomerBlock({ customer, items }: { customer: string; items: LoadingPlanItem[] }) {
+  const seaFreight = useSeaFreightMarks();
   // Dedupe by Sales Order, not a raw per-row sum — a customer can have
   // several rows at one stop (one per box type / a position split) that
   // all carry the same underlying order(s).
@@ -521,6 +523,9 @@ function CustomerBlock({ customer, items }: { customer: string; items: LoadingPl
             </View>
             {orderLines.length > 0 ? (
               <Text style={s.boxOrderName} numberOfLines={1}>{orderLines.join(', ')}</Text>
+            ) : null}
+            {item.orders.some((o) => seaFreight.orders.has(o.salesOrder) || seaFreight.opls.has(o.orderPickList)) ? (
+              <SeaFreightBanner compact />
             ) : null}
             {!itemDone && stagedByLocation.size > 0 ? (
               <View style={s.stagingRow}>
