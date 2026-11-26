@@ -29,13 +29,19 @@ function bucketFromScan(raw: string): string {
   return '';
 }
 
-/** Open sea freight orders. Once the farm marks one harvested, Receive scans its buckets in: that makes its pick
- *  lists, issued, and Pack opens them on the Packing screen. */
+/** Buckets scanned in so far, per order: kept while the app is open, so leaving the screen loses none. */
+const scannedByOrder: Record<string, string[]> = {};
+
+/** Open sea freight orders. Once the farm marks one harvested, scanning its buckets receives them: the order's last
+ *  bucket makes its pick lists, issued, and Pack opens them on the Packing screen. */
 export function KarenSeaFreightScreen() {
   const [orders, setOrders] = useState<SeaFreightOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [receiving, setReceiving] = useState<string | null>(null);
+  const [scanned, setScanned] = useState<Record<string, string[]>>({ ...scannedByOrder });
+  const [saving, setSaving] = useState<string | null>(null);
+  const scanRef = useRef<ScanFieldHandle>(null);
+  const { showSuccess, showError } = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +61,48 @@ export function KarenSeaFreightScreen() {
     }, [load]),
   );
 
+  const toReceive = orders.filter((o) => o.harvestDone && !o.received);
+
+  // a scan receives the bucket; the order's last bucket takes the order in
+  const onScan = async (raw: string) => {
+    const id = bucketFromScan(raw);
+    scanRef.current?.clear();
+    if (!id) {
+      showError('That is not a bucket QR code.');
+      return;
+    }
+    const o = toReceive.find((x) => x.buckets.some((b) => b.bucket === id));
+    if (!o) {
+      showError(`Bucket ${id} is not on a harvested sea freight order.`);
+      return;
+    }
+    const mine = scannedByOrder[o.name] ?? [];
+    if (mine.includes(id)) {
+      showError(`Bucket ${id} is already received.`);
+      return;
+    }
+    const next = [...mine, id];
+    scannedByOrder[o.name] = next;
+    setScanned({ ...scannedByOrder });
+    const allIn = o.buckets.every((b) => next.includes(b.bucket));
+    if (!allIn) {
+      showSuccess(`${id} received · ${next.length} / ${o.buckets.length}`);
+      return;
+    }
+    setSaving(o.name);
+    try {
+      const r = await karenSeaFreightApi.receive(o.name, next);
+      delete scannedByOrder[o.name];
+      setScanned({ ...scannedByOrder });
+      showSuccess(`${o.orderName || o.name} received: ${r.pickLists.length} pick list${r.pickLists.length === 1 ? '' : 's'} ready to pack.`);
+      await load();
+    } catch (err) {
+      showError(mapAxiosError(err).message);
+    } finally {
+      setSaving(null);
+    }
+  };
+
   const pack = (o: SeaFreightOrder) => {
     const opl = o.pickLists[0] ?? o.pickList;
     if (!opl) return;
@@ -64,6 +112,7 @@ export function KarenSeaFreightScreen() {
   return (
     <Screen title="Sea Freight" loading={loading && orders.length === 0} error={error} onRetry={load} onRefresh={load}>
       {!loading && !error && orders.length === 0 ? <Alert tone="info">No open sea freight orders.</Alert> : null}
+      {toReceive.length ? <ScanField ref={scanRef} onScan={onScan} autoFocus placeholder="Scan bucket QR to receive" /> : null}
       {orders.map((o) => (
         <View key={o.name} style={s.order}>
           <View style={s.head}>
@@ -100,24 +149,13 @@ export function KarenSeaFreightScreen() {
             </View>
           ))}
 
-          {receiving === o.name ? (
-            <ReceivePanel
-              order={o}
-              onCancel={() => setReceiving(null)}
-              onDone={() => {
-                setReceiving(null);
-                load();
-              }}
-            />
-          ) : (
+          {o.harvestDone && !o.received ? (
+            <Received order={o} scanned={scanned[o.name] ?? []} saving={saving === o.name} />
+          ) : o.received ? (
             <View style={{ marginTop: spacing.sm }}>
-              {o.received ? (
-                <Button label="Pack" iconLeft="cube-outline" onPress={() => pack(o)} disabled={!o.pickLists.length} />
-              ) : o.harvestDone ? (
-                <Button label="Receive" iconLeft="download-outline" onPress={() => setReceiving(o.name)} />
-              ) : null}
+              <Button label="Pack" iconLeft="cube-outline" onPress={() => pack(o)} disabled={!o.pickLists.length} />
             </View>
-          )}
+          ) : null}
         </View>
       ))}
     </Screen>
@@ -137,50 +175,12 @@ function StatusPill({ order }: { order: SeaFreightOrder }) {
   );
 }
 
-/** Scan every bucket harvested for the order, then take it in. */
-function ReceivePanel({ order, onCancel, onDone }: { order: SeaFreightOrder; onCancel: () => void; onDone: () => void }) {
-  const { showSuccess, showError } = useToast();
-  const scanRef = useRef<ScanFieldHandle>(null);
-  const [scanned, setScanned] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
+/** The order's buckets, ticked as they are scanned in. */
+function Received({ order, scanned, saving }: { order: SeaFreightOrder; scanned: string[]; saving: boolean }) {
   const expected = order.buckets;
-  const allIn = expected.length > 0 && expected.every((b) => scanned.includes(b.bucket));
-
-  const onScan = (raw: string) => {
-    const id = bucketFromScan(raw);
-    scanRef.current?.clear();
-    if (!id) {
-      showError('That is not a bucket QR code.');
-      return;
-    }
-    if (!expected.some((b) => b.bucket === id)) {
-      showError(`Bucket ${id} was not harvested for this order.`);
-      return;
-    }
-    if (scanned.includes(id)) {
-      showError(`Bucket ${id} is already scanned.`);
-      return;
-    }
-    setScanned((p) => [...p, id]);
-  };
-
-  const finish = async () => {
-    setSaving(true);
-    try {
-      const r = await karenSeaFreightApi.receive(order.name, scanned);
-      showSuccess(`${order.name} received: ${r.pickLists.length} pick list${r.pickLists.length === 1 ? '' : 's'} ready to pack.`);
-      onDone();
-    } catch (err) {
-      showError(mapAxiosError(err).message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
     <View style={s.receive}>
-      <Text style={s.receiveTitle}>{`Scan buckets · ${scanned.length} / ${expected.length}`}</Text>
-      <ScanField ref={scanRef} onScan={onScan} autoFocus placeholder="Scan bucket QR" />
+      <Text style={s.receiveTitle}>{saving ? 'Receiving…' : `Received ${scanned.length} / ${expected.length} buckets`}</Text>
       {expected.map((b) => {
         const done = scanned.includes(b.bucket);
         return (
@@ -190,20 +190,12 @@ function ReceivePanel({ order, onCancel, onDone }: { order: SeaFreightOrder; onC
               size={18}
               color={done ? COLORS.success : COLORS.textMuted}
             />
-            <Text style={[s.bucketText, done && { color: COLORS.text }]} numberOfLines={1}>
+            <Text style={[s.bucketText, done && { color: COLORS.text }]}>
               {[b.bucket, b.itemCode, `${fmt(b.stems)} stems`, b.greenhouse].filter(Boolean).join(' · ')}
             </Text>
           </View>
         );
       })}
-      <View style={s.actions}>
-        <View style={{ flex: 1 }}>
-          <Button label="Cancel" variant="outline" onPress={onCancel} disabled={saving} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Button label="Receive" iconLeft="checkmark" onPress={finish} loading={saving} disabled={!allIn} />
-        </View>
-      </View>
     </View>
   );
 }
