@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -227,27 +227,33 @@ function StatusPill({ order }: { order: SeaFreightOrder }) {
   );
 }
 
-/** The order's buckets, ticked as they are scanned in. */
+/** How many of the order's buckets are in; tapped, the buckets themselves, ticked as they are scanned. */
 function Received({ order, scanned }: { order: SeaFreightOrder; scanned: string[] }) {
+  const [open, setOpen] = useState(false);
   const expected = order.buckets;
   return (
     <View style={s.receive}>
-      <Text style={s.receiveTitle}>{`Received ${scanned.length} / ${expected.length} buckets`}</Text>
-      {expected.map((b) => {
-        const done = scanned.includes(b.bucket);
-        return (
-          <View key={b.bucket} style={s.bucket}>
-            <Ionicons
-              name={done ? 'checkmark-circle' : 'ellipse-outline'}
-              size={18}
-              color={done ? COLORS.success : COLORS.textMuted}
-            />
-            <Text style={[s.bucketText, done && { color: COLORS.text }]}>
-              {[b.bucket, b.itemCode, `${fmt(b.stems)} stems`, b.greenhouse].filter(Boolean).join(' · ')}
-            </Text>
-          </View>
-        );
-      })}
+      <Pressable style={s.receiveHead} onPress={() => setOpen((v) => !v)} hitSlop={6}>
+        <Text style={s.receiveTitle}>{`Received ${scanned.length} / ${expected.length} buckets`}</Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={COLORS.textMuted} />
+      </Pressable>
+      {open
+        ? expected.map((b) => {
+            const done = scanned.includes(b.bucket);
+            return (
+              <View key={b.bucket} style={s.bucket}>
+                <Ionicons
+                  name={done ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={18}
+                  color={done ? COLORS.success : COLORS.textMuted}
+                />
+                <Text style={[s.bucketText, done && { color: COLORS.text }]}>
+                  {[b.bucket, b.itemCode, `${fmt(b.stems)} stems`, b.greenhouse].filter(Boolean).join(' · ')}
+                </Text>
+              </View>
+            );
+          })
+        : null}
     </View>
   );
 }
@@ -309,6 +315,7 @@ const s = StyleSheet.create({
     paddingTop: spacing.sm,
     gap: spacing.sm,
   },
+  receiveHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   receiveTitle: { fontFamily: fontFamily.semiBold, fontSize: fontSize.sm, color: COLORS.text },
   bucket: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   bucketText: { flex: 1, fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textMuted },
