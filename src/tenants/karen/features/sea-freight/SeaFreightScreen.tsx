@@ -67,10 +67,15 @@ export function KarenSeaFreightScreen() {
       {orders.map((o) => (
         <View key={o.name} style={s.order}>
           <View style={s.head}>
+            {o.sequence > 0 ? (
+              <View style={s.seqBadge}>
+                <Text style={s.seqNum}>{`#${o.sequence}`}</Text>
+              </View>
+            ) : null}
             <View style={{ flex: 1 }}>
               <Text style={s.title} numberOfLines={1}>{o.orderName || o.customer}</Text>
               <Text style={s.sub}>
-                {[o.orderName ? o.customer : '', o.name, `Delivery ${o.deliveryDate}`].filter(Boolean).join(' · ')}
+                {[o.orderName ? o.customer : '', o.team, `Delivery ${o.deliveryDate}`].filter(Boolean).join(' · ')}
               </Text>
             </View>
             <StatusPill order={o} />
@@ -223,6 +228,16 @@ const s = StyleSheet.create({
     gap: spacing.xs,
   },
   head: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  seqBadge: {
+    minWidth: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.text,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  seqNum: { fontFamily: fontFamily.bold, fontSize: fontSize.sm, color: '#FFFFFF' },
   title: { fontFamily: fontFamily.semiBold, fontSize: fontSize.md, color: COLORS.text },
   sub: { fontFamily: fontFamily.regular, fontSize: fontSize.sm, color: COLORS.textSecondary },
   pill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: spacing.sm, paddingVertical: 2 },
