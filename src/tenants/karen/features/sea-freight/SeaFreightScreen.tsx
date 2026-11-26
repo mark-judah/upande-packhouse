@@ -139,7 +139,7 @@ export function KarenSeaFreightScreen() {
             <Total label="Packed" value={o.packedStems} />
           </View>
 
-          {o.items.map((l) => (
+          {o.items.filter((l) => l.harvestedStems > 0).map((l) => (
             <View key={l.name} style={s.line}>
               <View style={s.lineHead}>
                 <Text style={s.lineTitle} numberOfLines={1}>
