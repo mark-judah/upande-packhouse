@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '@/src/core/ui/Button';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
 import { NotFoundReportCard, NotFoundReportSteps } from './NotFoundReport';
@@ -86,10 +87,13 @@ export function ReplacePicker({
   // every reason (missing, damaged, wrong variety, issued offline): the shelf scanned and photographed first
   const needsReport = !farmReported && !report;
 
+  // the sheet's buttons sit above the phone's navigation bar, not behind it
+  const insets = useSafeAreaInsets();
+
   return (
-    <Modal visible={!!sheet} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={!!sheet} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={s.sheetBackdrop} onPress={onClose} />
-      <View style={s.sheet}>
+      <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, spacing.lg) + spacing.sm }]}>
         <View style={s.sheetHandle} />
         <Text style={s.sheetTitle}>Replace {item?.bucket}</Text>
         <Text style={s.sheetSub} numberOfLines={2}>
