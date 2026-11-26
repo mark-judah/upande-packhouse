@@ -151,7 +151,10 @@ export function KarenPackingScreen() {
     })();
   }, [openOpl, openDate, openStamp]);
 
-  const isStandardRoses = packingGuide?.itemGroup === 'Standard Roses';
+  // Sea freight is harvested into buckets, not graded into bunch QRs: every crop of it (sprays and fillers too)
+  // is packed by count, as standard roses are
+  const isStandardRoses =
+    packingGuide?.itemGroup === 'Standard Roses' || (!!selectedOpl && seaFreightOpls.has(selectedOpl));
 
   // Guide image is a (possibly private) Frappe file. React Native's <Image>
   // was previously given { uri, headers: { Cookie } } directly -- but RN's
