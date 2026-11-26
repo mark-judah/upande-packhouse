@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '@/src/core/ui/Screen';
@@ -42,6 +43,8 @@ export function KarenSeaFreightScreen() {
   const [saving, setSaving] = useState<string | null>(null);
   const scanRef = useRef<ScanFieldHandle>(null);
   const { showSuccess, showError } = useToast();
+  const insets = useSafeAreaInsets();
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -60,6 +63,11 @@ export function KarenSeaFreightScreen() {
       load();
     }, [load]),
   );
+  const refresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
 
   const toReceive = orders.filter((o) => o.harvestDone && !o.received);
 
@@ -112,9 +120,30 @@ export function KarenSeaFreightScreen() {
   };
 
   return (
-    <Screen title="Sea Freight" loading={loading && orders.length === 0} error={error} onRetry={load} onRefresh={load}>
-      {!loading && !error && orders.length === 0 ? <Alert tone="info">No open sea freight orders.</Alert> : null}
-      {toReceive.length ? <ScanField ref={scanRef} label="Scan bucket to receive" onScan={onScan} autoFocus placeholder="Scan bucket QR" /> : null}
+    <Screen
+      title="Sea Freight"
+      loading={loading && orders.length === 0}
+      error={error}
+      onRetry={load}
+      scroll={false}
+      contentPadded={false}
+    >
+      {/* the scan stays put at the top; only the orders scroll under it */}
+      {toReceive.length || (!loading && !error && orders.length === 0) ? (
+        <View style={s.pinned}>
+          {!loading && !error && orders.length === 0 ? <Alert tone="info">No open sea freight orders.</Alert> : null}
+          {toReceive.length ? (
+            <ScanField ref={scanRef} label="Scan bucket to receive" onScan={onScan} autoFocus placeholder="Scan bucket QR" />
+          ) : null}
+        </View>
+      ) : null}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={[s.list, { paddingBottom: spacing.xxl + insets.bottom }]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={COLORS.text} colors={[COLORS.text]} />}
+      >
       {orders.map((o) => (
         <View key={o.name} style={s.order}>
           <View style={s.head}>
@@ -172,6 +201,7 @@ export function KarenSeaFreightScreen() {
           ) : null}
         </View>
       ))}
+      </ScrollView>
     </Screen>
   );
 }
@@ -224,6 +254,8 @@ function Total({ label, value }: { label: string; value: number }) {
 }
 
 const s = StyleSheet.create({
+  pinned: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.sm, gap: spacing.sm },
+  list: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.md },
   order: {
     backgroundColor: COLORS.surface,
     borderRadius: borderRadius.md,
