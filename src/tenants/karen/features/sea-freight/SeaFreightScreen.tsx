@@ -32,8 +32,8 @@ function bucketFromScan(raw: string): string {
 /** Buckets scanned in so far, per order: kept while the app is open, so leaving the screen loses none. */
 const scannedByOrder: Record<string, string[]> = {};
 
-/** Open sea freight orders. Once the farm marks one harvested, scanning its buckets receives them: the order's last
- *  bucket makes its pick lists, issued, and Pack opens them on the Packing screen. */
+/** Open sea freight orders. Once the farm marks one harvested, scanning its buckets receives them; with every bucket
+ *  in, Create pick list makes its pick lists, issued, and Pack opens them on the Packing screen. */
 export function KarenSeaFreightScreen() {
   const [orders, setOrders] = useState<SeaFreightOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,16 +85,18 @@ export function KarenSeaFreightScreen() {
     scannedByOrder[o.name] = next;
     setScanned({ ...scannedByOrder });
     const allIn = o.buckets.every((b) => next.includes(b.bucket));
-    if (!allIn) {
-      showSuccess(`${id} received · ${next.length} / ${o.buckets.length}`);
-      return;
-    }
+    showSuccess(allIn ? `${id} received · every bucket in` : `${id} received · ${next.length} / ${o.buckets.length}`);
+  };
+
+  // every bucket in: the order's pick lists are made (issued, ready to pack)
+  const createPickList = async (o: SeaFreightOrder) => {
+    const next = scannedByOrder[o.name] ?? [];
     setSaving(o.name);
     try {
       const r = await karenSeaFreightApi.receive(o.name, next);
       delete scannedByOrder[o.name];
       setScanned({ ...scannedByOrder });
-      showSuccess(`${o.orderName || o.name} received: ${r.pickLists.length} pick list${r.pickLists.length === 1 ? '' : 's'} ready to pack.`);
+      showSuccess(`${o.orderName || o.name}: ${r.pickLists.length} pick list${r.pickLists.length === 1 ? '' : 's'} ready to pack.`);
       await load();
     } catch (err) {
       showError(mapAxiosError(err).message);
@@ -150,7 +152,19 @@ export function KarenSeaFreightScreen() {
           ))}
 
           {o.harvestDone && !o.received ? (
-            <Received order={o} scanned={scanned[o.name] ?? []} saving={saving === o.name} />
+            <>
+              <Received order={o} scanned={scanned[o.name] ?? []} />
+              {o.buckets.length > 0 && o.buckets.every((b) => (scanned[o.name] ?? []).includes(b.bucket)) ? (
+                <View style={{ marginTop: spacing.sm }}>
+                  <Button
+                    label="Create pick list"
+                    iconLeft="clipboard-outline"
+                    onPress={() => createPickList(o)}
+                    loading={saving === o.name}
+                  />
+                </View>
+              ) : null}
+            </>
           ) : o.received ? (
             <View style={{ marginTop: spacing.sm }}>
               <Button label="Pack" iconLeft="cube-outline" onPress={() => pack(o)} disabled={!o.pickLists.length} />
@@ -176,11 +190,11 @@ function StatusPill({ order }: { order: SeaFreightOrder }) {
 }
 
 /** The order's buckets, ticked as they are scanned in. */
-function Received({ order, scanned, saving }: { order: SeaFreightOrder; scanned: string[]; saving: boolean }) {
+function Received({ order, scanned }: { order: SeaFreightOrder; scanned: string[] }) {
   const expected = order.buckets;
   return (
     <View style={s.receive}>
-      <Text style={s.receiveTitle}>{saving ? 'Receiving…' : `Received ${scanned.length} / ${expected.length} buckets`}</Text>
+      <Text style={s.receiveTitle}>{`Received ${scanned.length} / ${expected.length} buckets`}</Text>
       {expected.map((b) => {
         const done = scanned.includes(b.bucket);
         return (
