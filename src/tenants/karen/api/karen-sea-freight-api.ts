@@ -131,6 +131,18 @@ export const karenSeaFreightApi = {
     return { pickLists: (res.message?.pick_lists ?? []).map(String) };
   },
 
+  /** The pick lists and sales orders of open sea freight orders: the Sea Freight banner on every screen after packing. */
+  async marks(): Promise<{ pickLists: string[]; salesOrders: string[] }> {
+    const res = await api<{ message?: { pick_lists?: string[]; sales_orders?: string[] } }>({
+      method: 'GET',
+      url: '/api/method/upande_packhouse.api.sea_freight.marks',
+    });
+    return {
+      pickLists: (res.message?.pick_lists ?? []).map(String),
+      salesOrders: (res.message?.sales_orders ?? []).map(String),
+    };
+  },
+
   /** Pick lists of open sea freight orders, for the Packing screen's banner. */
   async pickLists(): Promise<string[]> {
     const res = await api<{ message?: string[] }>({

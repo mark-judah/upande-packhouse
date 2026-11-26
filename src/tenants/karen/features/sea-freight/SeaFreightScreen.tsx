@@ -73,7 +73,7 @@ export function KarenSeaFreightScreen() {
               </View>
             ) : null}
             <View style={{ flex: 1 }}>
-              <Text style={s.title} numberOfLines={1}>{o.orderName || o.customer}</Text>
+              <Text style={s.title}>{o.orderName || o.customer}</Text>
               <Text style={s.sub}>
                 {[o.orderName ? o.customer : '', o.team, `Delivery ${o.deliveryDate}`].filter(Boolean).join(' · ')}
               </Text>
