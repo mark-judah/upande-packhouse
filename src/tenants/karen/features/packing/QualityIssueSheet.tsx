@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { ScanField } from '@/src/core/scanning/ScanField';
 import { borderRadius, COLORS, fontFamily, fontSize, spacing } from '@/src/core/theme';
@@ -57,7 +58,7 @@ export function QualityIssueSheet(props: SheetProps) {
   const oplName = useKarenPackingQualityStore((st) => st.oplName);
   const close = useKarenPackingQualityStore((st) => st.close);
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={close}>
+    <Modal visible={open} transparent animationType="slide" onRequestClose={close} statusBarTranslucent>
       <Pressable style={s.backdrop} onPress={close} />
       {/* Remounted per opening: every report starts from a blank form. */}
       {open ? <QualityIssueForm key={oplName ?? ''} {...props} /> : null}
@@ -207,8 +208,11 @@ function QualityIssueForm({ currentItemCode, onDone }: SheetProps) {
     );
   };
 
+  // Cancel and Submit sit above the phone's navigation bar, not behind it.
+  const insets = useSafeAreaInsets();
+
   return (
-    <View style={s.sheet}>
+    <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, spacing.lg) + spacing.sm }]}>
         <View style={s.handle} />
         <Text style={s.title}>Quality issue</Text>
         <Text style={s.sub}>Reject the bad stems and replace them — from {salesFarm || 'the sales farm'} first.</Text>
