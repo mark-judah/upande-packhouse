@@ -1,13 +1,13 @@
 {
-  "id": "bfb6cfc6-3241-49b7-b259-dc8e89191351",
-  "createdAt": "2026-11-26T20:44:19.322Z",
+  "id": "f315b05e-9b5f-4328-acad-6a689c39a69b",
+  "createdAt": "2026-11-27T19:00:22.264Z",
   "runtimeVersion": "101.4",
   "launchAsset": {
-    "hash": "1phU_F9sJGVrPIizKEGsIU5BeGc9nOINI6-m6wida6M",
-    "key": "entry-bf7d67bc32b1e8ab74e23d4a9e0023de",
+    "hash": "XAoty25m38aO_gCModqG9MZRQ_zvwsrfill5Q6JvWBI",
+    "key": "entry-ac560e6bdba3037dcd200a5cc1f4b708",
     "contentType": "application/javascript",
     "fileExtension": ".hbc",
-    "url": "https://mark-judah.github.io/upande-packhouse/ota/android/101.4/_expo/static/js/android/entry-bf7d67bc32b1e8ab74e23d4a9e0023de.hbc"
+    "url": "https://mark-judah.github.io/upande-packhouse/ota/android/101.4/_expo/static/js/android/entry-ac560e6bdba3037dcd200a5cc1f4b708.hbc"
   },
   "assets": [
     {
@@ -626,7 +626,7 @@
       "name": "Upande Packhouse",
       "slug": "upande-packhouse",
       "owner": "markjk",
-      "version": "1.4.7",
+      "version": "1.4.8",
       "orientation": "portrait",
       "icon": "./assets/upande_logo.png",
       "scheme": "upandepackhouse",
@@ -643,7 +643,7 @@
       },
       "android": {
         "package": "com.upande.packhouse",
-        "versionCode": 105407,
+        "versionCode": 105408,
         "adaptiveIcon": {
           "backgroundColor": "#FFFFFF",
           "foregroundImage": "./assets/upande_logo.png"
@@ -728,7 +728,7 @@
         "web"
       ]
     },
-    "appVersion": "1.4.7",
-    "publishedAt": "2026-11-26T20:44:19.340Z"
+    "appVersion": "1.4.8",
+    "publishedAt": "2026-11-27T19:00:22.296Z"
   }
 }
